@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "gowthami-db": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/mcp-db/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/mcp-db/server.py"],
+      "envFile": "${workspaceFolder}/backend/.env"
+    }
+  }
+}

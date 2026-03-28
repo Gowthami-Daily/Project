@@ -1,0 +1,1 @@
+"""HTTP API package — versioned routers under ``api/v1``."""
