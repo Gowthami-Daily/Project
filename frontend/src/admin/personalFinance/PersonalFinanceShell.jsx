@@ -1,17 +1,30 @@
 import { Link, Outlet } from 'react-router-dom'
-import { useCallback, useMemo, useState } from 'react'
+import { Suspense, useCallback, useMemo, useState } from 'react'
 import RiverLogo from '../RiverLogo.jsx'
 import PersonalFinanceAuth from './PersonalFinanceAuth.jsx'
+import PfBottomNav from './PfBottomNav.jsx'
+import PfOutletErrorBoundary from './PfOutletErrorBoundary.jsx'
 import PfSidebar from './PfSidebar.jsx'
 import PfToolbar from './PfToolbar.jsx'
 import { getPfToken, setPfToken } from './api.js'
 import { PfRefreshProvider } from './pfRefreshContext.jsx'
+import { PfThemeProvider, usePfTheme } from './PfThemeContext.jsx'
+import './pfMobile.css'
 
-/**
- * Standalone app shell — not wrapped in dairy ERP ``AdminLayout``.
- */
-export default function PersonalFinanceShell() {
+const pfPageFallback = (
+  <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-4">
+    <div
+      className="h-9 w-9 animate-spin rounded-full border-2 border-slate-200 border-t-[#1E3A8A] dark:border-slate-600 dark:border-t-blue-400"
+      aria-hidden
+    />
+    <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Loading page…</p>
+  </div>
+)
+
+function PersonalFinanceShellInner() {
   const [authed, setAuthed] = useState(() => Boolean(getPfToken()))
+  const { resolved } = usePfTheme()
+  const isDark = resolved === 'dark'
 
   const handleSessionInvalid = useCallback(() => setAuthed(false), [])
 
@@ -22,21 +35,20 @@ export default function PersonalFinanceShell() {
 
   if (!authed) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-sky-50/90 via-white to-sky-50/40 font-sans text-slate-800 antialiased">
-        <header className="sticky top-0 z-10 border-b border-sky-200/70 bg-white/95 shadow-sm shadow-sky-950/[0.03] backdrop-blur-sm">
-          <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
+      <div
+        className={`min-h-screen font-sans antialiased ${isDark ? 'dark' : ''} bg-[#F1F5F9] text-slate-800 dark:bg-slate-900 dark:text-slate-100`}
+      >
+        <header className="sticky top-0 z-10 border-b border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95">
+          <div className="mx-auto flex h-[60px] max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#004080] text-white shadow-inner">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#1E3A8A] text-white shadow-inner">
                 <RiverLogo className="h-6 w-6 text-white" />
               </div>
-              <div>
-                <p className="text-sm font-bold text-slate-900">Personal finance</p>
-                <p className="text-[11px] text-slate-500">Profiles, budgets and net worth</p>
-              </div>
+              <p className="text-sm font-bold text-slate-900 dark:text-slate-100">Personal finance</p>
             </div>
             <Link
               to="/"
-              className="rounded-xl px-3 py-2 text-sm font-semibold text-[#004080] transition hover:bg-slate-100"
+              className="rounded-[12px] px-3 py-2 text-sm font-semibold text-[#1E3A8A] transition hover:bg-slate-100 dark:text-blue-400 dark:hover:bg-slate-800"
             >
               ← Home
             </Link>
@@ -49,41 +61,42 @@ export default function PersonalFinanceShell() {
     )
   }
 
-  const sessionCtx = useMemo(() => ({ onSessionInvalid: handleSessionInvalid }), [handleSessionInvalid])
+  const sessionCtx = useMemo(
+    () => ({ onSessionInvalid: handleSessionInvalid, onLogout: handleLogout }),
+    [handleSessionInvalid],
+  )
 
   return (
     <PfRefreshProvider>
-      <div className="min-h-screen bg-gradient-to-b from-sky-50/90 via-white to-sky-50/40 font-sans text-slate-800 antialiased">
-        <header className="sticky top-0 z-10 border-b border-sky-200/70 bg-white/95 shadow-sm shadow-sky-950/[0.03] backdrop-blur-sm">
-          <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#004080] text-white shadow-inner">
-                <RiverLogo className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-slate-900">Personal finance</p>
-                <p className="text-[11px] text-slate-500">Profiles, budgets and net worth</p>
-              </div>
-            </div>
-            <Link
-              to="/"
-              className="rounded-xl px-3 py-2 text-sm font-semibold text-[#004080] transition hover:bg-slate-100"
-            >
-              ← Home
-            </Link>
-          </div>
-        </header>
-
+      <div
+        className={`pf-app min-h-screen antialiased ${isDark ? 'dark' : ''} bg-[#F1F5F9] text-slate-800 dark:bg-slate-900 dark:text-slate-100`}
+      >
+        <PfToolbar onSessionInvalid={handleSessionInvalid} onLogout={handleLogout} />
         <div className="mx-auto flex max-w-[1600px] flex-col md:flex-row md:items-stretch">
           <PfSidebar />
-          <div className="flex min-h-[calc(100vh-57px)] min-w-0 flex-1 flex-col border-sky-200/60 md:border-l md:bg-white/40">
-            <PfToolbar onLogout={handleLogout} onSessionInvalid={handleSessionInvalid} />
-            <main className="flex-1 px-4 py-6 sm:px-6">
-              <Outlet context={sessionCtx} />
+          <div className="flex min-h-[calc(100vh-92px)] min-w-0 flex-1 flex-col border-slate-200/60 dark:border-slate-700/80 md:border-l md:bg-white/50 dark:md:bg-slate-800/30">
+            <main className="pf-page-enter flex-1 px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 md:py-6 md:pb-6">
+              <PfOutletErrorBoundary>
+                <Suspense fallback={pfPageFallback}>
+                  <Outlet context={sessionCtx} />
+                </Suspense>
+              </PfOutletErrorBoundary>
             </main>
           </div>
         </div>
+        <PfBottomNav />
       </div>
     </PfRefreshProvider>
+  )
+}
+
+/**
+ * Standalone app shell — not wrapped in dairy ERP ``AdminLayout``.
+ */
+export default function PersonalFinanceShell() {
+  return (
+    <PfThemeProvider>
+      <PersonalFinanceShellInner />
+    </PfThemeProvider>
   )
 }

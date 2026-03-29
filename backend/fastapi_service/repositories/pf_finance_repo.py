@@ -91,10 +91,17 @@ def create_liability(db: Session, row: FinanceLiability) -> FinanceLiability:
     return row
 
 
-def list_recent_mixed(db: Session, profile_id: int, limit: int, account_id: int | None = None) -> list[dict]:
+def list_recent_mixed(
+    db: Session,
+    profile_id: int,
+    limit: int,
+    account_id: int | None = None,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[dict]:
     fetch_n = max(limit * 5, 100)
-    inc = list_income(db, profile_id, 0, fetch_n, None, None, account_id)
-    exp = list_expenses(db, profile_id, 0, fetch_n, None, None, account_id)
+    inc = list_income(db, profile_id, 0, fetch_n, start, end, account_id)
+    exp = list_expenses(db, profile_id, 0, fetch_n, start, end, account_id)
     merged: list[dict] = []
     for i in inc:
         merged.append(
@@ -660,6 +667,21 @@ def resolve_expense_payment_fields(
     return account_id, None
 
 
+def next_pending_emi_by_loan(db: Session, profile_id: int) -> dict[int, tuple[date, float]]:
+    """Earliest unpaid schedule installment per loan (due date + EMI amount)."""
+    stmt = (
+        select(LoanSchedule.loan_id, LoanSchedule.due_date, LoanSchedule.emi_amount)
+        .join(Loan, Loan.id == LoanSchedule.loan_id)
+        .where(Loan.profile_id == profile_id, func.lower(LoanSchedule.payment_status) != 'paid')
+        .order_by(LoanSchedule.loan_id, LoanSchedule.due_date, LoanSchedule.emi_number)
+    )
+    out: dict[int, tuple[date, float]] = {}
+    for lid, due, amt in db.execute(stmt).all():
+        if lid not in out:
+            out[int(lid)] = (due, float(amt))
+    return out
+
+
 def sum_pending_loan_schedule_emis(db: Session, profile_id: int) -> float:
     stmt = (
         select(func.coalesce(func.sum(LoanSchedule.emi_amount), 0))
@@ -1154,6 +1176,64 @@ def _current_loan_due_for_manual_payment(db: Session, ln: Loan) -> float:
     if last_bal is not None:
         return max(0.0, float(last_bal))
     return max(0.0, float(ln.loan_amount))
+
+
+def add_loan_principal_disbursement(
+    db: Session,
+    profile_id: int,
+    loan_id: int,
+    *,
+    disbursement_date: date,
+    amount: float,
+    finance_account_id: int,
+) -> Loan:
+    """
+    Record an additional principal disbursement (money lent again to the same borrower).
+    Debits the selected bank account. Supported only for loans **without** an EMI schedule.
+    """
+    _ = disbursement_date  # reserved for future audit / transaction rows
+    ln = get_loan_for_profile(db, loan_id, profile_id)
+    if ln is None:
+        raise ValueError('Loan not found')
+    if _loan_has_schedule(db, loan_id):
+        raise ValueError(
+            'Additional principal is not supported for EMI-schedule loans; create a new loan or contact support.'
+        )
+    if str(ln.status).upper() == 'CLOSED':
+        raise ValueError('Loan is closed')
+    amt = float(amount)
+    if amt <= 0:
+        raise ValueError('Amount must be positive')
+    if get_account_for_profile(db, finance_account_id, profile_id) is None:
+        raise ValueError('Account not found or not in this profile')
+    due_before = _current_loan_due_for_manual_payment(db, ln)
+    _bump_account_balance(db, profile_id, finance_account_id, -amt)
+    ln.loan_amount = float(ln.loan_amount) + amt
+    ln.remaining_amount = due_before + amt
+    db.commit()
+    db.refresh(ln)
+    return ln
+
+
+def close_loan_if_settled(db: Session, profile_id: int, loan_id: int) -> Loan:
+    """Set loan status to CLOSED when nothing is outstanding (EMI or manual balance)."""
+    ln = get_loan_for_profile(db, loan_id, profile_id)
+    if ln is None:
+        raise ValueError('Loan not found')
+    if str(ln.status).upper() == 'CLOSED':
+        raise ValueError('Loan is already closed')
+    if _loan_has_schedule(db, loan_id):
+        due = _unpaid_schedule_total(db, loan_id)
+    else:
+        due = _current_loan_due_for_manual_payment(db, ln)
+    if due > 0.01:
+        raise ValueError('Outstanding balance remains — collect payments before closing')
+    ln.status = 'CLOSED'
+    if ln.remaining_amount is not None:
+        ln.remaining_amount = 0.0
+    db.commit()
+    db.refresh(ln)
+    return ln
 
 
 def record_manual_loan_payment(

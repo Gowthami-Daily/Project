@@ -8,8 +8,12 @@ import {
   listFinanceIncome,
   listPfIncomeCategories,
   patchFinanceIncome,
+  pfFetchBlob,
   setPfToken,
+  triggerDownloadBlob,
 } from '../api.js'
+import PfExportMenu from '../PfExportMenu.jsx'
+import { buildIncomeExpenseExportQuery } from '../pfExportRange.js'
 import { PfCategoryIcon, categoryBadgeClass } from '../pfCategoryIcons.jsx'
 import {
   btnPrimary,
@@ -17,6 +21,7 @@ import {
   inputCls,
   labelCls,
   pfActionRow,
+  pfSelectCompact,
   pfTable,
   pfTableWrap,
   pfTd,
@@ -76,6 +81,10 @@ export default function PfIncomePage() {
   const [editRecurringType, setEditRecurringType] = useState('monthly')
   const [savingId, setSavingId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+  const [incomeExportBusy, setIncomeExportBusy] = useState(false)
+  const [incomeDateFilter, setIncomeDateFilter] = useState('month')
+  const [filterCustomStart, setFilterCustomStart] = useState('')
+  const [filterCustomEnd, setFilterCustomEnd] = useState('')
 
   const categoryById = useMemo(() => {
     const m = new Map()
@@ -88,6 +97,37 @@ export default function PfIncomePage() {
     for (const a of accounts) m.set(a.id, a.account_name)
     return m
   }, [accounts])
+
+  const filteredIncomeRows = useMemo(() => {
+    if (incomeDateFilter === 'all') return rows
+    const t = todayISODate()
+    if (incomeDateFilter === 'today') return rows.filter((r) => r.entry_date === t)
+    if (incomeDateFilter === 'month') {
+      const prefix = t.slice(0, 7)
+      return rows.filter((r) => (r.entry_date || '').startsWith(prefix))
+    }
+    if (incomeDateFilter === 'week') {
+      const end = new Date()
+      const start = new Date(end)
+      start.setDate(end.getDate() - 6)
+      const startStr = start.toISOString().slice(0, 10)
+      return rows.filter((r) => {
+        const d = r.entry_date
+        return d && d >= startStr && d <= t
+      })
+    }
+    if (incomeDateFilter === 'custom' && filterCustomStart && filterCustomEnd) {
+      return rows.filter(
+        (r) => r.entry_date && r.entry_date >= filterCustomStart && r.entry_date <= filterCustomEnd,
+      )
+    }
+    if (incomeDateFilter === 'custom') return rows
+    return rows
+  }, [rows, incomeDateFilter, filterCustomStart, filterCustomEnd])
+
+  function paymentMethodLabel(v) {
+    return PAY_METHODS.find((m) => m.value === v)?.label ?? v ?? '—'
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -256,24 +296,42 @@ export default function PfIncomePage() {
   const formCardHeader = 'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5'
   const formSection = 'border-b border-slate-100 px-4 py-4 sm:px-5'
 
+  async function handleIncomeExport() {
+    setIncomeExportBusy(true)
+    try {
+      const qs = buildIncomeExpenseExportQuery(incomeDateFilter, filterCustomStart, filterCustomEnd)
+      const { blob, filename } = await pfFetchBlob(`/pf/export/income/excel${qs}`)
+      triggerDownloadBlob(blob, filename || 'Income_export.xlsx')
+    } catch (e) {
+      if (e.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        window.alert(e.message || 'Export failed')
+      }
+    } finally {
+      setIncomeExportBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">Income</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Track salary, dairy sales, rent, and more with categories, source, and method. Credits the selected account
-            for cashflow.
-          </p>
+        <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">Income</h1>
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          <PfExportMenu
+            busy={incomeExportBusy}
+            items={[{ key: 'xlsx', label: 'Export Excel', onClick: handleIncomeExport }]}
+          />
+          <button
+            type="button"
+            onClick={() => setShowAddForm((v) => !v)}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-[12px] bg-[#1E3A8A] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#172554] active:scale-[0.98] md:self-start"
+          >
+            <PlusCircleIcon className="h-5 w-5" />
+            {showAddForm ? 'Close add form' : 'Add income'}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowAddForm((v) => !v)}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#004080] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#003366]"
-        >
-          <PlusCircleIcon className="h-5 w-5" />
-          {showAddForm ? 'Close add form' : 'Add income'}
-        </button>
       </div>
 
       {error ? (
@@ -439,8 +497,105 @@ export default function PfIncomePage() {
       ) : null}
 
       <div className={cardCls}>
-        <h2 className="text-base font-bold text-sky-950">Recent income</h2>
-        <div className={`${pfTableWrap} mt-4`}>
+        <h2 className="text-base font-bold text-slate-900">Transactions</h2>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'today', label: 'Today' },
+              { id: 'week', label: 'Week' },
+              { id: 'month', label: 'Month' },
+              { id: 'custom', label: 'Custom' },
+            ].map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setIncomeDateFilter(id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition duration-200 active:scale-[0.98] ${
+                  incomeDateFilter === id
+                    ? 'bg-[#1E3A8A] text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200/80'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {incomeDateFilter === 'custom' ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="date"
+                className={`${pfSelectCompact} max-w-[10rem]`}
+                value={filterCustomStart}
+                onChange={(e) => setFilterCustomStart(e.target.value)}
+                aria-label="From date"
+              />
+              <span className="text-xs text-slate-500">to</span>
+              <input
+                type="date"
+                className={`${pfSelectCompact} max-w-[10rem]`}
+                value={filterCustomEnd}
+                onChange={(e) => setFilterCustomEnd(e.target.value)}
+                aria-label="To date"
+              />
+            </div>
+          ) : null}
+        </div>
+
+        {!loading && rows.length > 0 && filteredIncomeRows.length === 0 ? (
+          <p className="mt-4 text-center text-sm text-slate-500">No income in this period.</p>
+        ) : null}
+
+        {!loading && filteredIncomeRows.length > 0 && editingId == null ? (
+          <div className="mt-4 space-y-3 md:hidden">
+            {filteredIncomeRows.map((r) => (
+              <div
+                key={r.id}
+                className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition active:scale-[0.99]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 flex-1 font-semibold text-slate-900">{r.category || '—'}</span>
+                  <span className="shrink-0 font-mono text-base font-bold tabular-nums text-emerald-600">
+                    {formatInr(r.amount)}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                  <span className="tabular-nums">
+                    {r.entry_date
+                      ? new Date(`${r.entry_date}T12:00:00`).toLocaleDateString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })
+                      : '—'}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">
+                    {paymentMethodLabel(r.payment_method)}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => startEdit(r)}
+                    className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-xs font-semibold text-[#1E3A8A]"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(r)}
+                    disabled={deletingId === r.id}
+                    className="rounded-[12px] border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50"
+                  >
+                    {deletingId === r.id ? '…' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className={`${pfTableWrap} mt-4 ${editingId != null ? 'block' : 'hidden'} md:block`}>
           <table className={`${pfTable} min-w-[56rem]`}>
             <thead>
               <tr>
@@ -467,8 +622,14 @@ export default function PfIncomePage() {
                     No income rows yet.
                   </td>
                 </tr>
+              ) : filteredIncomeRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    No income in this period.
+                  </td>
+                </tr>
               ) : (
-                rows.map((r) =>
+                filteredIncomeRows.map((r) =>
                   editingId === r.id ? (
                     <tr key={r.id} className="align-top">
                       <td className="p-0" colSpan={8}>
@@ -563,7 +724,7 @@ export default function PfIncomePage() {
                               type="button"
                               onClick={() => saveEdit(r.id)}
                               disabled={savingId === r.id}
-                              className="rounded-lg bg-[#004080] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                              className="rounded-[12px] bg-[#1E3A8A] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
                             >
                               {savingId === r.id ? '…' : 'Save'}
                             </button>
@@ -606,7 +767,7 @@ export default function PfIncomePage() {
                           <button
                             type="button"
                             onClick={() => startEdit(r)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-sky-200 px-2 py-1 text-xs font-semibold text-[#004080] hover:bg-sky-50"
+                            className="inline-flex items-center gap-1 rounded-[12px] border border-slate-200 px-2 py-1 text-xs font-semibold text-[#1E3A8A] hover:bg-slate-50"
                           >
                             <PencilSquareIcon className="h-4 w-4" />
                             Edit

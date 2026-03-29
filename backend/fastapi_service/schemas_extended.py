@@ -312,6 +312,17 @@ class LoanOut(BaseModel):
     total_amount: Decimal | None = None
     emi_amount: Decimal | None = None
     remaining_amount: Decimal | None = None
+    next_emi_due: date | None = None
+    next_emi_amount: Decimal | None = None
+
+
+class LoanAddPrincipalBody(BaseModel):
+    """Extra principal disbursed to the same borrower (no EMI schedule loans only)."""
+
+    amount: float = Field(gt=0)
+    disbursement_date: date
+    finance_account_id: int = Field(ge=1, description='Bank account the funds are paid from')
+    notes: str | None = Field(default=None, max_length=500)
 
 
 class LoanCreate(BaseModel):

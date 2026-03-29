@@ -82,6 +82,24 @@ def loan_report(
     return pf_reports_service.loan_report(db, profile_id)
 
 
+@router.get('/daily')
+def daily_ledger(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    from_date: date = Query(..., description='Start date (inclusive), YYYY-MM-DD'),
+    to_date: date = Query(..., description='End date (inclusive), YYYY-MM-DD'),
+    account_id: int | None = Query(
+        None,
+        description='Optional finance account — only rows linked to this account',
+    ),
+) -> dict:
+    try:
+        return pf_reports_service.daily_ledger(db, profile_id, from_date, to_date, account_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.get('/month-ledger')
 def month_ledger(
     _: ReportReader,

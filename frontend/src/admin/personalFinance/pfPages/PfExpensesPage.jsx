@@ -11,8 +11,12 @@ import {
   listPfExpenseCategories,
   listPfPaymentInstruments,
   patchFinanceExpense,
+  pfFetchBlob,
   setPfToken,
+  triggerDownloadBlob,
 } from '../api.js'
+import PfExportMenu from '../PfExportMenu.jsx'
+import { buildIncomeExpenseExportQuery } from '../pfExportRange.js'
 import { PfCategoryIcon, categoryBadgeClass } from '../pfCategoryIcons.jsx'
 import {
   btnPrimary,
@@ -20,6 +24,7 @@ import {
   inputCls,
   labelCls,
   pfActionRow,
+  pfSelectCompact,
   pfTable,
   pfTableWrap,
   pfTd,
@@ -137,6 +142,10 @@ export default function PfExpensesPage() {
   const [editRecurringType, setEditRecurringType] = useState('monthly')
   const [savingId, setSavingId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+  const [expenseExportBusy, setExpenseExportBusy] = useState(false)
+  const [expenseDateFilter, setExpenseDateFilter] = useState('all')
+  const [filterCustomStart, setFilterCustomStart] = useState('')
+  const [filterCustomEnd, setFilterCustomEnd] = useState('')
 
   const categoryById = useMemo(() => {
     const m = new Map()
@@ -154,6 +163,33 @@ export default function PfExpensesPage() {
     () => instruments.filter((i) => i.finance_account_id == null),
     [instruments],
   )
+
+  const filteredExpenseRows = useMemo(() => {
+    if (expenseDateFilter === 'all') return rows
+    const t = todayISODate()
+    if (expenseDateFilter === 'today') return rows.filter((r) => r.entry_date === t)
+    if (expenseDateFilter === 'month') {
+      const prefix = t.slice(0, 7)
+      return rows.filter((r) => (r.entry_date || '').startsWith(prefix))
+    }
+    if (expenseDateFilter === 'week') {
+      const end = new Date()
+      const start = new Date(end)
+      start.setDate(end.getDate() - 6)
+      const startStr = start.toISOString().slice(0, 10)
+      return rows.filter((r) => {
+        const d = r.entry_date
+        return d && d >= startStr && d <= t
+      })
+    }
+    if (expenseDateFilter === 'custom' && filterCustomStart && filterCustomEnd) {
+      return rows.filter(
+        (r) => r.entry_date && r.entry_date >= filterCustomStart && r.entry_date <= filterCustomEnd,
+      )
+    }
+    if (expenseDateFilter === 'custom') return rows
+    return rows
+  }, [rows, expenseDateFilter, filterCustomStart, filterCustomEnd])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -411,25 +447,42 @@ export default function PfExpensesPage() {
   const formCardHeader = 'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5'
   const formSection = 'border-b border-slate-100 px-4 py-4 sm:px-5'
 
+  async function handleExpenseExport() {
+    setExpenseExportBusy(true)
+    try {
+      const qs = buildIncomeExpenseExportQuery(expenseDateFilter, filterCustomStart, filterCustomEnd)
+      const { blob, filename } = await pfFetchBlob(`/pf/export/expenses/excel${qs}`)
+      triggerDownloadBlob(blob, filename || 'Expenses_export.xlsx')
+    } catch (e) {
+      if (e.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        window.alert(e.message || 'Export failed')
+      }
+    } finally {
+      setExpenseExportBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">Expenses</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Categories, paid-by, unified pay-with (account or saved card/UPI), recurring flags.{' '}
-            <strong className="font-medium text-slate-700">Pending</strong> rows do not change account balances until
-            you mark them paid.
-          </p>
+        <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">Expenses</h1>
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          <PfExportMenu
+            busy={expenseExportBusy}
+            items={[{ key: 'xlsx', label: 'Export Excel', onClick: handleExpenseExport }]}
+          />
+          <button
+            type="button"
+            onClick={() => setShowAddForm((v) => !v)}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-[12px] bg-[#1E3A8A] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#172554] active:scale-[0.98] md:self-start"
+          >
+            <PlusCircleIcon className="h-5 w-5" />
+            {showAddForm ? 'Close add form' : 'Add expense'}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowAddForm((v) => !v)}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#004080] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#003366]"
-        >
-          <PlusCircleIcon className="h-5 w-5" />
-          {showAddForm ? 'Close add form' : 'Add expense'}
-        </button>
       </div>
 
       {error ? (
@@ -453,6 +506,7 @@ export default function PfExpensesPage() {
               <input
                 id="exp-amt"
                 type="number"
+                inputMode="decimal"
                 step="0.01"
                 min="0"
                 className={inputCls}
@@ -707,8 +761,108 @@ export default function PfExpensesPage() {
       ) : null}
 
       <div className={cardCls}>
-        <h2 className="text-base font-bold text-sky-950">Recent expenses</h2>
-        <div className={`${pfTableWrap} mt-4`}>
+        <h2 className="text-base font-bold text-slate-900">Transactions</h2>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'today', label: 'Today' },
+              { id: 'week', label: 'Week' },
+              { id: 'month', label: 'Month' },
+              { id: 'custom', label: 'Custom' },
+            ].map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setExpenseDateFilter(id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition duration-200 active:scale-[0.98] ${
+                  expenseDateFilter === id
+                    ? 'bg-[#1E3A8A] text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200/80'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {expenseDateFilter === 'custom' ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="date"
+                className={`${pfSelectCompact} max-w-[10rem]`}
+                value={filterCustomStart}
+                onChange={(e) => setFilterCustomStart(e.target.value)}
+                aria-label="Filter from date"
+              />
+              <span className="text-xs text-slate-500">to</span>
+              <input
+                type="date"
+                className={`${pfSelectCompact} max-w-[10rem]`}
+                value={filterCustomEnd}
+                onChange={(e) => setFilterCustomEnd(e.target.value)}
+                aria-label="Filter to date"
+              />
+            </div>
+          ) : null}
+        </div>
+
+        {!loading && rows.length > 0 && filteredExpenseRows.length === 0 ? (
+          <p className="mt-4 text-center text-sm text-slate-500">No expenses in this period.</p>
+        ) : null}
+
+        {!loading && filteredExpenseRows.length > 0 && editingId == null ? (
+          <div className="mt-4 space-y-3 md:hidden">
+            {filteredExpenseRows.map((r) => {
+              const payLine = r.payment_instrument_label
+                ? `${methodDisplayLabel(r.payment_method)} · ${r.payment_instrument_label}`
+                : methodDisplayLabel(r.payment_method)
+              return (
+                <div
+                  key={r.id}
+                  className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition active:scale-[0.99]"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 flex-1 font-semibold text-slate-900">{r.category || '—'}</span>
+                    <span className="shrink-0 font-mono text-base font-bold tabular-nums text-[#EF4444]">
+                      {formatInr(r.amount)}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                    <span className="tabular-nums">
+                      {r.entry_date
+                        ? new Date(`${r.entry_date}T12:00:00`).toLocaleDateString('en-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          })
+                        : '—'}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600">{payLine}</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => startEdit(r)}
+                      className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-xs font-semibold text-[#1E3A8A]"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(r)}
+                      disabled={deletingId === r.id}
+                      className="rounded-[12px] border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50"
+                    >
+                      {deletingId === r.id ? '…' : 'Delete'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+
+        <div className={`${pfTableWrap} mt-4 ${editingId != null ? 'block' : 'hidden'} md:block`}>
           <table className={`${pfTable} min-w-[48rem]`}>
             <thead>
               <tr>
@@ -734,8 +888,14 @@ export default function PfExpensesPage() {
                     No expenses yet.
                   </td>
                 </tr>
+              ) : filteredExpenseRows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                    No expenses in this period — try another filter.
+                  </td>
+                </tr>
               ) : (
-                rows.map((r) =>
+                filteredExpenseRows.map((r) =>
                   editingId === r.id ? (
                     <tr key={r.id} className="align-top">
                       <td className="p-0" colSpan={7}>
@@ -760,6 +920,7 @@ export default function PfExpensesPage() {
                           </select>
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="0.01"
                             min="0"
                             className={`${inputCls} font-mono`}
@@ -846,7 +1007,7 @@ export default function PfExpensesPage() {
                               type="button"
                               onClick={() => saveEdit(r.id)}
                               disabled={savingId === r.id}
-                              className="rounded-lg bg-[#004080] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#003366] disabled:opacity-60"
+                              className="rounded-[12px] bg-[#1E3A8A] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#172554] disabled:opacity-60"
                             >
                               {savingId === r.id ? '…' : 'Save'}
                             </button>
@@ -909,7 +1070,7 @@ export default function PfExpensesPage() {
                           <button
                             type="button"
                             onClick={() => startEdit(r)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-sky-200 px-2 py-1 text-xs font-semibold text-[#004080] hover:bg-sky-50"
+                            className="inline-flex items-center gap-1 rounded-[12px] border border-slate-200 px-2 py-1 text-xs font-semibold text-[#1E3A8A] hover:bg-slate-50"
                           >
                             <PencilSquareIcon className="h-4 w-4" />
                             Edit

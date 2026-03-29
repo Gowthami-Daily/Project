@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
-import { createFinanceInvestment, listFinanceInvestments, setPfToken } from '../api.js'
+import {
+  createFinanceInvestment,
+  listFinanceInvestments,
+  pfFetchBlob,
+  setPfToken,
+  triggerDownloadBlob,
+} from '../api.js'
+import PfExportMenu from '../PfExportMenu.jsx'
 import {
   btnPrimary,
   cardCls,
@@ -34,6 +41,8 @@ export default function PfInvestmentsPage() {
   const [currentValue, setCurrentValue] = useState('0')
   const [platform, setPlatform] = useState('')
   const [asOfDate, setAsOfDate] = useState(todayISODate)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [invExportBusy, setInvExportBusy] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -74,6 +83,7 @@ export default function PfInvestmentsPage() {
       setPlatform('')
       await load()
       refresh()
+      setShowAddForm(false)
     } catch (err) {
       if (err.status === 401) {
         setPfToken(null)
@@ -86,17 +96,51 @@ export default function PfInvestmentsPage() {
     }
   }
 
+  async function handleInvestmentsExport() {
+    setInvExportBusy(true)
+    try {
+      const { blob, filename } = await pfFetchBlob('/pf/export/investments/excel')
+      triggerDownloadBlob(blob, filename || 'Investments.xlsx')
+    } catch (e) {
+      if (e.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        window.alert(e.message || 'Export failed')
+      }
+    } finally {
+      setInvExportBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">Investments</h1>
-        <p className="mt-1 text-sm text-slate-500">Track invested amount and current market value.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">Investments</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Track invested amount and current market value.
+          </p>
+        </div>
+        <PfExportMenu
+          busy={invExportBusy}
+          items={[{ key: 'xlsx', label: 'Export Excel', onClick: handleInvestmentsExport }]}
+        />
       </div>
 
       {error ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{error}</div>
       ) : null}
 
+      <button
+        type="button"
+        onClick={() => setShowAddForm((v) => !v)}
+        className="w-full rounded-[12px] border border-slate-200 bg-white py-3 text-sm font-bold text-[#1E3A8A] shadow-sm transition hover:bg-slate-50 active:scale-[0.98] sm:w-auto sm:px-6"
+      >
+        {showAddForm ? 'Close form' : '+ Add investment'}
+      </button>
+
+      {showAddForm ? (
       <div className={cardCls}>
         <h2 className="text-base font-bold text-slate-900">Add investment</h2>
         <form onSubmit={handleSubmit} className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -168,6 +212,7 @@ export default function PfInvestmentsPage() {
           </div>
         </form>
       </div>
+      ) : null}
 
       <div className={cardCls}>
         <h2 className="text-base font-bold text-slate-900">Holdings</h2>

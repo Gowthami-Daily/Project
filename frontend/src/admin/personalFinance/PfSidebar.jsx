@@ -13,8 +13,8 @@ import { NavLink } from 'react-router-dom'
 
 const linkBase =
   'flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition sm:gap-2.5 sm:px-3.5 sm:py-2.5'
-const inactive = 'text-slate-600 hover:bg-sky-50/90'
-const active = 'bg-[#004080]/10 text-[#004080]'
+const inactive = 'text-slate-600 hover:bg-sky-50/90 dark:text-slate-400 dark:hover:bg-slate-800/80'
+const active = 'bg-[#1E3A8A]/10 text-[#1E3A8A] dark:bg-blue-500/15 dark:text-blue-400'
 
 function Item({ to, end, icon: Icon, children }) {
   return (
@@ -31,7 +31,7 @@ function Item({ to, end, icon: Icon, children }) {
 
 export default function PfSidebar() {
   return (
-    <aside className="shrink-0 border-b border-sky-200/60 bg-white/90 md:w-56 md:border-b-0 md:border-r md:bg-white/95">
+    <aside className="hidden shrink-0 border-b border-sky-200/60 bg-white/90 md:block md:w-56 md:border-b-0 md:border-r md:bg-white/95 dark:border-slate-700 dark:bg-slate-900/95">
       <nav className="flex gap-1 overflow-x-auto px-2 py-3 md:flex-col md:gap-0.5 md:px-3 md:py-4" aria-label="Personal finance">
         <Item to="/personal-finance" end icon={HomeIcon}>
           Dashboard

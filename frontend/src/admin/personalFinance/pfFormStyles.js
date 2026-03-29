@@ -1,19 +1,32 @@
 /** Inputs & focus — sky accent, soft borders */
 export const inputCls =
-  'mt-1 w-full rounded-xl border border-sky-200/80 bg-white px-3 py-2 text-sm text-slate-800 outline-none ring-sky-400/30 transition-shadow focus:border-sky-300 focus:ring-2'
+  'mt-1 w-full rounded-[10px] border border-sky-200/80 bg-white px-3 py-2 text-sm text-slate-800 outline-none ring-sky-400/30 transition-shadow focus:border-sky-300 focus:ring-2'
 
 export const labelCls = 'block text-sm font-medium text-sky-950/80'
 
-/** Cards: white on light sky frame, smooth corners */
+/** Cards: 16px radius, global PF shadow */
 export const cardCls =
-  'rounded-2xl border border-sky-200/55 bg-white p-5 shadow-sm shadow-sky-200/20 ring-1 ring-sky-100/40'
+  'rounded-[16px] border border-sky-200/55 bg-white p-4 shadow-[0_4px_12px_rgba(0,0,0,0.06)] ring-1 ring-sky-100/30 transition-shadow duration-200 hover:shadow-[0_6px_16px_rgba(0,0,0,0.08)] dark:border-slate-600 dark:bg-slate-800 dark:shadow-[0_4px_12px_rgba(0,0,0,0.35)] dark:ring-slate-700/50 dark:hover:shadow-[0_6px_16px_rgba(0,0,0,0.45)] sm:p-5'
 
+/** Primary — blue fill, 42px height, 10px radius */
 export const btnPrimary =
-  'rounded-xl bg-[#004080] px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-900/10 transition hover:bg-[#003366] disabled:opacity-60'
+  'h-[42px] min-h-[42px] inline-flex items-center justify-center rounded-[10px] bg-[#1E3A8A] px-4 text-sm font-semibold text-white shadow-sm shadow-slate-900/10 transition hover:bg-[#172554] active:scale-[0.97] disabled:opacity-60 disabled:pointer-events-none'
+
+/** Secondary — white, blue border/text */
+export const btnSecondary =
+  'h-[42px] min-h-[42px] inline-flex items-center justify-center rounded-[10px] border-2 border-[#1E3A8A] bg-white px-4 text-sm font-semibold text-[#1E3A8A] transition hover:bg-slate-50 active:scale-[0.97] disabled:opacity-60 disabled:pointer-events-none'
+
+/** Danger — red fill */
+export const btnDanger =
+  'h-[42px] min-h-[42px] inline-flex items-center justify-center rounded-[10px] bg-[#EF4444] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-red-600 active:scale-[0.97] disabled:opacity-60 disabled:pointer-events-none'
+
+/** Compact native select — Year / Bank row on mobile */
+export const pfSelectCompact =
+  'rounded-[10px] border border-slate-200/90 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-800 shadow-sm outline-none ring-[#1E3A8A]/20 focus:ring-2'
 
 /** Table shell: horizontal scroll on small screens, rounded frame (add ``mt-4`` in parent when needed) */
 export const pfTableWrap =
-  'overflow-x-auto rounded-2xl border border-sky-200/60 bg-white shadow-sm shadow-sky-950/[0.03]'
+  'overflow-x-auto rounded-[16px] border border-sky-200/60 bg-white shadow-[0_4px_12px_rgba(0,0,0,0.06)]'
 
 export const pfTable = 'w-full min-w-0 border-collapse text-left text-sm'
 
@@ -61,4 +74,4 @@ export const pfThSmActionCol = 'min-w-[6.5rem] whitespace-nowrap'
 
 /** Chart / KPI cards on PF dashboard */
 export const pfChartCard =
-  'rounded-2xl border border-sky-200/55 bg-white p-4 shadow-sm shadow-sky-200/15 ring-1 ring-sky-100/35 sm:p-5'
+  'rounded-[16px] border border-sky-200/55 bg-white p-4 shadow-[0_4px_12px_rgba(0,0,0,0.06)] ring-1 ring-sky-100/30 dark:border-slate-600 dark:bg-slate-800 dark:shadow-[0_4px_12px_rgba(0,0,0,0.35)] dark:ring-slate-700/50 sm:p-5'

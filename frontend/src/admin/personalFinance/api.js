@@ -131,8 +131,55 @@ function withFinanceAccountId(path, financeAccountId) {
     : `${path}?account_id=${encodeURIComponent(id)}`
 }
 
-export function getDashboardSummary(financeAccountId) {
-  return pfFetch(withFinanceAccountId('/pf/dashboard/summary', financeAccountId))
+/**
+ * @param {string|undefined} financeAccountId
+ * @param {{ periodYear?: number, periodMonth?: number }} [opts] — calendar month for income/expense/recent tx (omit = year-to-date)
+ */
+/**
+ * @param {{ periodYear?: number, periodMonth?: number, full?: boolean, recentLimit?: number }} [opts]
+ * When opts.full + period: same payload as GET /bundle (single-call dashboard).
+ */
+export function getDashboardSummary(financeAccountId, opts = {}) {
+  let path = withFinanceAccountId('/pf/dashboard/summary', financeAccountId)
+  const y = opts.periodYear
+  const m = opts.periodMonth
+  const parts = []
+  if (y != null && m != null) {
+    parts.push(`period_year=${encodeURIComponent(String(y))}`, `period_month=${encodeURIComponent(String(m))}`)
+  }
+  if (opts.full && y != null && m != null) {
+    parts.push('full=true', `recent_limit=${encodeURIComponent(String(opts.recentLimit ?? 15))}`)
+  } else if (opts.recentLimit != null && y != null && m != null) {
+    parts.push(`recent_limit=${encodeURIComponent(String(opts.recentLimit))}`)
+  }
+  if (parts.length) {
+    const sep = path.includes('?') ? '&' : '?'
+    path += sep + parts.join('&')
+  }
+  return pfFetch(path)
+}
+
+/**
+ * Single round-trip: summary, accounts, charts, cashflow, loans, upcoming EMIs.
+ * Requires periodYear + periodMonth (same as month-scoped summary).
+ */
+/**
+ * @param {string|undefined} financeAccountId
+ * @param {number} periodYear
+ * @param {number} periodMonth
+ * @param {{ recentLimit?: number }} [opts] — default 12 for smaller payload / faster JSON
+ */
+export function getDashboardBundle(financeAccountId, periodYear, periodMonth, opts = {}) {
+  const q = new URLSearchParams({
+    period_year: String(periodYear),
+    period_month: String(periodMonth),
+    recent_limit: String(opts.recentLimit ?? 12),
+  })
+  if (financeAccountId != null && financeAccountId !== '') {
+    const id = Number(financeAccountId)
+    if (id && !Number.isNaN(id)) q.set('account_id', String(id))
+  }
+  return pfFetch(`/pf/dashboard/bundle?${q.toString()}`)
 }
 
 export function getIncomeVsExpense(year, financeAccountId) {
@@ -182,9 +229,15 @@ export function getLoanDashboardAnalytics(year) {
   return pfFetch(`/pf/dashboard/loans-analytics${s ? `?${s}` : ''}`)
 }
 
-/** Current calendar month expense buckets, cash/bank split, pending EMIs (receivable). */
-export function getCashflowMonthSummary() {
-  return pfFetch('/pf/dashboard/cashflow-month')
+/** Calendar month expense buckets, cash/bank split, pending EMIs (receivable). Omit year/month = current month. */
+export function getCashflowMonthSummary(year, month) {
+  const q = new URLSearchParams()
+  if (year != null && month != null) {
+    q.set('year', String(year))
+    q.set('month', String(month))
+  }
+  const s = q.toString()
+  return pfFetch(`/pf/dashboard/cashflow-month${s ? `?${s}` : ''}`)
 }
 
 export function getExpenseAnalytics(startDate, endDate) {
@@ -212,6 +265,19 @@ export function getMonthLedger(year, month, financeAccountId) {
     if (id && !Number.isNaN(id)) q.set('account_id', String(id))
   }
   return pfFetch(`/pf/reports/month-ledger?${q}`)
+}
+
+/** Date-range daily statement: ``fromDate`` / ``toDate`` as YYYY-MM-DD (inclusive). */
+export function getDailyLedger(fromDate, toDate, financeAccountId) {
+  const q = new URLSearchParams({
+    from_date: String(fromDate),
+    to_date: String(toDate),
+  })
+  if (financeAccountId != null && financeAccountId !== '') {
+    const id = Number(financeAccountId)
+    if (id && !Number.isNaN(id)) q.set('account_id', String(id))
+  }
+  return pfFetch(`/pf/reports/daily?${q}`)
 }
 
 const fin = (path, opts) => pfFetch(`/pf/finance${path}`, opts)
@@ -364,4 +430,71 @@ export function payLoanEmi(loanId, emiNumber, opts = {}) {
 
 export function createLoanPayment(loanId, body) {
   return fin(`/loans/${loanId}/payments`, { method: 'POST', body: JSON.stringify(body) })
+}
+
+/** Extra principal for loans without an EMI schedule; debits the given bank account. */
+export function addLoanPrincipalAmount(loanId, body) {
+  return fin(`/loans/${loanId}/add-amount`, {
+    method: 'POST',
+    body: JSON.stringify({
+      amount: Number(body.amount),
+      disbursement_date: body.disbursement_date,
+      finance_account_id: Number(body.finance_account_id),
+      notes: body.notes?.trim() || null,
+    }),
+  })
+}
+
+/** Mark loan closed when no outstanding balance (manual or EMI). */
+export function closeFinanceLoan(loanId) {
+  return fin(`/loans/${loanId}/close`, { method: 'POST' })
+}
+
+/** Parse RFC 5987 / quoted filename from Content-Disposition. */
+export function parseContentDispositionFilename(cd) {
+  if (!cd || typeof cd !== 'string') return null
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd)
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"(.*)"$/, '$1'))
+    } catch {
+      return star[1].trim()
+    }
+  }
+  const m = /filename="([^"]+)"/i.exec(cd)
+  return m ? m[1] : null
+}
+
+/** Authenticated GET returning a Blob (PDF/XLSX). Path must start with /pf/... */
+export async function pfFetchBlob(pathWithQuery) {
+  const t = getPfToken()
+  const res = await fetch(`${BASE}${pathWithQuery}`, {
+    headers: { ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+  })
+  if (!res.ok) {
+    let detail = await res.text()
+    try {
+      const j = JSON.parse(detail)
+      detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail ?? j)
+    } catch {
+      /* leave as text */
+    }
+    const err = new Error(detail || res.statusText)
+    err.status = res.status
+    throw err
+  }
+  const blob = await res.blob()
+  const filename = parseContentDispositionFilename(res.headers.get('Content-Disposition'))
+  return { blob, filename }
+}
+
+export function triggerDownloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }

@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from fastapi_service.api.v1.router import api_router
 from fastapi_service.database import Base, SessionLocal, engine
@@ -84,6 +85,8 @@ def _cors_allow_origins() -> list[str]:
             out.append(o)
     return out
 
+
+app.add_middleware(GZipMiddleware, minimum_size=800)
 
 app.add_middleware(
     CORSMiddleware,

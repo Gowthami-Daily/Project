@@ -1,4 +1,5 @@
 from datetime import date as date_type
+from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
@@ -33,6 +34,7 @@ from fastapi_service.schemas_extended import (
     FinanceInvestmentOut,
     FinanceLiabilityCreate,
     FinanceLiabilityOut,
+    LoanAddPrincipalBody,
     LoanCreate,
     LoanOut,
     LoanPaymentCreate,
@@ -480,10 +482,17 @@ def list_loans(
     rows = pf_finance_repo.list_loans(db, profile_id)
     ids = [r.id for r in rows]
     with_schedule = pf_finance_repo.loan_ids_with_emi_schedule(db, ids)
+    next_emi = pf_finance_repo.next_pending_emi_by_loan(db, profile_id)
     out: list[LoanOut] = []
     for r in rows:
         base = LoanOut.model_validate(r, from_attributes=True)
-        out.append(base.model_copy(update={'has_emi_schedule': r.id in with_schedule}))
+        ne = next_emi.get(r.id)
+        extra: dict = {'has_emi_schedule': r.id in with_schedule}
+        if ne:
+            d, amt = ne
+            extra['next_emi_due'] = d
+            extra['next_emi_amount'] = Decimal(str(amt))
+        out.append(base.model_copy(update=extra))
     return out
 
 
@@ -598,6 +607,50 @@ def pay_loan_emi(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.post('/loans/{loan_id}/add-amount', response_model=LoanOut)
+def add_loan_principal_amount(
+    loan_id: int,
+    body: LoanAddPrincipalBody,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LoanOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _loan_for_profile(db, loan_id, profile_id)
+    try:
+        row = pf_finance_repo.add_loan_principal_disbursement(
+            db,
+            profile_id,
+            loan_id,
+            disbursement_date=body.disbursement_date,
+            amount=body.amount,
+            finance_account_id=body.finance_account_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    has_s = pf_finance_repo.loan_has_emi_schedule(db, row.id)
+    return LoanOut.model_validate(row, from_attributes=True).model_copy(update={'has_emi_schedule': has_s})
+
+
+@router.post('/loans/{loan_id}/close', response_model=LoanOut)
+def close_loan(
+    loan_id: int,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LoanOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _loan_for_profile(db, loan_id, profile_id)
+    try:
+        row = pf_finance_repo.close_loan_if_settled(db, profile_id, loan_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    has_s = pf_finance_repo.loan_has_emi_schedule(db, row.id)
+    return LoanOut.model_validate(row, from_attributes=True).model_copy(update={'has_emi_schedule': has_s})
 
 
 @router.get('/loans/{loan_id}/payments', response_model=list[LoanPaymentOut])

@@ -1,0 +1,59 @@
+/* Personal Finance — mobile-first fintech shell (scoped via .pf-app parent) */
+.pf-app {
+  --pf-primary: #1e3a8a;
+  --pf-primary-hover: #172554;
+  --pf-green: #10b981;
+  --pf-red: #ef4444;
+  --pf-bg: #f1f5f9;
+  --pf-card: #ffffff;
+  font-family: 'Inter', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+@keyframes pf-sheet-up {
+  from {
+    transform: translate3d(0, 100%, 0);
+    opacity: 0.85;
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+  }
+}
+
+.pf-app .pf-sheet-panel {
+  animation: pf-sheet-up 0.32s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
+.pf-app .pf-page-enter {
+  animation: pf-fade-slide 0.22s ease-out;
+}
+
+@keyframes pf-fade-slide {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pf-app .pf-fab-tap:active {
+  transform: scale(0.94);
+}
+
+.pf-app .pf-interactive {
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.25s ease,
+    opacity 0.25s ease;
+}
+
+.pf-app .pf-interactive:active {
+  transform: scale(0.97);
+}
+
+.pf-app main {
+  transition: opacity 0.22s ease;
+}

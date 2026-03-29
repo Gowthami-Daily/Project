@@ -1,3 +1,4 @@
+import { lazy } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import AdminLayout from './admin/AdminLayout.jsx'
 import DashboardPage from './admin/DashboardPage.jsx'
@@ -110,15 +111,18 @@ import VaccinationPage from './admin/cattle/VaccinationPage.jsx'
 import ModulePlaceholder from './admin/ModulePlaceholder.jsx'
 import PersonalFinanceShell from './admin/personalFinance/PersonalFinanceShell.jsx'
 import PersonalFinanceDashboardPage from './admin/personalFinance/PersonalFinanceDashboardPage.jsx'
-import PfAccountsPage from './admin/personalFinance/pfPages/PfAccountsPage.jsx'
-import PfAssetsPage from './admin/personalFinance/pfPages/PfAssetsPage.jsx'
-import PfExpensesPage from './admin/personalFinance/pfPages/PfExpensesPage.jsx'
-import PfIncomePage from './admin/personalFinance/pfPages/PfIncomePage.jsx'
-import PfInvestmentsPage from './admin/personalFinance/pfPages/PfInvestmentsPage.jsx'
-import PfLiabilitiesPage from './admin/personalFinance/pfPages/PfLiabilitiesPage.jsx'
-import PfLoansPage from './admin/personalFinance/pfPages/PfLoansPage.jsx'
-import PfMonthlyStatementsPage from './admin/personalFinance/pfPages/PfMonthlyStatementsPage.jsx'
-import PfReportsHubPage from './admin/personalFinance/pfPages/PfReportsHubPage.jsx'
+
+const PfAccountsPage = lazy(() => import('./admin/personalFinance/pfPages/PfAccountsPage.jsx'))
+const PfAssetsPage = lazy(() => import('./admin/personalFinance/pfPages/PfAssetsPage.jsx'))
+const PfExpensesPage = lazy(() => import('./admin/personalFinance/pfPages/PfExpensesPage.jsx'))
+const PfIncomePage = lazy(() => import('./admin/personalFinance/pfPages/PfIncomePage.jsx'))
+const PfInvestmentsPage = lazy(() => import('./admin/personalFinance/pfPages/PfInvestmentsPage.jsx'))
+const PfLiabilitiesPage = lazy(() => import('./admin/personalFinance/pfPages/PfLiabilitiesPage.jsx'))
+const PfLoansPage = lazy(() => import('./admin/personalFinance/pfPages/PfLoansPage.jsx'))
+const PfMonthlyStatementsPage = lazy(() => import('./admin/personalFinance/pfPages/PfMonthlyStatementsPage.jsx'))
+const PfReportsHubPage = lazy(() => import('./admin/personalFinance/pfPages/PfReportsHubPage.jsx'))
+const PfMorePage = lazy(() => import('./admin/personalFinance/PfMorePage.jsx'))
+const PfSettingsPage = lazy(() => import('./admin/personalFinance/PfSettingsPage.jsx'))
 
 export default function App() {
   return (
@@ -136,7 +140,8 @@ export default function App() {
           <Route path="liabilities" element={<PfLiabilitiesPage />} />
           <Route path="loans" element={<PfLoansPage />} />
           <Route path="reports" element={<PfReportsHubPage />} />
-          <Route path="*" element={<Navigate to="/personal-finance" replace />} />
+          <Route path="more" element={<PfMorePage />} />
+          <Route path="settings" element={<PfSettingsPage />} />
         </Route>
         <Route path="/admin/personal-finance" element={<Navigate to="/personal-finance" replace />} />
         <Route path="/admin" element={<AdminLayout />}>

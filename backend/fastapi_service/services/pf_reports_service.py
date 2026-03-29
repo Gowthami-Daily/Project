@@ -150,6 +150,32 @@ def month_ledger(
     }
 
 
+def daily_ledger(
+    db: Session,
+    profile_id: int,
+    from_date: date,
+    to_date: date,
+    account_id: int | None = None,
+) -> dict:
+    """
+    Income and expense rows between ``from_date`` and ``to_date`` (inclusive), up to 5000 each.
+    """
+    if from_date > to_date:
+        raise ValueError('from_date must be on or before to_date')
+    span = (to_date - from_date).days + 1
+    if span > 400:
+        raise ValueError('Date range cannot exceed 400 days')
+    _ensure_finance_account(db, profile_id, account_id)
+    inc = pf_finance_repo.list_income(db, profile_id, 0, 5000, from_date, to_date, account_id)
+    exp = pf_finance_repo.list_expenses(db, profile_id, 0, 5000, from_date, to_date, account_id)
+    return {
+        'from_date': from_date.isoformat(),
+        'to_date': to_date.isoformat(),
+        'income': [finance_income_to_out(r).model_dump(mode='json') for r in inc],
+        'expenses': [finance_expense_to_out(r).model_dump(mode='json') for r in exp],
+    }
+
+
 def monthly_financial_tables(
     db: Session,
     profile_id: int,
