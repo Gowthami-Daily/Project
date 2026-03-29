@@ -1,2 +1,3 @@
-# Render: set Root Directory to `backend` (this folder). $PORT is injected by Render.
-web: gunicorn fastapi_service.main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+# Render: Root Directory = ``backend``. $PORT is set by Render — always pass --bind.
+# ``main:app`` → ``backend/main.py`` (shim to ``fastapi_service.main:app``).
+web: gunicorn main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --workers 2 --timeout 120
