@@ -1,0 +1,41 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Set DATABASE_URL on both services (same Postgres). Use distinct secrets for JWT vs Django.
+
+services:
+  # --- FastAPI (ASGI) ---
+  - type: web
+    name: gowthami-fastapi
+    runtime: python
+    plan: free # upgrade to `starter` for always-on / no cold starts
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # App: fastapi_service/main.py → ``app``
+    startCommand: gunicorn fastapi_service.main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /hello
+    envVars:
+      - key: PYTHON_VERSION
+        value: '3.12.3'
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+
+  # --- Django (WSGI) — admin + /api/... ---
+  - type: web
+    name: gowthami-django
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    preDeployCommand: python manage.py migrate --noinput
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /api/hello/
+    envVars:
+      - key: PYTHON_VERSION
+        value: '3.12.3'
+      - key: DATABASE_URL
+        sync: false
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: 'false'

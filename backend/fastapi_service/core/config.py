@@ -12,14 +12,14 @@ def _default_sqlite_url() -> str:
 
 def _normalize_database_url(url: str) -> str:
     """
-    Render/Heroku supply ``postgresql://...``. SQLAlchemy + psycopg v3 expects
-    ``postgresql+psycopg://...``. Legacy ``postgres://`` is normalized too.
+    Render/Heroku supply ``postgresql://...``. With ``psycopg2-binary``, SQLAlchemy
+    uses ``postgresql+psycopg2://...``. Legacy ``postgres://`` is normalized too.
     """
     u = url.strip()
     if u.startswith('postgres://'):
         u = 'postgresql://' + u[len('postgres://') :]
     if u.startswith('postgresql://'):
-        return 'postgresql+psycopg://' + u[len('postgresql://') :]
+        return 'postgresql+psycopg2://' + u[len('postgresql://') :]
     return u
 
 

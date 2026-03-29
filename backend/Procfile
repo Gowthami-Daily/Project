@@ -1,0 +1,2 @@
+# Render: set Root Directory to `backend` (this folder). $PORT is injected by Render.
+web: gunicorn fastapi_service.main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --workers 2 --timeout 120

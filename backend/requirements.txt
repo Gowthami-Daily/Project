@@ -1,12 +1,15 @@
 Django>=5.0,<6
 djangorestframework>=3.15,<4
 django-cors-headers>=4.4,<5
+whitenoise>=6.6,<7
+# FastAPI on Render: use gunicorn + uvicorn worker (see Procfile)
 fastapi>=0.115,<1
 python-multipart>=0.0.9,<1
 httpx>=0.27,<1
 uvicorn[standard]>=0.32,<1
+gunicorn>=22.0,<24
 sqlalchemy>=2.0,<3
-psycopg[binary]>=3.2,<4
+psycopg2-binary>=2.9.9,<3
 pydantic-settings>=2.0,<3
 python-dotenv>=1.0,<2
 python-jose[cryptography]>=3.3,<4
