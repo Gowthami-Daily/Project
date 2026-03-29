@@ -1,10 +1,14 @@
 """
-ASGI config: Django (default routes) + FastAPI mounted at /fastapi.
+ASGI config: Django at ``/`` + FastAPI mounted at ``/fastapi``.
 
-Run with uvicorn so both stacks are active, e.g.:
-  uvicorn config.asgi:application --reload --host 127.0.0.1 --port 8000
+- API paths become ``/fastapi/api/v1/...``, ``/fastapi/inflow/...``, etc.
+- For the same URLs as production (no ``/fastapi`` prefix), run::
 
-``manage.py runserver`` uses WSGI and does not include the FastAPI mounts.
+    uvicorn main:app --reload --host 127.0.0.1 --port 8000
+
+  See ``run_dev.bat`` (FastAPI only) vs ``run_asgi_combined.bat`` (this file).
+
+``manage.py runserver`` uses WSGI and does not include these mounts.
 """
 
 import os

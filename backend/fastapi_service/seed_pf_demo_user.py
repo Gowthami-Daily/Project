@@ -63,6 +63,7 @@ def _seed_demo_transactions(db: Session, user_id: int) -> None:
                 entry_date=_month_on_or_before(today, mb),
                 description=desc,
             ),
+            adjust_account_balance=False,
         )
 
     expenses = [
@@ -86,6 +87,7 @@ def _seed_demo_transactions(db: Session, user_id: int) -> None:
                 entry_date=_month_on_or_before(today, mb),
                 description=desc,
             ),
+            adjust_account_balance=False,
         )
 
 

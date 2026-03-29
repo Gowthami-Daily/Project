@@ -5,10 +5,51 @@ Does not alter dairy ERP models in ``models.py`` — link farm profiles via ``Pr
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from fastapi_service.database import Base
+
+
+class PfExpenseCategory(Base):
+    """
+    Master expense categories for personal finance (separate from dairy ERP ``expense_categories``).
+    """
+
+    __tablename__ = 'pf_expense_categories'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    icon: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PfIncomeCategory(Base):
+    """Master income categories for personal finance."""
+
+    __tablename__ = 'pf_income_categories'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    icon: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    color: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PfPaymentInstrument(Base):
+    """Saved credit cards and UPI IDs per profile — each links to the account that is debited."""
+
+    __tablename__ = 'pf_payment_instruments'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    finance_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Role(Base):
@@ -92,7 +133,17 @@ class FinanceIncome(Base):
     income_type: Mapped[str] = mapped_column(String(80), nullable=False, default='other')
     entry_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    income_category_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('pf_income_categories.id'), nullable=True, index=True
+    )
+    received_from: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    receipt_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    recurring_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    income_category_rel: Mapped['PfIncomeCategory | None'] = relationship()
 
 
 class FinanceExpense(Base):
@@ -105,7 +156,25 @@ class FinanceExpense(Base):
     category: Mapped[str] = mapped_column(String(120), nullable=False, default='general')
     entry_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expense_category_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('pf_expense_categories.id'), nullable=True, index=True
+    )
+    paid_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    bill_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_instrument_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey('pf_payment_instruments.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    is_recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    recurring_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    payment_status: Mapped[str] = mapped_column(String(20), nullable=False, default='PAID')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    expense_category_rel: Mapped['PfExpenseCategory | None'] = relationship()
+    payment_instrument_rel: Mapped['PfPaymentInstrument | None'] = relationship()
 
 
 class FinanceInvestment(Base):
@@ -150,9 +219,39 @@ class Loan(Base):
     borrower_name: Mapped[str] = mapped_column(String(200), nullable=False)
     loan_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     interest_rate: Mapped[float | None] = mapped_column(Numeric(6, 3), nullable=True)
+    interest_free_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default='ACTIVE')
+    term_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    commission_percent: Mapped[float | None] = mapped_column(Numeric(6, 3), nullable=True)
+    commission_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    total_interest: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    total_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    emi_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    remaining_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+
+
+class LoanSchedule(Base):
+    """Flat-interest EMI schedule for a loan (optional; legacy loans have no rows)."""
+
+    __tablename__ = 'loan_schedule'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    loan_id: Mapped[int] = mapped_column(Integer, ForeignKey('loans.id', ondelete='CASCADE'), nullable=False, index=True)
+    emi_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    emi_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    principal_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    interest_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    remaining_balance: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    payment_status: Mapped[str] = mapped_column(String(20), nullable=False, default='Pending')
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    amount_paid: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    finance_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
+    )
+    credit_as_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class LoanPayment(Base):
@@ -165,3 +264,7 @@ class LoanPayment(Base):
     interest_paid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     total_paid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     balance_remaining: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    finance_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
+    )
+    credit_as_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

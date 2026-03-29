@@ -17,9 +17,25 @@ async def lifespan(app: FastAPI):
     import fastapi_service.models_extended  # noqa: F401 — roles, profiles, finance tables
 
     Base.metadata.create_all(bind=engine)
-    from fastapi_service.migrate_sqlite import ensure_users_role_id_column
+    from fastapi_service.migrate_sqlite import (
+        ensure_loan_bank_account_columns,
+        ensure_loan_credit_as_cash_columns,
+        ensure_pf_finance_expense_income_columns,
+        ensure_pf_loan_extension_columns,
+        ensure_loan_interest_free_days_column,
+        ensure_pf_payment_instrument_column,
+        ensure_pf_payment_instrument_finance_account_column,
+        ensure_users_role_id_column,
+    )
 
     ensure_users_role_id_column(engine)
+    ensure_pf_loan_extension_columns(engine)
+    ensure_loan_interest_free_days_column(engine)
+    ensure_loan_bank_account_columns(engine)
+    ensure_loan_credit_as_cash_columns(engine)
+    ensure_pf_finance_expense_income_columns(engine)
+    ensure_pf_payment_instrument_column(engine)
+    ensure_pf_payment_instrument_finance_account_column(engine)
     db = SessionLocal()
     try:
         from fastapi_service.seed_inflow import seed_if_empty
@@ -29,8 +45,10 @@ async def lifespan(app: FastAPI):
         from fastapi_service.seed_procurement import seed_procurement_farmers_if_empty
         from fastapi_service.seed_extended import seed_extended
         from fastapi_service.seed_pf_demo_user import seed_pf_demo_user
+        from fastapi_service.seed_pf_categories import seed_pf_finance_categories
 
         seed_extended(db)
+        seed_pf_finance_categories(db)
         seed_default_admin_if_empty(db)
         seed_extended(db)
         seed_pf_demo_user(db)

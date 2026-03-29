@@ -22,7 +22,7 @@ Models + PostgreSQL/SQLite
 | `core/database.py` | `engine`, `SessionLocal`, `Base`, `get_db` |
 | `core/dependencies.py` | Shared `Depends()` (DB session, pagination) |
 | `core/security.py` | JWT encode/decode |
-| `core/password.py` | bcrypt hashing via **passlib** |
+| `core/password.py` | bcrypt hashing via **bcrypt** |
 | `models.py` | SQLAlchemy ORM (migrate to `models/` package when convenient) |
 | `schemas_*.py` / `schemas_farmer.py` | Pydantic request/response DTOs |
 | `repositories/` | DB access functions |

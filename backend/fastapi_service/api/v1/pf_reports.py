@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
 from fastapi_service.core.dependencies import ActiveProfileId, DbSession
 from fastapi_service.services import pf_reports_service
@@ -42,6 +42,17 @@ def expense_report(
     return pf_reports_service.expense_report(db, profile_id, start_date, end_date)
 
 
+@router.get('/expense-analytics')
+def expense_analytics(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    return pf_reports_service.expense_analytics(db, profile_id, start_date, end_date)
+
+
 @router.get('/income-report')
 def income_report(
     _: ReportReader,
@@ -69,3 +80,38 @@ def loan_report(
     profile_id: ActiveProfileId,
 ) -> dict:
     return pf_reports_service.loan_report(db, profile_id)
+
+
+@router.get('/month-ledger')
+def month_ledger(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12, description='Calendar month 1–12'),
+    account_id: int | None = Query(
+        None,
+        description='Optional finance account — only rows linked to this account',
+    ),
+) -> dict:
+    try:
+        return pf_reports_service.month_ledger(db, profile_id, year, month, account_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get('/monthly-tables')
+def monthly_financial_tables(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    year: int = Query(..., ge=2000, le=2100, description='Calendar year'),
+    account_id: int | None = Query(
+        None,
+        description='Optional finance account — tables use that bank only for income/expense/cash columns',
+    ),
+) -> dict:
+    try:
+        return pf_reports_service.monthly_financial_tables(db, profile_id, year, account_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e

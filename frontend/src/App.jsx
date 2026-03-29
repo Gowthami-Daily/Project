@@ -109,13 +109,35 @@ import ProfitReportPage from './admin/cattle/ProfitReportPage.jsx'
 import VaccinationPage from './admin/cattle/VaccinationPage.jsx'
 import ModulePlaceholder from './admin/ModulePlaceholder.jsx'
 import PersonalFinanceShell from './admin/personalFinance/PersonalFinanceShell.jsx'
+import PersonalFinanceDashboardPage from './admin/personalFinance/PersonalFinanceDashboardPage.jsx'
+import PfAccountsPage from './admin/personalFinance/pfPages/PfAccountsPage.jsx'
+import PfAssetsPage from './admin/personalFinance/pfPages/PfAssetsPage.jsx'
+import PfExpensesPage from './admin/personalFinance/pfPages/PfExpensesPage.jsx'
+import PfIncomePage from './admin/personalFinance/pfPages/PfIncomePage.jsx'
+import PfInvestmentsPage from './admin/personalFinance/pfPages/PfInvestmentsPage.jsx'
+import PfLiabilitiesPage from './admin/personalFinance/pfPages/PfLiabilitiesPage.jsx'
+import PfLoansPage from './admin/personalFinance/pfPages/PfLoansPage.jsx'
+import PfMonthlyStatementsPage from './admin/personalFinance/pfPages/PfMonthlyStatementsPage.jsx'
+import PfReportsHubPage from './admin/personalFinance/pfPages/PfReportsHubPage.jsx'
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<MarketingSite />} />
-        <Route path="/personal-finance" element={<PersonalFinanceShell />} />
+        <Route path="/personal-finance" element={<PersonalFinanceShell />}>
+          <Route index element={<PersonalFinanceDashboardPage />} />
+          <Route path="monthly-statements" element={<PfMonthlyStatementsPage />} />
+          <Route path="accounts" element={<PfAccountsPage />} />
+          <Route path="income" element={<PfIncomePage />} />
+          <Route path="expenses" element={<PfExpensesPage />} />
+          <Route path="investments" element={<PfInvestmentsPage />} />
+          <Route path="assets" element={<PfAssetsPage />} />
+          <Route path="liabilities" element={<PfLiabilitiesPage />} />
+          <Route path="loans" element={<PfLoansPage />} />
+          <Route path="reports" element={<PfReportsHubPage />} />
+          <Route path="*" element={<Navigate to="/personal-finance" replace />} />
+        </Route>
         <Route path="/admin/personal-finance" element={<Navigate to="/personal-finance" replace />} />
         <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<DashboardPage />} />

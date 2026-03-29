@@ -1,0 +1,96 @@
+import {
+  AcademicCapIcon,
+  ArrowTrendingUpIcon,
+  ArrowUturnLeftIcon,
+  BanknotesIcon,
+  BeakerIcon,
+  BriefcaseIcon,
+  BuildingOfficeIcon,
+  BuildingStorefrontIcon,
+  ChartBarIcon,
+  ComputerDesktopIcon,
+  CreditCardIcon,
+  CubeIcon,
+  EllipsisHorizontalIcon,
+  FilmIcon,
+  GiftIcon,
+  HeartIcon,
+  HomeIcon,
+  HomeModernIcon,
+  PaperAirplaneIcon,
+  PhoneIcon,
+  QuestionMarkCircleIcon,
+  ReceiptPercentIcon,
+  ShieldCheckIcon,
+  ShoppingBagIcon,
+  ShoppingCartIcon,
+  TruckIcon,
+  UserGroupIcon,
+  WifiIcon,
+  WrenchScrewdriverIcon,
+  BoltIcon,
+} from '@heroicons/react/24/solid'
+
+/** Map backend ``icon`` keys (seed) to Heroicons. */
+const MAP = {
+  cart: ShoppingCartIcon,
+  home: HomeIcon,
+  bolt: BoltIcon,
+  droplet: BoltIcon,
+  wifi: WifiIcon,
+  phone: PhoneIcon,
+  car: TruckIcon,
+  'wrench-screwdriver': WrenchScrewdriverIcon,
+  banknotes: BanknotesIcon,
+  'credit-card': CreditCardIcon,
+  shield: ShieldCheckIcon,
+  heart: HeartIcon,
+  'building-storefront': BuildingStorefrontIcon,
+  cube: CubeIcon,
+  users: UserGroupIcon,
+  'arrow-trending-up': ArrowTrendingUpIcon,
+  'circle-stack': BanknotesIcon,
+  'shopping-bag': ShoppingBagIcon,
+  film: FilmIcon,
+  'paper-airplane': PaperAirplaneIcon,
+  'academic-cap': AcademicCapIcon,
+  'home-modern': HomeModernIcon,
+  'ellipsis-horizontal': EllipsisHorizontalIcon,
+  briefcase: BriefcaseIcon,
+  'building-office': BuildingOfficeIcon,
+  beaker: BeakerIcon,
+  'percent-badge': ReceiptPercentIcon,
+  'chart-bar': ChartBarIcon,
+  'computer-desktop': ComputerDesktopIcon,
+  gift: GiftIcon,
+  truck: TruckIcon,
+  'arrow-uturn-left': ArrowUturnLeftIcon,
+}
+
+export function PfCategoryIcon({ name, className = 'h-4 w-4' }) {
+  const Icon = MAP[name] || QuestionMarkCircleIcon
+  return <Icon className={className} aria-hidden />
+}
+
+export const PF_COLOR_BADGE = {
+  green: 'bg-emerald-50 text-emerald-900 ring-emerald-200',
+  blue: 'bg-blue-50 text-blue-900 ring-blue-200',
+  yellow: 'bg-amber-50 text-amber-900 ring-amber-200',
+  purple: 'bg-violet-50 text-violet-900 ring-violet-200',
+  indigo: 'bg-indigo-50 text-indigo-900 ring-indigo-200',
+  orange: 'bg-orange-50 text-orange-900 ring-orange-200',
+  gray: 'bg-slate-100 text-slate-800 ring-slate-200',
+  red: 'bg-rose-50 text-rose-900 ring-rose-200',
+  pink: 'bg-pink-50 text-pink-900 ring-pink-200',
+  teal: 'bg-teal-50 text-teal-900 ring-teal-200',
+  emerald: 'bg-emerald-50 text-emerald-900 ring-emerald-200',
+  violet: 'bg-violet-50 text-violet-900 ring-violet-200',
+  sky: 'bg-sky-50 text-sky-900 ring-sky-200',
+  rose: 'bg-rose-50 text-rose-900 ring-rose-200',
+  lime: 'bg-lime-50 text-lime-900 ring-lime-200',
+  slate: 'bg-slate-100 text-slate-800 ring-slate-200',
+}
+
+export function categoryBadgeClass(colorKey) {
+  return PF_COLOR_BADGE[colorKey] || PF_COLOR_BADGE.slate
+}
