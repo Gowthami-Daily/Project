@@ -1,4 +1,6 @@
-const BASE = '/fastapi/ledger'
+import { fastapiUrl } from '../../lib/fastapiBase.js'
+
+const BASE = fastapiUrl('/ledger')
 
 async function parseJson(res) {
   const text = await res.text()

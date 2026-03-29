@@ -1,4 +1,6 @@
-const BASE = '/fastapi/inflow'
+import { fastapiUrl } from '../../lib/fastapiBase.js'
+
+const BASE = fastapiUrl('/inflow')
 
 async function parseJson(res) {
   const text = await res.text()

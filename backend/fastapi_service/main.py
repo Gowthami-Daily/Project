@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -44,12 +45,32 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title='Gowthami Daily API', version='1.1.0', lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def _cors_allow_origins() -> list[str]:
+    """Local Vite + production Vercel; extend with comma-separated ``CORS_ORIGINS`` env."""
+    origins = [
         'http://localhost:5173',
         'http://127.0.0.1:5173',
-    ],
+        'https://project-gujv.vercel.app',
+    ]
+    extra = os.environ.get('CORS_ORIGINS', '')
+    for part in extra.split(','):
+        p = part.strip()
+        if p.startswith('http'):
+            origins.append(p)
+    seen: set[str] = set()
+    out: list[str] = []
+    for o in origins:
+        if o not in seen:
+            seen.add(o)
+            out.append(o)
+    return out
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_allow_origins(),
+    allow_origin_regex=r'https://.*\.vercel\.app',
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],

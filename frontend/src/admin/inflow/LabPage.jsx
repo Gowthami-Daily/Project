@@ -147,7 +147,8 @@ export default function LabPage() {
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error} — ensure uvicorn is running with ASGI on port 8000.
+          {error} — local: run FastAPI on port 8000 with Vite proxy. Production: set{' '}
+          <code className="rounded bg-slate-100 px-1">VITE_API_URL</code> on Vercel.
         </div>
       )}
 

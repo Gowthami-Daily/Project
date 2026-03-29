@@ -1,4 +1,6 @@
-const BASE = '/api/v1'
+import { fastapiUrl } from '../../lib/fastapiBase.js'
+
+const BASE = fastapiUrl('/api/v1')
 
 const TOKEN_KEY = 'gowthami_pf_access_token'
 
