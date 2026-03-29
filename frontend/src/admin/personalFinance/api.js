@@ -65,6 +65,11 @@ export async function pfFetch(path, options = {}) {
   return parseJson(res)
 }
 
+/** Current user (requires valid JWT). */
+export function fetchPfMe() {
+  return pfFetch('/auth/me')
+}
+
 /** JSON login — stores token client-side; caller should call setPfToken. */
 export async function loginPf(email, password) {
   const res = await fetch(`${BASE}/auth/login/json`, {
@@ -75,35 +80,6 @@ export async function loginPf(email, password) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const err = new Error(typeof data.detail === 'string' ? data.detail : 'Login failed')
-    err.status = res.status
-    throw err
-  }
-  return data
-}
-
-/**
- * Open registration — creates FastAPI ``users`` row + personal profile (no auth header).
- * Password min length 8 (backend). Then call ``loginPf`` to obtain a JWT.
- */
-export async function registerPf({ name, email, password, role = 'USER' }) {
-  const res = await fetch(`${BASE}/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      password,
-      role,
-    }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    let msg = 'Registration failed'
-    if (typeof data.detail === 'string') msg = data.detail
-    else if (Array.isArray(data.detail)) {
-      msg = data.detail.map((d) => d.msg || d).join('; ')
-    }
-    const err = new Error(msg)
     err.status = res.status
     throw err
   }
@@ -248,6 +224,24 @@ export function getExpenseAnalytics(startDate, endDate) {
   return pfFetch(`/pf/reports/expense-analytics${s ? `?${s}` : ''}`)
 }
 
+/** Full analytics dashboard payload (KPIs, trends, breakdowns, monthly series). */
+export function getReportsSummary(params) {
+  const { from, to, accountId, expenseCategoryId, person } = params || {}
+  const q = new URLSearchParams()
+  q.set('from', String(from))
+  q.set('to', String(to))
+  if (accountId != null && String(accountId).trim() !== '') {
+    const id = Number(accountId)
+    if (id && !Number.isNaN(id)) q.set('account_id', String(id))
+  }
+  if (expenseCategoryId != null && String(expenseCategoryId).trim() !== '') {
+    const cid = Number(expenseCategoryId)
+    if (cid && !Number.isNaN(cid)) q.set('expense_category_id', String(cid))
+  }
+  if (person && String(person).trim()) q.set('person', String(person).trim())
+  return pfFetch(`/pf/reports/summary?${q}`)
+}
+
 export function getMonthlyFinancialTables(year, financeAccountId) {
   const q = new URLSearchParams({ year: String(year) })
   if (financeAccountId != null && financeAccountId !== '') {
@@ -365,30 +359,109 @@ export function createFinanceInvestment(body) {
   return fin('/investments', { method: 'POST', body: JSON.stringify(body) })
 }
 
+export function updateFinanceInvestment(investmentId, body) {
+  return fin(`/investments/${investmentId}`, { method: 'PUT', body: JSON.stringify(body) })
+}
+
+export function deleteFinanceInvestment(investmentId) {
+  return fin(`/investments/${investmentId}`, { method: 'DELETE' })
+}
+
+export function getAssetsSummary() {
+  return fin('/assets/summary')
+}
+
 export function listFinanceAssets(params = {}) {
-  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 500) })
+  if (params.asset_type && params.asset_type !== 'ALL') q.set('asset_type', String(params.asset_type))
+  if (params.location && String(params.location).trim()) q.set('location', String(params.location).trim())
+  if (params.search && String(params.search).trim()) q.set('search', String(params.search).trim())
   return fin(`/assets?${q}`)
+}
+
+export function getFinanceAsset(assetId) {
+  return fin(`/assets/${assetId}`)
 }
 
 export function createFinanceAsset(body) {
   return fin('/assets', { method: 'POST', body: JSON.stringify(body) })
 }
 
+export function patchFinanceAsset(assetId, body) {
+  return fin(`/assets/${assetId}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function deleteFinanceAsset(assetId) {
+  return fin(`/assets/${assetId}`, { method: 'DELETE' })
+}
+
 export function listFinanceLiabilities(params = {}) {
-  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  const q = new URLSearchParams({
+    skip: String(params.skip ?? 0),
+    limit: String(params.limit ?? 500),
+  })
+  if (params.liability_type && params.liability_type !== 'ALL')
+    q.set('liability_type', String(params.liability_type))
+  if (params.status && params.status !== 'ALL') q.set('status', String(params.status))
+  if (params.due_this_month === true) q.set('due_this_month', 'true')
+  if (params.search && String(params.search).trim()) q.set('search', String(params.search).trim())
   return fin(`/liabilities?${q}`)
+}
+
+export function getLiabilitiesSummary() {
+  return fin('/liabilities/summary')
+}
+
+export function getFinanceLiability(liabilityId) {
+  return fin(`/liabilities/${liabilityId}`)
 }
 
 export function createFinanceLiability(body) {
   return fin('/liabilities', { method: 'POST', body: JSON.stringify(body) })
 }
 
-export function listFinanceLoans() {
-  return fin('/loans')
+export function patchFinanceLiability(liabilityId, body) {
+  return fin(`/liabilities/${liabilityId}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function deleteFinanceLiability(liabilityId) {
+  return fin(`/liabilities/${liabilityId}`, { method: 'DELETE' })
+}
+
+export function listLiabilityPayments(liabilityId) {
+  return fin(`/liabilities/${liabilityId}/payments`)
+}
+
+export function createLiabilityPayment(liabilityId, body) {
+  return fin(`/liabilities/${liabilityId}/payments`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function closeFinanceLiability(liabilityId) {
+  return fin(`/liabilities/${liabilityId}/close`, { method: 'POST' })
+}
+
+export function listFinanceLoans(params = {}) {
+  const q = new URLSearchParams()
+  if (params.loan_type && params.loan_type !== 'ALL') q.set('loan_type', String(params.loan_type))
+  if (params.status && params.status !== 'ALL') q.set('status', String(params.status))
+  if (params.search && String(params.search).trim()) q.set('search', String(params.search).trim())
+  const s = q.toString()
+  return fin(`/loans${s ? `?${s}` : ''}`)
+}
+
+export function getFinanceLoansSummary() {
+  return fin('/loans/summary')
 }
 
 export function createFinanceLoan(body) {
   return fin('/loans', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function patchFinanceLoan(loanId, body) {
+  return fin(`/loans/${loanId}`, { method: 'PATCH', body: JSON.stringify(body) })
 }
 
 export function listLoanSchedule(loanId) {

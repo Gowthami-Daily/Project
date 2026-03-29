@@ -1,5 +1,4 @@
 from datetime import date as date_type
-from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
@@ -19,11 +18,13 @@ from fastapi_service.models_extended import (
 )
 from fastapi_service.repositories import pf_finance_repo
 from fastapi_service.schemas_extended import (
+    AssetsPageSummaryOut,
     FinanceAccountBalanceUpdate,
     FinanceAccountCreate,
     FinanceAccountOut,
     FinanceAssetCreate,
     FinanceAssetOut,
+    FinanceAssetUpdate,
     FinanceExpenseCreate,
     FinanceExpenseOut,
     FinanceExpenseUpdate,
@@ -32,11 +33,18 @@ from fastapi_service.schemas_extended import (
     FinanceIncomeUpdate,
     FinanceInvestmentCreate,
     FinanceInvestmentOut,
+    FinanceInvestmentUpdate,
     FinanceLiabilityCreate,
     FinanceLiabilityOut,
+    FinanceLiabilityUpdate,
+    LiabilitiesPageSummaryOut,
+    LiabilityPaymentCreate,
+    LiabilityPaymentOut,
     LoanAddPrincipalBody,
     LoanCreate,
     LoanOut,
+    LoanPatch,
+    LoansPageSummaryOut,
     LoanPaymentCreate,
     LoanPaymentOut,
     LoanScheduleCreditUpdate,
@@ -47,7 +55,12 @@ from fastapi_service.schemas_extended import (
     finance_expense_to_out,
     finance_income_to_out,
 )
-from fastapi_service.services import pf_profile_service
+from fastapi_service.services import (
+    pf_asset_ui_service,
+    pf_liability_ui_service,
+    pf_loan_ui_service,
+    pf_profile_service,
+)
 from fastapi_service.services.rbac_service import FinanceParticipant
 
 router = APIRouter()
@@ -58,6 +71,26 @@ def _loan_for_profile(db, loan_id: int, profile_id: int) -> Loan:
     if ln is None or ln.profile_id != profile_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Loan not found')
     return ln
+
+
+def _liability_for_profile(db, liability_id: int, profile_id: int) -> FinanceLiability:
+    ln = db.get(FinanceLiability, liability_id)
+    if ln is None or ln.profile_id != profile_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Liability not found')
+    return ln
+
+
+def _loan_out_fresh(db: DbSession, profile_id: int, row: Loan) -> LoanOut:
+    has_s = pf_finance_repo.loan_has_emi_schedule(db, row.id)
+    next_emi = pf_finance_repo.next_pending_emi_by_loan(db, profile_id)
+    imap = pf_finance_repo.interest_paid_by_loan_ids(db, profile_id, [row.id])
+    return pf_loan_ui_service.build_loan_out(
+        db,
+        row,
+        has_emi_schedule=has_s,
+        next_emi=next_emi.get(row.id),
+        interest_collected=imap.get(row.id, 0.0),
+    )
 
 
 @router.get('/accounts', response_model=list[FinanceAccountOut])
@@ -407,12 +440,60 @@ def create_investment(
     row = FinanceInvestment(
         profile_id=profile_id,
         investment_type=body.investment_type,
+        name=body.name,
         invested_amount=body.invested_amount,
-        current_value=body.current_value,
-        platform=body.platform,
-        as_of_date=body.as_of_date,
+        investment_date=body.investment_date,
+        platform=(body.platform.strip() or None) if body.platform is not None else None,
+        notes=(body.notes.strip() or None) if body.notes is not None else None,
     )
     return pf_finance_repo.create_investment(db, row)
+
+
+@router.put('/investments/{investment_id}', response_model=FinanceInvestmentOut)
+def update_investment(
+    investment_id: int,
+    _: FinanceParticipant,
+    body: FinanceInvestmentUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceInvestment:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    row = pf_finance_repo.get_investment_for_profile(db, investment_id, profile_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Investment not found')
+    row.investment_type = body.investment_type
+    row.name = body.name
+    row.invested_amount = body.invested_amount
+    row.investment_date = body.investment_date
+    row.platform = (body.platform.strip() or None) if body.platform is not None else None
+    row.notes = (body.notes.strip() or None) if body.notes is not None else None
+    return pf_finance_repo.update_investment(db, row)
+
+
+@router.delete('/investments/{investment_id}', status_code=status.HTTP_204_NO_CONTENT)
+def delete_investment(
+    investment_id: int,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> Response:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    row = pf_finance_repo.get_investment_for_profile(db, investment_id, profile_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Investment not found')
+    pf_finance_repo.delete_investment(db, row)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/assets/summary', response_model=AssetsPageSummaryOut)
+def assets_summary(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> AssetsPageSummaryOut:
+    return pf_asset_ui_service.assets_page_summary(db, profile_id)
 
 
 @router.get('/assets', response_model=list[FinanceAssetOut])
@@ -420,9 +501,37 @@ def list_assets(
     _: FinanceParticipant,
     db: DbSession,
     profile_id: ActiveProfileId,
-    page: Pagination,
-) -> list[FinanceAsset]:
-    return pf_finance_repo.list_assets(db, profile_id, page.skip, page.limit)
+    asset_type: str | None = Query(None),
+    location: str | None = Query(None, description='Filter by location (substring match)'),
+    search: str | None = Query(None, description='Search asset name'),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=2000),
+) -> list[FinanceAssetOut]:
+    at = asset_type.strip().upper() if asset_type else None
+    if at in ('ALL', ''):
+        at = None
+    return pf_asset_ui_service.list_enriched_assets(
+        db,
+        profile_id,
+        skip,
+        limit,
+        asset_type=at,
+        location_q=location,
+        search=search,
+    )
+
+
+@router.get('/assets/{asset_id}', response_model=FinanceAssetOut)
+def get_asset(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    asset_id: int,
+) -> FinanceAssetOut:
+    out = pf_asset_ui_service.get_enriched_asset(db, profile_id, asset_id)
+    if out is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Asset not found')
+    return out
 
 
 @router.post('/assets', response_model=FinanceAssetOut, status_code=201)
@@ -432,15 +541,75 @@ def create_asset(
     user: CurrentUser,
     db: DbSession,
     profile_id: ActiveProfileId,
-) -> FinanceAsset:
+) -> FinanceAssetOut:
     pf_profile_service.assert_can_write(db, user.id, profile_id)
+    if body.linked_liability_id is not None:
+        _liability_for_profile(db, body.linked_liability_id, profile_id)
     row = FinanceAsset(
         profile_id=profile_id,
         asset_name=body.asset_name,
         asset_type=body.asset_type,
-        value=body.value,
+        purchase_value=body.purchase_value,
+        current_value=body.current_value if body.current_value is not None else body.purchase_value,
+        purchase_date=body.purchase_date,
+        depreciation_rate=body.depreciation_rate,
+        location=(body.location or '').strip() or None,
+        linked_liability_id=body.linked_liability_id,
+        notes=body.notes,
     )
-    return pf_finance_repo.create_asset(db, row)
+    pf_finance_repo.create_asset(db, row)
+    out = pf_asset_ui_service.get_enriched_asset(db, profile_id, row.id)
+    assert out is not None
+    return out
+
+
+@router.patch('/assets/{asset_id}', response_model=FinanceAssetOut)
+def patch_asset(
+    _: FinanceParticipant,
+    asset_id: int,
+    body: FinanceAssetUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceAssetOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    row = pf_finance_repo.get_asset_for_profile(db, asset_id, profile_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Asset not found')
+    data = body.model_dump(exclude_unset=True)
+    if 'linked_liability_id' in data and data['linked_liability_id'] is not None:
+        _liability_for_profile(db, int(data['linked_liability_id']), profile_id)
+    if 'location' in data and data['location'] is not None:
+        data['location'] = str(data['location']).strip() or None
+    pf_finance_repo.update_asset(db, row, data)
+    out = pf_asset_ui_service.get_enriched_asset(db, profile_id, asset_id)
+    assert out is not None
+    return out
+
+
+@router.delete('/assets/{asset_id}', status_code=status.HTTP_204_NO_CONTENT)
+def delete_asset(
+    _: FinanceParticipant,
+    asset_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> Response:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    row = pf_finance_repo.get_asset_for_profile(db, asset_id, profile_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Asset not found')
+    pf_finance_repo.delete_asset(db, row)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/liabilities/summary', response_model=LiabilitiesPageSummaryOut)
+def liabilities_summary(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LiabilitiesPageSummaryOut:
+    return pf_liability_ui_service.liabilities_page_summary(db, profile_id)
 
 
 @router.get('/liabilities', response_model=list[FinanceLiabilityOut])
@@ -448,9 +617,29 @@ def list_liabilities(
     _: FinanceParticipant,
     db: DbSession,
     profile_id: ActiveProfileId,
-    page: Pagination,
-) -> list[FinanceLiability]:
-    return pf_finance_repo.list_liabilities(db, profile_id, page.skip, page.limit)
+    liability_type: str | None = Query(None),
+    status: str | None = Query(None, description='ACTIVE | CLOSED | OVERDUE | PAID | ALL'),
+    due_this_month: bool | None = Query(None),
+    search: str | None = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=2000),
+) -> list[FinanceLiabilityOut]:
+    lt = liability_type.strip().upper() if liability_type else None
+    if lt in ('ALL', ''):
+        lt = None
+    st = status.strip().upper() if status else None
+    if st in ('ALL', ''):
+        st = None
+    return pf_liability_ui_service.list_enriched_liabilities(
+        db,
+        profile_id,
+        skip=skip,
+        limit=limit,
+        liability_type=lt,
+        status_filter=st,
+        due_this_month=due_this_month,
+        search=search,
+    )
 
 
 @router.post('/liabilities', response_model=FinanceLiabilityOut, status_code=201)
@@ -460,17 +649,150 @@ def create_liability(
     user: CurrentUser,
     db: DbSession,
     profile_id: ActiveProfileId,
-) -> FinanceLiability:
+) -> FinanceLiabilityOut:
     pf_profile_service.assert_can_write(db, user.id, profile_id)
+    ost = float(body.outstanding_amount if body.outstanding_amount is not None else body.total_amount)
     row = FinanceLiability(
         profile_id=profile_id,
-        liability_name=body.liability_name,
+        liability_name=body.liability_name.strip(),
         liability_type=body.liability_type,
-        amount=body.amount,
+        total_amount=body.total_amount,
+        outstanding_amount=ost,
         interest_rate=body.interest_rate,
+        minimum_due=body.minimum_due,
+        installment_amount=body.installment_amount,
         due_date=body.due_date,
+        billing_cycle_day=body.billing_cycle_day,
+        lender_name=(body.lender_name.strip() or None) if body.lender_name else None,
+        notes=(body.notes.strip() or None) if body.notes else None,
+        status=(body.status or 'ACTIVE').strip().upper(),
     )
-    return pf_finance_repo.create_liability(db, row)
+    row = pf_finance_repo.create_liability(db, row)
+    return pf_liability_ui_service.enrich_liability(db, row)
+
+
+@router.patch('/liabilities/{liability_id}', response_model=FinanceLiabilityOut)
+def patch_liability(
+    liability_id: int,
+    _: FinanceParticipant,
+    body: FinanceLiabilityUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceLiabilityOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    ln = _liability_for_profile(db, liability_id, profile_id)
+    patch = body.model_dump(exclude_unset=True)
+    if 'liability_name' in patch and patch['liability_name'] is not None:
+        ln.liability_name = str(patch['liability_name']).strip()
+    if 'liability_type' in patch:
+        ln.liability_type = patch['liability_type']
+    if 'total_amount' in patch and patch['total_amount'] is not None:
+        ln.total_amount = float(patch['total_amount'])
+    if 'outstanding_amount' in patch and patch['outstanding_amount'] is not None:
+        ln.outstanding_amount = float(patch['outstanding_amount'])
+    if 'interest_rate' in patch:
+        ln.interest_rate = patch['interest_rate']
+    if 'minimum_due' in patch:
+        ln.minimum_due = patch['minimum_due']
+    if 'installment_amount' in patch:
+        ln.installment_amount = patch['installment_amount']
+    if 'due_date' in patch:
+        ln.due_date = patch['due_date']
+    if 'billing_cycle_day' in patch:
+        ln.billing_cycle_day = patch['billing_cycle_day']
+    if 'lender_name' in patch:
+        v = patch['lender_name']
+        ln.lender_name = None if v is None else (str(v).strip() or None)
+    if 'notes' in patch:
+        v = patch['notes']
+        ln.notes = None if v is None else (str(v).strip() or None)
+    if 'status' in patch and patch['status'] is not None:
+        ln.status = str(patch['status']).strip().upper()
+    ln = pf_finance_repo.update_liability_row(db, ln)
+    return pf_liability_ui_service.enrich_liability(db, ln)
+
+
+@router.delete('/liabilities/{liability_id}', status_code=status.HTTP_204_NO_CONTENT)
+def delete_liability(
+    liability_id: int,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> Response:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    try:
+        pf_finance_repo.delete_liability_for_profile(db, profile_id, liability_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/liabilities/{liability_id}', response_model=FinanceLiabilityOut)
+def get_liability(
+    liability_id: int,
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceLiabilityOut:
+    ln = _liability_for_profile(db, liability_id, profile_id)
+    return pf_liability_ui_service.enrich_liability(db, ln)
+
+
+@router.get('/liabilities/{liability_id}/payments', response_model=list[LiabilityPaymentOut])
+def list_liability_payments_api(
+    _: FinanceParticipant,
+    liability_id: int,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> list[LiabilityPaymentOut]:
+    _liability_for_profile(db, liability_id, profile_id)
+    return pf_finance_repo.list_liability_payments(db, liability_id)
+
+
+@router.post('/liabilities/{liability_id}/payments', response_model=LiabilityPaymentOut, status_code=201)
+def create_liability_payment_api(
+    liability_id: int,
+    _: FinanceParticipant,
+    body: LiabilityPaymentCreate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LiabilityPaymentOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _liability_for_profile(db, liability_id, profile_id)
+    try:
+        return pf_finance_repo.record_liability_payment(
+            db,
+            profile_id,
+            liability_id,
+            payment_date=body.payment_date,
+            amount_paid=body.amount_paid,
+            interest_paid=body.interest_paid,
+            payment_mode=body.payment_mode,
+            finance_account_id=body.finance_account_id,
+            notes=body.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.post('/liabilities/{liability_id}/close', response_model=FinanceLiabilityOut)
+def close_liability_api(
+    liability_id: int,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceLiabilityOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _liability_for_profile(db, liability_id, profile_id)
+    try:
+        row = pf_finance_repo.close_liability_if_zero(db, profile_id, liability_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return pf_liability_ui_service.enrich_liability(db, row)
 
 
 @router.get('/loans', response_model=list[LoanOut])
@@ -478,22 +800,38 @@ def list_loans(
     _: FinanceParticipant,
     db: DbSession,
     profile_id: ActiveProfileId,
+    loan_type: str | None = Query(
+        None,
+        description='EMI | INTEREST_FREE | SIMPLE_INTEREST (omit or ALL for any)',
+    ),
+    status: str | None = Query(
+        None,
+        description='ACTIVE | CLOSED | OVERDUE | COMPLETED | ALL',
+    ),
+    search: str | None = Query(None, description='Borrower name contains (case-insensitive)'),
 ) -> list[LoanOut]:
-    rows = pf_finance_repo.list_loans(db, profile_id)
-    ids = [r.id for r in rows]
-    with_schedule = pf_finance_repo.loan_ids_with_emi_schedule(db, ids)
-    next_emi = pf_finance_repo.next_pending_emi_by_loan(db, profile_id)
-    out: list[LoanOut] = []
-    for r in rows:
-        base = LoanOut.model_validate(r, from_attributes=True)
-        ne = next_emi.get(r.id)
-        extra: dict = {'has_emi_schedule': r.id in with_schedule}
-        if ne:
-            d, amt = ne
-            extra['next_emi_due'] = d
-            extra['next_emi_amount'] = Decimal(str(amt))
-        out.append(base.model_copy(update=extra))
-    return out
+    lt = loan_type.strip().upper() if loan_type else None
+    if lt in ('ALL', ''):
+        lt = None
+    st = status.strip().upper() if status else None
+    if st in ('ALL', ''):
+        st = None
+    return pf_loan_ui_service.list_enriched_loans(
+        db,
+        profile_id,
+        loan_type=lt,
+        status=st,
+        search=search,
+    )
+
+
+@router.get('/loans/summary', response_model=LoansPageSummaryOut)
+def loans_page_summary(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LoansPageSummaryOut:
+    return pf_loan_ui_service.loans_page_summary(db, profile_id)
 
 
 @router.post('/loans', response_model=LoanOut, status_code=201)
@@ -508,6 +846,10 @@ def create_loan(
     row = Loan(
         profile_id=profile_id,
         borrower_name=body.borrower_name,
+        loan_type=pf_loan_ui_service.loan_kind_to_type(body.loan_kind),
+        borrower_phone=(body.borrower_phone.strip() or None) if body.borrower_phone else None,
+        borrower_address=(body.borrower_address.strip() or None) if body.borrower_address else None,
+        notes=(body.notes.strip() or None) if body.notes else None,
         loan_amount=body.loan_amount,
         interest_rate=body.interest_rate,
         interest_free_days=body.interest_free_days,
@@ -520,9 +862,35 @@ def create_loan(
         row,
         term_months=body.term_months,
         commission_percent=body.commission_percent,
+        loan_kind=body.loan_kind,
     )
-    has_s = pf_finance_repo.loan_has_emi_schedule(db, row.id)
-    return LoanOut.model_validate(row, from_attributes=True).model_copy(update={'has_emi_schedule': has_s})
+    return _loan_out_fresh(db, profile_id, row)
+
+
+@router.patch('/loans/{loan_id}', response_model=LoanOut)
+def patch_loan(
+    loan_id: int,
+    _: FinanceParticipant,
+    body: LoanPatch,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LoanOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    ln = _loan_for_profile(db, loan_id, profile_id)
+    patch = body.model_dump(exclude_unset=True)
+    if 'borrower_phone' in patch:
+        v = patch['borrower_phone']
+        ln.borrower_phone = None if v is None else (str(v).strip() or None)
+    if 'borrower_address' in patch:
+        v = patch['borrower_address']
+        ln.borrower_address = None if v is None else (str(v).strip() or None)
+    if 'notes' in patch:
+        v = patch['notes']
+        ln.notes = None if v is None else (str(v).strip() or None)
+    db.commit()
+    db.refresh(ln)
+    return _loan_out_fresh(db, profile_id, ln)
 
 
 @router.delete('/loans/{loan_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -631,8 +999,7 @@ def add_loan_principal_amount(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    has_s = pf_finance_repo.loan_has_emi_schedule(db, row.id)
-    return LoanOut.model_validate(row, from_attributes=True).model_copy(update={'has_emi_schedule': has_s})
+    return _loan_out_fresh(db, profile_id, row)
 
 
 @router.post('/loans/{loan_id}/close', response_model=LoanOut)
@@ -649,8 +1016,7 @@ def close_loan(
         row = pf_finance_repo.close_loan_if_settled(db, profile_id, loan_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    has_s = pf_finance_repo.loan_has_emi_schedule(db, row.id)
-    return LoanOut.model_validate(row, from_attributes=True).model_copy(update={'has_emi_schedule': has_s})
+    return _loan_out_fresh(db, profile_id, row)
 
 
 @router.get('/loans/{loan_id}/payments', response_model=list[LoanPaymentOut])

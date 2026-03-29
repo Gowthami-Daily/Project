@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fastapi_service.models_extended import FinanceExpense, FinanceIncome
 
@@ -242,18 +243,85 @@ class FinanceInvestmentOut(BaseModel):
     id: int
     profile_id: int
     investment_type: str
+    name: str
     invested_amount: Decimal
-    current_value: Decimal
+    investment_date: date
     platform: str | None
-    as_of_date: date
+    notes: str | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class FinanceInvestmentCreate(BaseModel):
-    investment_type: str
+    model_config = ConfigDict(extra='forbid')
+
+    investment_type: str = Field(validation_alias=AliasChoices('type', 'investment_type'))
+    name: str
     invested_amount: float
-    current_value: float = 0.0
+    investment_date: date = Field(validation_alias=AliasChoices('investment_date', 'as_of_date'))
     platform: str | None = None
-    as_of_date: date
+    notes: str | None = None
+
+    @field_validator('name')
+    @classmethod
+    def strip_name(cls, v: str) -> str:
+        s = (v or '').strip()
+        if not s:
+            raise ValueError('name is required')
+        return s
+
+    @field_validator('investment_type')
+    @classmethod
+    def strip_type(cls, v: str) -> str:
+        s = (v or '').strip()
+        if not s:
+            raise ValueError('type is required')
+        return s
+
+
+class FinanceInvestmentUpdate(BaseModel):
+    """Full replacement body for PUT /investments/{id}."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    investment_type: str = Field(validation_alias=AliasChoices('type', 'investment_type'))
+    name: str
+    invested_amount: float
+    investment_date: date = Field(validation_alias=AliasChoices('investment_date', 'as_of_date'))
+    platform: str | None = None
+    notes: str | None = None
+
+    @field_validator('name')
+    @classmethod
+    def strip_name_u(cls, v: str) -> str:
+        s = (v or '').strip()
+        if not s:
+            raise ValueError('name is required')
+        return s
+
+    @field_validator('investment_type')
+    @classmethod
+    def strip_type_u(cls, v: str) -> str:
+        s = (v or '').strip()
+        if not s:
+            raise ValueError('type is required')
+        return s
+
+
+_ASSET_TYPES = frozenset(
+    {
+        'PROPERTY_LAND',
+        'HOUSE',
+        'APARTMENT',
+        'VEHICLE',
+        'GOLD_JEWELRY',
+        'EQUIPMENT_MACHINERY',
+        'FURNITURE',
+        'ELECTRONICS',
+        'BUSINESS_ASSET',
+        'OTHER',
+    }
+)
 
 
 class FinanceAssetOut(BaseModel):
@@ -263,13 +331,101 @@ class FinanceAssetOut(BaseModel):
     profile_id: int
     asset_name: str
     asset_type: str
-    value: Decimal
+    purchase_value: Decimal
+    current_value: Decimal
+    purchase_date: date | None = None
+    depreciation_rate: Decimal | None = None
+    location: str | None = None
+    linked_liability_id: int | None = None
+    linked_liability_name: str | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    effective_current_value: Decimal = Decimal('0')
+    book_depreciation: Decimal = Decimal('0')
+    depreciation_years: float = 0.0
+
+
+class AssetsPageSummaryOut(BaseModel):
+    total_current_value: float
+    total_purchase_value: float
+    total_depreciation: float
+    linked_loan_count: int
+    locations: list[str]
 
 
 class FinanceAssetCreate(BaseModel):
     asset_name: str
-    asset_type: str
-    value: float = 0.0
+    asset_type: str = Field(
+        ...,
+        description=(
+            'PROPERTY_LAND | HOUSE | APARTMENT | VEHICLE | GOLD_JEWELRY | '
+            'EQUIPMENT_MACHINERY | FURNITURE | ELECTRONICS | BUSINESS_ASSET | OTHER'
+        ),
+    )
+    purchase_value: float = Field(ge=0, default=0)
+    current_value: float | None = Field(default=None, ge=0, description='Defaults to purchase_value when omitted')
+    purchase_date: date | None = None
+    depreciation_rate: float | None = Field(default=None, ge=0, le=100)
+    location: str | None = Field(default=None, max_length=200)
+    linked_liability_id: int | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator('asset_type')
+    @classmethod
+    def asset_type_norm(cls, v: str) -> str:
+        s = (v or '').strip().upper().replace(' ', '_')
+        if s not in _ASSET_TYPES:
+            raise ValueError(f'asset_type must be one of: {", ".join(sorted(_ASSET_TYPES))}')
+        return s
+
+    @field_validator('asset_name')
+    @classmethod
+    def asset_name_strip(cls, v: str) -> str:
+        s = (v or '').strip()
+        if not s:
+            raise ValueError('asset_name is required')
+        return s
+
+    @model_validator(mode='after')
+    def default_current_value(self) -> Self:
+        if self.current_value is None:
+            self.current_value = float(self.purchase_value)
+        return self
+
+
+class FinanceAssetUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    asset_name: str | None = None
+    asset_type: str | None = None
+    purchase_value: float | None = Field(default=None, ge=0)
+    current_value: float | None = Field(default=None, ge=0)
+    purchase_date: date | None = None
+    depreciation_rate: float | None = Field(default=None, ge=0, le=100)
+    location: str | None = Field(default=None, max_length=200)
+    linked_liability_id: int | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator('asset_type')
+    @classmethod
+    def asset_type_norm_u(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = (v or '').strip().upper().replace(' ', '_')
+        if s not in _ASSET_TYPES:
+            raise ValueError(f'asset_type must be one of: {", ".join(sorted(_ASSET_TYPES))}')
+        return s
+
+    @field_validator('asset_name')
+    @classmethod
+    def asset_name_strip_u(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = (v or '').strip()
+        if not s:
+            raise ValueError('asset_name cannot be empty')
+        return s
 
 
 class FinanceLiabilityOut(BaseModel):
@@ -279,17 +435,137 @@ class FinanceLiabilityOut(BaseModel):
     profile_id: int
     liability_name: str
     liability_type: str
-    amount: Decimal
-    interest_rate: Decimal | None
-    due_date: date | None
+    total_amount: Decimal
+    outstanding_amount: Decimal
+    interest_rate: Decimal | None = None
+    minimum_due: Decimal | None = None
+    installment_amount: Decimal | None = None
+    due_date: date | None = None
+    billing_cycle_day: int | None = None
+    lender_name: str | None = None
+    notes: str | None = None
+    status: str = 'ACTIVE'
+    created_at: datetime
+    updated_at: datetime
+    display_status: str = 'ACTIVE'
+    interest_paid_lifetime: Decimal = Decimal('0')
+
+
+class LiabilitiesPageSummaryOut(BaseModel):
+    total_liabilities_book: float
+    total_outstanding: float
+    due_this_month_amount: float
+    overdue_amount: float
+    due_this_week: list[dict]
+    interest_paid_lifetime: float
+
+
+_LIABILITY_TYPES = frozenset(
+    {
+        'CREDIT_CARD',
+        'PERSONAL_LOAN_BORROWED',
+        'HOME_LOAN',
+        'VEHICLE_LOAN',
+        'EMI_PURCHASE',
+        'BNPL',
+        'BORROWED_PERSON',
+        'BILLS_PAYABLE',
+        'OTHER',
+    }
+)
 
 
 class FinanceLiabilityCreate(BaseModel):
     liability_name: str
-    liability_type: str
-    amount: float
+    liability_type: str = Field(
+        ...,
+        description=(
+            'CREDIT_CARD | PERSONAL_LOAN_BORROWED | HOME_LOAN | VEHICLE_LOAN | '
+            'EMI_PURCHASE | BNPL | BORROWED_PERSON | BILLS_PAYABLE | OTHER'
+        ),
+    )
+    total_amount: float = Field(ge=0)
+    outstanding_amount: float | None = Field(
+        default=None,
+        ge=0,
+        description='Defaults to total_amount when omitted',
+    )
     interest_rate: float | None = None
+    minimum_due: float | None = Field(default=None, ge=0)
+    installment_amount: float | None = Field(default=None, ge=0)
     due_date: date | None = None
+    billing_cycle_day: int | None = Field(default=None, ge=1, le=31)
+    lender_name: str | None = Field(default=None, max_length=200)
+    notes: str | None = Field(default=None, max_length=4000)
+    status: str = 'ACTIVE'
+
+    @field_validator('liability_type')
+    @classmethod
+    def liability_type_ok(cls, v: str) -> str:
+        u = (v or '').strip().upper().replace(' ', '_').replace('-', '_')
+        if u == 'PERSONAL_LOAN':
+            u = 'PERSONAL_LOAN_BORROWED'
+        if u not in _LIABILITY_TYPES:
+            raise ValueError('Invalid liability_type')
+        return u
+
+    @model_validator(mode='after')
+    def outstanding_default(self):
+        if self.outstanding_amount is None:
+            object.__setattr__(self, 'outstanding_amount', float(self.total_amount))
+        return self
+
+
+class FinanceLiabilityUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    liability_name: str | None = Field(default=None, max_length=200)
+    liability_type: str | None = None
+
+    @field_validator('liability_type')
+    @classmethod
+    def liability_type_ok_u(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        u = (v or '').strip().upper().replace(' ', '_').replace('-', '_')
+        if u == 'PERSONAL_LOAN':
+            u = 'PERSONAL_LOAN_BORROWED'
+        if u not in _LIABILITY_TYPES:
+            raise ValueError('Invalid liability_type')
+        return u
+    total_amount: float | None = Field(default=None, ge=0)
+    outstanding_amount: float | None = Field(default=None, ge=0)
+    interest_rate: float | None = None
+    minimum_due: float | None = None
+    installment_amount: float | None = None
+    due_date: date | None = None
+    billing_cycle_day: int | None = Field(default=None, ge=1, le=31)
+    lender_name: str | None = Field(default=None, max_length=200)
+    notes: str | None = Field(default=None, max_length=4000)
+    status: str | None = None
+
+
+class LiabilityPaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    liability_id: int
+    payment_date: date
+    amount_paid: Decimal
+    interest_paid: Decimal
+    payment_mode: str
+    finance_account_id: int | None = None
+    notes: str | None = None
+    created_at: datetime
+
+
+class LiabilityPaymentCreate(BaseModel):
+    payment_date: date
+    amount_paid: float = Field(gt=0)
+    interest_paid: float = Field(default=0, ge=0)
+    payment_mode: str = Field(default='CASH', description='CASH | BANK')
+    finance_account_id: int | None = None
+    notes: str | None = Field(default=None, max_length=500)
 
 
 class LoanOut(BaseModel):
@@ -298,6 +574,10 @@ class LoanOut(BaseModel):
     id: int
     profile_id: int
     borrower_name: str
+    loan_type: str = 'EMI'
+    borrower_phone: str | None = None
+    borrower_address: str | None = None
+    notes: str | None = None
     loan_amount: Decimal
     interest_rate: Decimal | None
     interest_free_days: int | None = None
@@ -314,6 +594,37 @@ class LoanOut(BaseModel):
     remaining_amount: Decimal | None = None
     next_emi_due: date | None = None
     next_emi_amount: Decimal | None = None
+    display_status: str = 'ACTIVE'
+    is_overdue: bool = False
+    balance_due: Decimal = Decimal('0')
+    interest_collected_lifetime: Decimal = Decimal('0')
+
+
+class LoanReminderItemOut(BaseModel):
+    loan_id: int
+    borrower_name: str
+    kind: str
+    due_date: date
+    emi_amount: float | None = None
+    emi_number: int | None = None
+
+
+class LoanUpcomingEmiItemOut(BaseModel):
+    loan_id: int
+    borrower_name: str
+    due_date: date
+    emi_amount: float
+    emi_number: int
+
+
+class LoansPageSummaryOut(BaseModel):
+    total_given: float
+    total_received: float
+    total_outstanding: float
+    overdue_amount: float
+    interest_earned_lifetime: float
+    reminders: list[LoanReminderItemOut]
+    upcoming_emis_this_week: list[LoanUpcomingEmiItemOut]
 
 
 class LoanAddPrincipalBody(BaseModel):
@@ -325,9 +636,22 @@ class LoanAddPrincipalBody(BaseModel):
     notes: str | None = Field(default=None, max_length=500)
 
 
+class LoanPatch(BaseModel):
+    """Optional borrower / notes fields for PATCH /loans/{id}."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    borrower_phone: str | None = None
+    borrower_address: str | None = None
+    notes: str | None = None
+
+
 class LoanCreate(BaseModel):
     borrower_name: str
     loan_amount: float
+    borrower_phone: str | None = Field(default=None, max_length=40)
+    borrower_address: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=4000)
     interest_rate: float | None = None
     interest_free_days: int | None = Field(
         default=None,
@@ -343,6 +667,27 @@ class LoanCreate(BaseModel):
         description='If set with interest_rate, builds flat-interest EMI schedule.',
     )
     commission_percent: float | None = Field(default=None, ge=0)
+    loan_kind: Literal['emi_schedule', 'interest_free', 'simple_accrual'] = Field(
+        default='emi_schedule',
+        description=(
+            'emi_schedule: term + rate builds EMI rows; interest_free: principal only, 0%% rate; '
+            'simple_accrual: no EMI, principal + simple interest from start_date through today (365-day year).'
+        ),
+    )
+
+    @model_validator(mode='after')
+    def normalize_loan_kind(self):
+        if self.loan_kind == 'interest_free':
+            object.__setattr__(self, 'interest_rate', 0.0)
+            object.__setattr__(self, 'term_months', None)
+            object.__setattr__(self, 'interest_free_days', None)
+        elif self.loan_kind == 'simple_accrual':
+            if self.term_months is not None:
+                raise ValueError('Do not set term months for simple accrual loans')
+            if self.interest_rate is None or float(self.interest_rate) <= 0:
+                raise ValueError('Simple accrual loans require interest % greater than 0')
+            object.__setattr__(self, 'interest_free_days', None)
+        return self
 
 
 class LoanScheduleOut(BaseModel):

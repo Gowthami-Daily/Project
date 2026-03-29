@@ -26,10 +26,12 @@ async def lifespan(app: FastAPI):
         ensure_loan_interest_free_days_column,
         ensure_pf_payment_instrument_column,
         ensure_pf_payment_instrument_finance_account_column,
+        ensure_users_last_login_column,
         ensure_users_role_id_column,
     )
 
     ensure_users_role_id_column(engine)
+    ensure_users_last_login_column(engine)
     ensure_pf_loan_extension_columns(engine)
     ensure_loan_interest_free_days_column(engine)
     ensure_loan_bank_account_columns(engine)
@@ -37,12 +39,17 @@ async def lifespan(app: FastAPI):
     ensure_pf_finance_expense_income_columns(engine)
     ensure_pf_payment_instrument_column(engine)
     ensure_pf_payment_instrument_finance_account_column(engine)
+
+    import init_db as _init_db
+
+    _init_db.apply_postgres_performance_indexes(engine)
+
     db = SessionLocal()
     try:
         from fastapi_service.seed_inflow import seed_if_empty
         from fastapi_service.seed_ledger import seed_ledger_if_empty
         from fastapi_service.seed_outflow import seed_outflow_if_empty
-        from fastapi_service.seed_auth import seed_default_admin_if_empty
+        from fastapi_service.seed_auth import ensure_platform_super_admin_account, seed_default_admin_if_empty
         from fastapi_service.seed_procurement import seed_procurement_farmers_if_empty
         from fastapi_service.seed_extended import seed_extended
         from fastapi_service.seed_pf_demo_user import seed_pf_demo_user
@@ -57,6 +64,7 @@ async def lifespan(app: FastAPI):
         seed_ledger_if_empty(db)
         seed_outflow_if_empty(db)
         seed_procurement_farmers_if_empty(db)
+        ensure_platform_super_admin_account(db)
     finally:
         db.close()
     yield

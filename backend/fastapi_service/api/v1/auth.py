@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordRequestForm
 
 from fastapi_service.core.dependencies import CurrentUser, DbSession
-from fastapi_service.schemas_auth import LoginRequest, TokenResponse, UserCreate, UserPublic
+from fastapi_service.schemas_auth import LoginRequest, TokenResponse, UserPublic
 from fastapi_service.services import auth_service
 
 router = APIRouter(prefix='/auth', tags=['auth'])
@@ -17,6 +17,7 @@ def login(
 ) -> TokenResponse:
     """OAuth2 password flow: **username** = email, **password** = password."""
     user = auth_service.authenticate(db, form_data.username, form_data.password)
+    auth_service.finalize_successful_login(db, user)
     token, pid = auth_service.issue_token(db, user)
     return TokenResponse(access_token=token, active_profile_id=pid)
 
@@ -25,14 +26,9 @@ def login(
 def login_json(db: DbSession, body: LoginRequest) -> TokenResponse:
     """JSON login for SPA/mobile clients."""
     user = auth_service.authenticate(db, body.email, body.password)
+    auth_service.finalize_successful_login(db, user)
     token, pid = auth_service.issue_token(db, user)
     return TokenResponse(access_token=token, active_profile_id=pid)
-
-
-@router.post('/register', response_model=UserPublic)
-def register(db: DbSession, body: UserCreate) -> UserPublic:
-    """Open registration for development; restrict via reverse proxy or feature flag in production."""
-    return auth_service.register(db, body)
 
 
 @router.get('/me', response_model=UserPublic)

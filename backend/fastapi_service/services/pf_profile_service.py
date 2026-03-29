@@ -99,10 +99,12 @@ def sync_legacy_role_to_role_id(db: Session, user: User) -> None:
     rn = str(user.role).strip().upper()
     if rn == 'STAFF':
         rn = 'USER'
+    # ``roles`` table has no SUPER_ADMIN row; map platform super-admin to ADMIN for legacy FK.
+    lookup = 'ADMIN' if rn == 'SUPER_ADMIN' else rn
     valid = {'ADMIN', 'USER', 'ACCOUNTANT', 'MANAGER', 'VIEWER'}
-    if rn not in valid:
-        rn = 'USER'
-    r = role_repo.get_by_name(db, rn)
+    if lookup not in valid:
+        lookup = 'USER'
+    r = role_repo.get_by_name(db, lookup)
     if r:
         user.role_id = r.id
         db.commit()

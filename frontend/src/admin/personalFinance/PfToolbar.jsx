@@ -1,4 +1,11 @@
-import { BellIcon, ChevronDownIcon, UserCircleIcon } from '@heroicons/react/24/solid'
+import {
+  Bars3Icon,
+  BellIcon,
+  ChevronDoubleLeftIcon,
+  ChevronDoubleRightIcon,
+  ChevronDownIcon,
+  UserCircleIcon,
+} from '@heroicons/react/24/solid'
 import { Link } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -10,7 +17,13 @@ import {
 } from './api.js'
 import { usePfRefresh } from './pfRefreshContext.jsx'
 
-export default function PfToolbar({ onSessionInvalid, onLogout }) {
+export default function PfToolbar({
+  onSessionInvalid,
+  onLogout,
+  sidebarCollapsed = false,
+  onToggleSidebarCollapsed,
+  onOpenMobileNav,
+}) {
   const { tick, refresh } = usePfRefresh()
   const [profiles, setProfiles] = useState([])
   const [loading, setLoading] = useState(false)
@@ -72,13 +85,38 @@ export default function PfToolbar({ onSessionInvalid, onLogout }) {
     (loading ? 'Loading…' : 'Profile')
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/95 backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95">
+    <header className="sticky top-0 z-40 border-b border-[var(--pf-border)] bg-[var(--pf-header)] backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-2 px-4 sm:px-6">
-        <h1 className="truncate text-base font-bold tracking-tight text-slate-900 sm:text-lg">Personal Finance</h1>
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={() => onOpenMobileNav?.()}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-[var(--pf-text-muted)] transition hover:bg-black/[0.06] active:scale-95 dark:hover:bg-white/[0.06] md:hidden"
+            aria-label="Open menu"
+          >
+            <Bars3Icon className="h-6 w-6" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onToggleSidebarCollapsed?.()}
+            className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-[var(--pf-text-muted)] transition hover:bg-black/[0.06] active:scale-95 dark:hover:bg-white/[0.06] md:flex"
+            aria-expanded={!sidebarCollapsed}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? (
+              <ChevronDoubleRightIcon className="h-5 w-5" />
+            ) : (
+              <ChevronDoubleLeftIcon className="h-5 w-5" />
+            )}
+          </button>
+          <h1 className="min-w-0 truncate text-base font-bold tracking-tight text-[var(--pf-text)] sm:text-lg">
+            Personal Finance
+          </h1>
+        </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-[10px] text-slate-500 transition hover:bg-slate-100 active:scale-95"
+            className="flex h-10 w-10 items-center justify-center rounded-[10px] text-[var(--pf-text-muted)] transition hover:bg-black/[0.06] active:scale-95 dark:hover:bg-white/[0.06]"
             aria-label="Notifications (coming soon)"
           >
             <BellIcon className="h-[22px] w-[22px]" />
@@ -87,23 +125,23 @@ export default function PfToolbar({ onSessionInvalid, onLogout }) {
             <button
               type="button"
               onClick={() => setMenuOpen((v) => !v)}
-              className="flex h-10 items-center gap-1 rounded-[10px] px-2 text-slate-700 transition hover:bg-slate-100 active:scale-[0.97] dark:text-slate-200 dark:hover:bg-slate-800"
+              className="flex h-10 items-center gap-1 rounded-[10px] px-2 text-[var(--pf-text)] transition hover:bg-black/[0.06] active:scale-[0.97] dark:hover:bg-white/[0.06]"
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               aria-label="Account menu"
             >
-              <UserCircleIcon className="h-7 w-7 text-[#1E3A8A]" />
-              <ChevronDownIcon className="h-4 w-4 text-slate-500" />
+              <UserCircleIcon className="h-7 w-7 text-[var(--pf-primary)]" />
+              <ChevronDownIcon className="h-4 w-4 text-[var(--pf-text-muted)]" />
             </button>
             {menuOpen ? (
               <div
-                className="absolute right-0 z-50 mt-1 min-w-[11rem] rounded-[10px] border border-slate-200 bg-white py-1 shadow-[0_4px_12px_rgba(0,0,0,0.12)] dark:border-slate-600 dark:bg-slate-800 dark:shadow-[0_4px_12px_rgba(0,0,0,0.45)]"
+                className="absolute right-0 z-50 mt-1 min-w-[11rem] rounded-[10px] border border-[var(--pf-border)] bg-[var(--pf-card)] py-1 shadow-[var(--pf-shadow)]"
                 role="menu"
               >
                 <Link
                   to="/personal-finance/more"
                   role="menuitem"
-                  className="block px-4 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-700/80"
+                  className="block px-4 py-2.5 text-sm font-semibold text-[var(--pf-text)] hover:bg-[var(--pf-card-hover)]"
                   onClick={() => setMenuOpen(false)}
                 >
                   Profile
@@ -111,7 +149,7 @@ export default function PfToolbar({ onSessionInvalid, onLogout }) {
                 <Link
                   to="/personal-finance/settings"
                   role="menuitem"
-                  className="block px-4 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-slate-700/80"
+                  className="block px-4 py-2.5 text-sm font-semibold text-[var(--pf-text)] hover:bg-[var(--pf-card-hover)]"
                   onClick={() => setMenuOpen(false)}
                 >
                   Settings
@@ -132,19 +170,19 @@ export default function PfToolbar({ onSessionInvalid, onLogout }) {
           </div>
           <Link
             to="/"
-            className="hidden rounded-[10px] px-2 py-2 text-xs font-semibold text-[#1E3A8A] hover:bg-slate-100 md:inline"
+            className="hidden rounded-[10px] px-2 py-2 text-xs font-semibold text-[var(--pf-primary)] hover:bg-black/[0.06] dark:hover:bg-white/[0.06] md:inline"
           >
             Home
           </Link>
         </div>
       </div>
-      <div className="mx-auto max-w-[1600px] border-t border-slate-100/90 px-4 pb-2 pt-1.5 dark:border-slate-700/80 sm:px-6">
+      <div className="mx-auto max-w-[1600px] border-t border-[var(--pf-border)]/80 px-4 pb-2 pt-1.5 sm:px-6">
         <label htmlFor="pf-profile" className="sr-only">
           Active profile
         </label>
         <select
           id="pf-profile"
-          className="w-full max-w-md rounded-[10px] border border-slate-200/90 bg-slate-50/80 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-sm outline-none ring-[#1E3A8A]/20 focus:bg-white focus:ring-2 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:bg-slate-800"
+          className="w-full max-w-md rounded-[10px] border border-[var(--pf-border)] bg-[var(--pf-input-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--pf-text)] shadow-sm outline-none ring-[var(--pf-primary)]/25 focus:ring-2 disabled:opacity-60"
           value={activeProfileId ?? ''}
           onChange={(e) => handleProfileChange(e.target.value)}
           disabled={loading || profiles.length === 0}

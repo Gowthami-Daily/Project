@@ -108,9 +108,20 @@ def export_reports_excel(
     profile_id: ActiveProfileId,
     from_date: date = Query(..., alias='from'),
     to_date: date = Query(..., alias='to'),
+    account_id: int | None = Query(None),
+    expense_category_id: int | None = Query(None),
+    person: str | None = Query(None),
 ) -> Response:
     try:
-        ctx = pf_export_service.reports_bundle_context(db, profile_id, from_date, to_date)
+        ctx = pf_export_service.reports_bundle_context(
+            db,
+            profile_id,
+            from_date,
+            to_date,
+            account_id=account_id,
+            expense_category_id=expense_category_id,
+            person=person,
+        )
         data = pf_export_service.reports_excel_bytes(ctx)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -129,9 +140,20 @@ def export_reports_pdf(
     profile_id: ActiveProfileId,
     from_date: date = Query(..., alias='from'),
     to_date: date = Query(..., alias='to'),
+    account_id: int | None = Query(None),
+    expense_category_id: int | None = Query(None),
+    person: str | None = Query(None),
 ) -> Response:
     try:
-        ctx = pf_export_service.reports_bundle_context(db, profile_id, from_date, to_date)
+        ctx = pf_export_service.reports_bundle_context(
+            db,
+            profile_id,
+            from_date,
+            to_date,
+            account_id=account_id,
+            expense_category_id=expense_category_id,
+            person=person,
+        )
         data = pf_export_service.reports_pdf_bytes(ctx)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -211,6 +233,46 @@ def export_assets_excel(
     )
 
 
+@router.get('/assets/{asset_id}/excel')
+def export_asset_statement_excel(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    asset_id: int,
+) -> Response:
+    try:
+        ctx = pf_export_service.gather_asset_export(db, profile_id, asset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    data = pf_export_service.asset_statement_excel_bytes(ctx)
+    base = str(ctx['enriched'].asset_name or 'asset').replace(' ', '_')[:80]
+    return Response(
+        content=data,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': pf_export_service.content_disposition_attachment(f'Asset_{base}.xlsx')},
+    )
+
+
+@router.get('/assets/{asset_id}/pdf')
+def export_asset_statement_pdf(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    asset_id: int,
+) -> Response:
+    try:
+        ctx = pf_export_service.gather_asset_export(db, profile_id, asset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    data = pf_export_service.asset_statement_pdf_bytes(ctx)
+    base = str(ctx['enriched'].asset_name or 'asset').replace(' ', '_')[:80]
+    return Response(
+        content=data,
+        media_type='application/pdf',
+        headers={'Content-Disposition': pf_export_service.content_disposition_attachment(f'Asset_{base}.pdf')},
+    )
+
+
 @router.get('/liabilities/excel')
 def export_liabilities_excel(
     _: ReportReader,
@@ -222,4 +284,46 @@ def export_liabilities_excel(
         content=data,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={'Content-Disposition': pf_export_service.content_disposition_attachment('Liabilities.xlsx')},
+    )
+
+
+@router.get('/liabilities/{liability_id}/excel')
+def export_liability_statement_excel(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    liability_id: int,
+) -> Response:
+    try:
+        ctx = pf_export_service.gather_liability_statement(db, profile_id, liability_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    data = pf_export_service.liability_statement_excel_bytes(ctx)
+    base = str(ctx['liability'].liability_name or 'liability').replace(' ', '_')[:80]
+    return Response(
+        content=data,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={
+            'Content-Disposition': pf_export_service.content_disposition_attachment(f'Liability_{base}.xlsx')
+        },
+    )
+
+
+@router.get('/liabilities/{liability_id}/pdf')
+def export_liability_statement_pdf(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    liability_id: int,
+) -> Response:
+    try:
+        ctx = pf_export_service.gather_liability_statement(db, profile_id, liability_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    data = pf_export_service.liability_statement_pdf_bytes(ctx)
+    base = str(ctx['liability'].liability_name or 'liability').replace(' ', '_')[:80]
+    return Response(
+        content=data,
+        media_type='application/pdf',
+        headers={'Content-Disposition': pf_export_service.content_disposition_attachment(f'Liability_{base}.pdf')},
     )

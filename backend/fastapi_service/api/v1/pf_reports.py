@@ -9,6 +9,31 @@ from fastapi_service.services.rbac_service import ReportReader
 router = APIRouter()
 
 
+@router.get('/summary')
+def reports_summary(
+    _: ReportReader,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    from_date: date = Query(..., alias='from'),
+    to_date: date = Query(..., alias='to'),
+    account_id: int | None = Query(None),
+    expense_category_id: int | None = Query(None, description='Pf expense category id'),
+    person: str | None = Query(None, description='Matches expense paid_by / income received_from'),
+) -> dict:
+    try:
+        return pf_reports_service.reports_summary(
+            db,
+            profile_id,
+            from_date,
+            to_date,
+            account_id=account_id,
+            expense_category_id=expense_category_id,
+            person_filter=person,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.get('/profit-loss')
 def profit_loss(
     _: ReportReader,

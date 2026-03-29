@@ -4,6 +4,10 @@ from sqlalchemy.orm import Session
 from fastapi_service.models import User
 
 
+def list_all(db: Session) -> list[User]:
+    return list(db.scalars(select(User).order_by(User.id.asc())).all())
+
+
 def get_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
@@ -18,3 +22,15 @@ def create(db: Session, *, user: User) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+
+def save(db: Session, user: User) -> User:
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def delete_hard(db: Session, user: User) -> None:
+    db.delete(user)
+    db.commit()

@@ -110,7 +110,9 @@ import ProfitReportPage from './admin/cattle/ProfitReportPage.jsx'
 import VaccinationPage from './admin/cattle/VaccinationPage.jsx'
 import ModulePlaceholder from './admin/ModulePlaceholder.jsx'
 import PersonalFinanceShell from './admin/personalFinance/PersonalFinanceShell.jsx'
-import PersonalFinanceDashboardPage from './admin/personalFinance/PersonalFinanceDashboardPage.jsx'
+import SuperAdminApp from './admin/superAdmin/SuperAdminApp.jsx'
+
+const PersonalFinanceDashboardPage = lazy(() => import('./admin/personalFinance/PersonalFinanceDashboardPage.jsx'))
 
 const PfAccountsPage = lazy(() => import('./admin/personalFinance/pfPages/PfAccountsPage.jsx'))
 const PfAssetsPage = lazy(() => import('./admin/personalFinance/pfPages/PfAssetsPage.jsx'))
@@ -129,7 +131,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<MarketingSite />} />
-        <Route path="/personal-finance" element={<PersonalFinanceShell />}>
+        <Route path="/personal-finance/*" element={<PersonalFinanceShell />}>
           <Route index element={<PersonalFinanceDashboardPage />} />
           <Route path="monthly-statements" element={<PfMonthlyStatementsPage />} />
           <Route path="accounts" element={<PfAccountsPage />} />
@@ -144,6 +146,7 @@ export default function App() {
           <Route path="settings" element={<PfSettingsPage />} />
         </Route>
         <Route path="/admin/personal-finance" element={<Navigate to="/personal-finance" replace />} />
+        <Route path="/super-admin/*" element={<SuperAdminApp />} />
         <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="cattle" element={<CattleLayout />}>

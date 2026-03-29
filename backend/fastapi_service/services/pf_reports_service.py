@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -101,7 +101,7 @@ def income_report(
 
 def investment_report(db: Session, profile_id: int) -> dict:
     return {
-        'total_market_value': pf_finance_repo.sum_investments_current(db, profile_id),
+        'total_invested': pf_finance_repo.sum_investments_invested(db, profile_id),
     }
 
 
@@ -119,6 +119,308 @@ def loan_report(db: Session, profile_id: int) -> dict:
             }
             for ln in loans
         ],
+    }
+
+
+def _prior_period(start: date, end: date) -> tuple[date, date]:
+    span = (end - start).days + 1
+    p_end = start - timedelta(days=1)
+    p_start = p_end - timedelta(days=span - 1)
+    return p_start, p_end
+
+
+def _trend_block(current: float, prior: float) -> dict:
+    cur = round(float(current), 2)
+    prv = round(float(prior), 2)
+    if prv <= 0.01:
+        pct = None if cur <= 0.01 else None
+        direction = 'flat' if cur <= 0.01 else 'up'
+        return {'current': cur, 'prior': prv, 'trend_pct': pct, 'direction': direction}
+    delta_pct = (cur - prv) / prv * 100.0
+    direction = 'flat'
+    if delta_pct > 0.5:
+        direction = 'up'
+    elif delta_pct < -0.5:
+        direction = 'down'
+    return {'current': cur, 'prior': prv, 'trend_pct': round(delta_pct, 2), 'direction': direction}
+
+
+def _pct_share(part: float, whole: float) -> float:
+    if whole <= 0.01:
+        return 0.0
+    return round(100.0 * float(part) / float(whole), 2)
+
+
+def _month_slices(start: date, end: date):
+    y, m = start.year, start.month
+    while True:
+        ms = date(y, m, 1)
+        last_d = monthrange(y, m)[1]
+        me_month = date(y, m, last_d)
+        chunk_start = max(start, ms)
+        chunk_end = min(end, me_month)
+        if chunk_start <= chunk_end:
+            key = f'{y}-{m:02d}'
+            label = ms.strftime('%b %Y')
+            yield key, label, chunk_start, chunk_end
+        if me_month >= end:
+            break
+        if m == 12:
+            m = 1
+            y += 1
+        else:
+            m += 1
+
+
+def reports_summary(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    person_filter: str | None = None,
+) -> dict:
+    """
+    Analytics bundle for the reports dashboard: KPIs, trends vs prior window, breakdowns, monthly series, insights.
+    """
+    if start > end:
+        raise ValueError('from date must be on or before to date')
+    span = (end - start).days + 1
+    if span > 400:
+        raise ValueError('Date range cannot exceed 400 days')
+    p_start, p_end = _prior_period(start, end)
+    pf_exp = (person_filter or '').strip() or None
+
+    inc = pf_finance_repo.sum_income_scoped(
+        db, profile_id, start, end, account_id=account_id, person_contains=pf_exp
+    )
+    exp = pf_finance_repo.sum_expense_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+    inc_p = pf_finance_repo.sum_income_scoped(
+        db, profile_id, p_start, p_end, account_id=account_id, person_contains=pf_exp
+    )
+    exp_p = pf_finance_repo.sum_expense_scoped(
+        db,
+        profile_id,
+        p_start,
+        p_end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+
+    net = inc - exp
+    net_p = inc_p - exp_p
+
+    emi_exp = pf_finance_repo.sum_expense_emi_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+    emi_exp_p = pf_finance_repo.sum_expense_emi_scoped(
+        db,
+        profile_id,
+        p_start,
+        p_end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+
+    liab_pay = pf_finance_repo.sum_liability_cash_paid_in_range(db, profile_id, start, end)
+    liab_pay_p = pf_finance_repo.sum_liability_cash_paid_in_range(db, profile_id, p_start, p_end)
+    emi_paid = emi_exp + liab_pay
+    emi_paid_prior = emi_exp_p + liab_pay_p
+
+    int_paid = pf_finance_repo.sum_liability_interest_paid_in_range(db, profile_id, start, end)
+    int_paid_p = pf_finance_repo.sum_liability_interest_paid_in_range(db, profile_id, p_start, p_end)
+
+    loan_given = pf_finance_repo.sum_loan_originations_in_range(db, profile_id, start, end)
+    loan_given_p = pf_finance_repo.sum_loan_originations_in_range(db, profile_id, p_start, p_end)
+
+    loan_received = pf_finance_repo.sum_loan_payments_in_range(db, profile_id, start, end)
+    loan_received_p = pf_finance_repo.sum_loan_payments_in_range(db, profile_id, p_start, p_end)
+
+    investments_added = pf_finance_repo.sum_investments_added_in_range(db, profile_id, start, end)
+    investments_added_p = pf_finance_repo.sum_investments_added_in_range(db, profile_id, p_start, p_end)
+
+    by_cat_raw = pf_finance_repo.expense_by_category_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+    by_person_raw = pf_finance_repo.expense_by_paid_by_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+    by_acc_raw = pf_finance_repo.expense_by_account_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+
+    expense_total_for_pct = exp if exp > 0.01 else 0.0
+    expense_by_category = [
+        {'category': c, 'amount': round(a, 2), 'pct': _pct_share(a, expense_total_for_pct)}
+        for c, a in by_cat_raw
+    ]
+    expense_by_person = [
+        {'person': p, 'amount': round(a, 2), 'pct': _pct_share(a, expense_total_for_pct)} for p, a in by_person_raw
+    ]
+    expense_by_account = [
+        {
+            'account_id': i,
+            'account_name': n,
+            'amount': round(a, 2),
+            'pct': _pct_share(a, expense_total_for_pct),
+        }
+        for i, n, a in by_acc_raw
+    ]
+
+    income_vs_expense_monthly = []
+    monthly_summary = []
+    for key, label, ms, me in _month_slices(start, end):
+        mi = pf_finance_repo.sum_income_scoped(
+            db, profile_id, ms, me, account_id=account_id, person_contains=pf_exp
+        )
+        mx = pf_finance_repo.sum_expense_scoped(
+            db,
+            profile_id,
+            ms,
+            me,
+            account_id=account_id,
+            expense_category_id=expense_category_id,
+            paid_by_contains=pf_exp,
+        )
+        em = pf_finance_repo.sum_expense_emi_scoped(
+            db,
+            profile_id,
+            ms,
+            me,
+            account_id=account_id,
+            expense_category_id=expense_category_id,
+            paid_by_contains=pf_exp,
+        )
+        income_vs_expense_monthly.append(
+            {'month': key, 'label': label, 'income': round(mi, 2), 'expense': round(mx, 2)}
+        )
+        monthly_summary.append(
+            {
+                'month': key,
+                'label': label,
+                'income': round(mi, 2),
+                'expense': round(mx, 2),
+                'emi': round(em, 2),
+                'net': round(mi - mx, 2),
+            }
+        )
+
+    emi_other_expense = [
+        {'name': 'EMI (ledger)', 'value': round(emi_exp, 2)},
+        {'name': 'Other expense', 'value': round(max(0.0, exp - emi_exp), 2)},
+    ]
+    if liab_pay > 0.01:
+        emi_other_expense.append({'name': 'Liability repayments', 'value': round(liab_pay, 2)})
+
+    liab_break = pf_finance_repo.liability_repayments_by_loan_in_range(db, profile_id, start, end)
+    emi_breakdown = [{'loan': name, 'emi_paid': round(amt, 2)} for name, amt in liab_break]
+
+    insights: list[str] = []
+    if by_cat_raw:
+        top_c, top_a = by_cat_raw[0]
+        insights.append(f'Highest expense category: {top_c} {top_a:,.0f} ₹')
+    if by_acc_raw:
+        _, acc_name, acc_amt = by_acc_raw[0]
+        insights.append(f'Highest spending account: {acc_name} ({acc_amt:,.0f} ₹)')
+    days = max(1, span)
+    avg_daily_exp = exp / days
+    approx_months = span / 30.44
+    avg_monthly_exp = exp / approx_months if approx_months > 0.1 else exp
+    insights.append(f'Average daily expense (period): ₹{avg_daily_exp:,.0f}')
+    insights.append(f'Approx. monthly expense (scaled): ₹{avg_monthly_exp:,.0f}')
+    if inc > 0.01:
+        sr = (net / inc) * 100.0
+        insights.append(f'Savings rate (net ÷ income): {sr:,.1f}%')
+        er = (exp / inc) * 100.0
+        insights.append(f'Expense ratio: {er:,.1f}% of income')
+        if emi_paid > 0.01:
+            eremi = (emi_paid / inc) * 100.0
+            insights.append(f'Debt service & EMI (ledger + repayments) is {eremi:,.1f}% of income')
+    if investments_added > 0.01 and inc > 0.01:
+        insights.append(f'Investments added: ₹{investments_added:,.0f} ({investments_added / inc * 100:.1f}% of income)')
+
+    if loan_received > 0.01:
+        insights.append(f'Collected on loans you gave: ₹{loan_received:,.0f}')
+    if int_paid > 0.01:
+        insights.append(f'Interest paid (liabilities): ₹{int_paid:,.0f}')
+
+    return {
+        'period': {
+            'start': start.isoformat(),
+            'end': end.isoformat(),
+            'prior_start': p_start.isoformat(),
+            'prior_end': p_end.isoformat(),
+            'days': span,
+        },
+        'filters': {
+            'account_id': account_id,
+            'expense_category_id': expense_category_id,
+            'person': pf_exp,
+        },
+        'kpis': {
+            'total_income': _trend_block(inc, inc_p),
+            'total_expense': _trend_block(exp, exp_p),
+            'net_savings': _trend_block(net, net_p),
+            'emi_paid': _trend_block(emi_paid, emi_paid_prior),
+            'interest_paid': _trend_block(int_paid, int_paid_p),
+            'loan_given': _trend_block(loan_given, loan_given_p),
+            'loan_received': _trend_block(loan_received, loan_received_p),
+            'investments_added': _trend_block(investments_added, investments_added_p),
+        },
+        'total_income': round(inc, 2),
+        'total_expense': round(exp, 2),
+        'net_savings': round(net, 2),
+        'emi_paid': round(emi_paid, 2),
+        'emi_expense_ledger': round(emi_exp, 2),
+        'liability_repayments': round(liab_pay, 2),
+        'interest_paid': round(int_paid, 2),
+        'loan_given': round(loan_given, 2),
+        'loan_received': round(loan_received, 2),
+        'investments_added': round(investments_added, 2),
+        'expense_by_category': expense_by_category,
+        'expense_by_person': expense_by_person,
+        'expense_by_account': expense_by_account,
+        'income_vs_expense_monthly': income_vs_expense_monthly,
+        'monthly_summary': monthly_summary,
+        'emi_breakdown': emi_breakdown,
+        'emi_vs_other_expense': emi_other_expense,
+        'insights': insights,
     }
 
 
@@ -188,7 +490,7 @@ def monthly_financial_tables(
     **Cash** at month-end is *estimated* by back-solving Jan-1 cash from current balances and
     YTD ledger activity, then walking forward month by month. Manual balance edits break this.
 
-    Investments, fixed assets, liabilities, and loans use **current** profile snapshots on every
+    Investments (cost / invested amounts), fixed assets, liabilities, and loans use **current** profile snapshots on every
     row (we do not store month-end history for those).
     """
     _ensure_finance_account(db, profile_id, account_id)
@@ -223,7 +525,7 @@ def monthly_financial_tables(
             f'Current balance(s) in scope: ₹{current_cash:,.2f}; YTD net (ledger): ₹{ytd_net:,.2f}.'
         )
 
-    investments = pf_finance_repo.sum_investments_current(db, profile_id)
+    investments = pf_finance_repo.sum_investments_invested(db, profile_id)
     fixed_assets = pf_finance_repo.sum_assets(db, profile_id)
     liabilities = pf_finance_repo.sum_liabilities(db, profile_id)
     loans_out = pf_finance_repo.sum_loan_outstanding(db, profile_id)

@@ -1,11 +1,10 @@
 from calendar import monthrange
-from datetime import date
-from decimal import Decimal
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
 from fastapi_service.repositories import pf_finance_repo
-from fastapi_service.schemas_extended import LoanOut
+from fastapi_service.services import pf_loan_ui_service
 
 
 def _validate_finance_account(db: Session, profile_id: int, account_id: int | None) -> None:
@@ -41,7 +40,7 @@ def summary(
             raise ValueError('Account not found')
     total_income = pf_finance_repo.sum_income(db, profile_id, start, end, account_id)
     total_expense = pf_finance_repo.sum_expense(db, profile_id, start, end, account_id)
-    total_investment = pf_finance_repo.sum_investments_current(db, profile_id)
+    total_investment = pf_finance_repo.sum_investments_invested(db, profile_id)
     total_assets = pf_finance_repo.sum_assets(db, profile_id)
     total_liabilities = pf_finance_repo.sum_liabilities(db, profile_id)
     if account_id is not None:
@@ -49,6 +48,11 @@ def summary(
     else:
         cash_balance = pf_finance_repo.sum_account_balances(db, profile_id)
     loan_receivable = pf_finance_repo.sum_loan_outstanding(db, profile_id)
+    liability_overdue = pf_finance_repo.sum_liabilities_outstanding_overdue(db, profile_id, today=today)
+    liability_due_week = pf_finance_repo.liabilities_due_between(db, profile_id, today, today + timedelta(days=7))
+    # Net worth: cash + investments + fixed assets (effective / depreciated book) + loans you lent
+    # − liabilities. Money you borrowed is modeled as liabilities (cards, home/vehicle loans, etc.),
+    # not subtracted again as a separate "loans taken" line.
     net_worth = (
         float(cash_balance)
         + total_investment
@@ -67,6 +71,8 @@ def summary(
         'total_investment': total_investment,
         'total_assets': total_assets,
         'total_liabilities': total_liabilities,
+        'liability_overdue_amount': liability_overdue,
+        'liability_due_this_week': liability_due_week,
         'net_worth': net_worth,
         'cash_balance': cash_balance,
         'loan_outstanding': loan_receivable,
@@ -111,32 +117,41 @@ def expense_category(
     return [{'category': c, 'total': v} for c, v in rows]
 
 
+def _networth_growth_from_ie_series(
+    db: Session,
+    profile_id: int,
+    account_id: int | None,
+    ie_series: list[dict],
+) -> list[dict]:
+    """Build net-worth line chart from precomputed income vs expense rows (avoids duplicate monthly queries)."""
+    if account_id is not None:
+        cum = 0.0
+        out = []
+        for row in ie_series:
+            cum += row['savings']
+            out.append({'month': row['month'], 'net_worth': cum})
+        return out
+    base_assets = pf_finance_repo.sum_assets(db, profile_id)
+    base_inv = pf_finance_repo.sum_investments_invested(db, profile_id)
+    base_liab = pf_finance_repo.sum_liabilities(db, profile_id)
+    base_loan = pf_finance_repo.sum_loan_outstanding(db, profile_id)
+    base = base_assets + base_inv + base_loan - base_liab
+    cum = 0.0
+    out = []
+    for row in ie_series:
+        cum += row['savings']
+        out.append({'month': row['month'], 'net_worth': base + cum})
+    return out
+
+
 def networth_growth(
     db: Session, profile_id: int, year: int | None, account_id: int | None = None
 ) -> list[dict]:
     """Full profile net-worth trend, or cumulative income−expense by month when ``account_id`` is set."""
     _validate_finance_account(db, profile_id, account_id)
     y = year or date.today().year
-    if account_id is not None:
-        series = income_vs_expense(db, profile_id, y, account_id)
-        cum = 0.0
-        out = []
-        for row in series:
-            cum += row['savings']
-            out.append({'month': row['month'], 'net_worth': cum})
-        return out
-    base_assets = pf_finance_repo.sum_assets(db, profile_id)
-    base_inv = pf_finance_repo.sum_investments_current(db, profile_id)
-    base_liab = pf_finance_repo.sum_liabilities(db, profile_id)
-    base_loan = pf_finance_repo.sum_loan_outstanding(db, profile_id)
-    base = base_assets + base_inv + base_loan - base_liab
-    series = income_vs_expense(db, profile_id, y, None)
-    cum = 0.0
-    out = []
-    for row in series:
-        cum += row['savings']
-        out.append({'month': row['month'], 'net_worth': base + cum})
-    return out
+    ie_series = income_vs_expense(db, profile_id, y, account_id)
+    return _networth_growth_from_ie_series(db, profile_id, account_id, ie_series)
 
 
 def investment_allocation(db: Session, profile_id: int) -> list[dict]:
@@ -154,26 +169,21 @@ def recent_transactions(
     return pf_finance_repo.list_recent_mixed(db, profile_id, limit, account_id, start, end)
 
 
-def loans_analytics(db: Session, profile_id: int, year: int | None = None) -> dict:
-    return pf_finance_repo.loan_dashboard_analytics(db, profile_id, year)
+def loans_analytics(
+    db: Session,
+    profile_id: int,
+    year: int | None = None,
+    *,
+    pending_emi_installments_total: float | None = None,
+) -> dict:
+    return pf_finance_repo.loan_dashboard_analytics(
+        db, profile_id, year, pending_emi_installments_total=pending_emi_installments_total
+    )
 
 
 def _serialize_loans_for_dashboard(db: Session, profile_id: int) -> list[dict]:
-    rows = pf_finance_repo.list_loans(db, profile_id)
-    ids = [r.id for r in rows]
-    with_schedule = pf_finance_repo.loan_ids_with_emi_schedule(db, ids)
-    next_emi = pf_finance_repo.next_pending_emi_by_loan(db, profile_id)
-    out: list[dict] = []
-    for r in rows:
-        base = LoanOut.model_validate(r, from_attributes=True)
-        ne = next_emi.get(r.id)
-        extra: dict = {'has_emi_schedule': r.id in with_schedule}
-        if ne:
-            d, amt = ne
-            extra['next_emi_due'] = d
-            extra['next_emi_amount'] = Decimal(str(amt))
-        out.append(base.model_copy(update=extra).model_dump(mode='json'))
-    return out
+    rows = pf_loan_ui_service.list_enriched_loans(db, profile_id)
+    return [r.model_dump(mode='json') for r in rows]
 
 
 def upcoming_emis_preview(db: Session, profile_id: int, limit: int = 25) -> list[dict]:
@@ -199,7 +209,12 @@ def upcoming_emis_preview(db: Session, profile_id: int, limit: int = 25) -> list
 
 
 def cashflow_month_summary(
-    db: Session, profile_id: int, year: int | None = None, month: int | None = None
+    db: Session,
+    profile_id: int,
+    year: int | None = None,
+    month: int | None = None,
+    *,
+    pending_emis_receivable: float | None = None,
 ) -> dict:
     """Calendar month (default current): expense buckets, dairy/EMI/food splits, cash vs bank, pending EMIs."""
     today = date.today()
@@ -215,7 +230,11 @@ def cashflow_month_summary(
         db, profile_id, start, end, ['Dairy Farm Expenses', 'Feed']
     )
     emi_exp = pf_finance_repo.sum_expense_emi_categories(db, profile_id, start, end)
-    pending = pf_finance_repo.sum_pending_loan_schedule_emis(db, profile_id)
+    pending = (
+        float(pending_emis_receivable)
+        if pending_emis_receivable is not None
+        else pf_finance_repo.sum_pending_loan_schedule_emis(db, profile_id)
+    )
     split = pf_finance_repo.sum_account_balances_cash_vs_bank(db, profile_id)
     return {
         'period_start': start.isoformat(),
@@ -256,14 +275,21 @@ def dashboard_bundle(
         {'id': a.id, 'account_name': a.account_name, 'account_type': a.account_type or ''}
         for a in acc_rows
     ]
+    # One pass for pending EMIs (was queried twice: cashflow + loan analytics).
+    pending_emi_total = pf_finance_repo.sum_pending_loan_schedule_emis(db, profile_id)
+    ie_rows = income_vs_expense(db, profile_id, period_year, account_id)
     return {
         'summary': summ,
-        'income_vs_expense': income_vs_expense(db, profile_id, period_year, account_id),
+        'income_vs_expense': ie_rows,
         'expense_by_category': expense_category(db, profile_id, start, end, account_id),
-        'networth_growth': networth_growth(db, profile_id, period_year, account_id),
+        'networth_growth': _networth_growth_from_ie_series(db, profile_id, account_id, ie_rows),
         'investment_allocation': investment_allocation(db, profile_id),
-        'loans_analytics': loans_analytics(db, profile_id, period_year),
-        'cashflow_month': cashflow_month_summary(db, profile_id, period_year, period_month),
+        'loans_analytics': loans_analytics(
+            db, profile_id, period_year, pending_emi_installments_total=pending_emi_total
+        ),
+        'cashflow_month': cashflow_month_summary(
+            db, profile_id, period_year, period_month, pending_emis_receivable=pending_emi_total
+        ),
         'upcoming_emis': upcoming_emis_preview(db, profile_id),
         'loans': _serialize_loans_for_dashboard(db, profile_id),
         'accounts': accounts,

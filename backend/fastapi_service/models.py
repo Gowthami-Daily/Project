@@ -323,3 +323,4 @@ class User(Base):
     role_id: Mapped[int | None] = mapped_column(Integer, ForeignKey('roles.id'), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

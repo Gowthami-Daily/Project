@@ -1,7 +1,7 @@
 import calendar
-from datetime import date
+from datetime import date, timedelta
 
-from sqlalchemy import delete, extract, func, or_, select, update
+from sqlalchemy import and_, delete, extract, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from fastapi_service.models_extended import (
@@ -11,6 +11,7 @@ from fastapi_service.models_extended import (
     FinanceIncome,
     FinanceInvestment,
     FinanceLiability,
+    LiabilityPayment,
     Loan,
     LoanPayment,
     LoanSchedule,
@@ -30,7 +31,7 @@ def add_months(d: date, months: int) -> date:
 
 def investment_allocation_by_type(db: Session, profile_id: int) -> list[dict]:
     stmt = (
-        select(FinanceInvestment.investment_type, func.sum(FinanceInvestment.current_value))
+        select(FinanceInvestment.investment_type, func.sum(FinanceInvestment.invested_amount))
         .where(FinanceInvestment.profile_id == profile_id)
         .group_by(FinanceInvestment.investment_type)
     )
@@ -41,11 +42,18 @@ def list_investments(db: Session, profile_id: int, skip: int, limit: int) -> lis
     stmt = (
         select(FinanceInvestment)
         .where(FinanceInvestment.profile_id == profile_id)
-        .order_by(FinanceInvestment.as_of_date.desc())
+        .order_by(FinanceInvestment.investment_date.desc(), FinanceInvestment.id.desc())
         .offset(skip)
         .limit(limit)
     )
     return list(db.scalars(stmt).all())
+
+
+def get_investment_for_profile(db: Session, investment_id: int, profile_id: int) -> FinanceInvestment | None:
+    row = db.get(FinanceInvestment, investment_id)
+    if row is None or row.profile_id != profile_id:
+        return None
+    return row
 
 
 def create_investment(db: Session, row: FinanceInvestment) -> FinanceInvestment:
@@ -55,15 +63,51 @@ def create_investment(db: Session, row: FinanceInvestment) -> FinanceInvestment:
     return row
 
 
-def list_assets(db: Session, profile_id: int, skip: int, limit: int) -> list[FinanceAsset]:
-    stmt = (
-        select(FinanceAsset)
-        .where(FinanceAsset.profile_id == profile_id)
-        .order_by(FinanceAsset.asset_name)
-        .offset(skip)
-        .limit(limit)
-    )
+def update_investment(db: Session, row: FinanceInvestment) -> FinanceInvestment:
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_investment(db: Session, row: FinanceInvestment) -> None:
+    db.delete(row)
+    db.commit()
+
+
+def list_assets(
+    db: Session,
+    profile_id: int,
+    skip: int,
+    limit: int,
+    *,
+    asset_type: str | None = None,
+    location_q: str | None = None,
+    search: str | None = None,
+) -> list[FinanceAsset]:
+    stmt = select(FinanceAsset).where(FinanceAsset.profile_id == profile_id)
+    at = (asset_type or '').strip().upper()
+    if at and at not in ('', 'ALL'):
+        stmt = stmt.where(FinanceAsset.asset_type == at)
+    lq = (location_q or '').strip()
+    if lq:
+        stmt = stmt.where(FinanceAsset.location.ilike(f'%{lq}%'))
+    q = (search or '').strip()
+    if q:
+        stmt = stmt.where(FinanceAsset.asset_name.ilike(f'%{q}%'))
+    stmt = stmt.order_by(FinanceAsset.asset_name).offset(skip).limit(limit)
     return list(db.scalars(stmt).all())
+
+
+def list_all_assets(db: Session, profile_id: int) -> list[FinanceAsset]:
+    stmt = select(FinanceAsset).where(FinanceAsset.profile_id == profile_id).order_by(FinanceAsset.asset_name)
+    return list(db.scalars(stmt).all())
+
+
+def get_asset_for_profile(db: Session, asset_id: int, profile_id: int) -> FinanceAsset | None:
+    row = db.get(FinanceAsset, asset_id)
+    if row is None or row.profile_id != profile_id:
+        return None
+    return row
 
 
 def create_asset(db: Session, row: FinanceAsset) -> FinanceAsset:
@@ -73,15 +117,94 @@ def create_asset(db: Session, row: FinanceAsset) -> FinanceAsset:
     return row
 
 
-def list_liabilities(db: Session, profile_id: int, skip: int, limit: int) -> list[FinanceLiability]:
+def update_asset(db: Session, row: FinanceAsset, fields: dict) -> FinanceAsset:
+    for k, v in fields.items():
+        setattr(row, k, v)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_asset(db: Session, row: FinanceAsset) -> None:
+    db.delete(row)
+    db.commit()
+
+
+def list_distinct_asset_locations(db: Session, profile_id: int) -> list[str]:
     stmt = (
-        select(FinanceLiability)
-        .where(FinanceLiability.profile_id == profile_id)
-        .order_by(FinanceLiability.liability_name)
-        .offset(skip)
-        .limit(limit)
+        select(FinanceAsset.location)
+        .where(FinanceAsset.profile_id == profile_id)
+        .where(FinanceAsset.location.is_not(None))
+        .where(FinanceAsset.location != '')
+        .distinct()
+        .order_by(FinanceAsset.location)
     )
+    return [str(x) for x in db.scalars(stmt).all() if x]
+
+
+def count_assets_with_linked_liability(db: Session, profile_id: int) -> int:
+    stmt = select(func.count(FinanceAsset.id)).where(
+        FinanceAsset.profile_id == profile_id, FinanceAsset.linked_liability_id.is_not(None)
+    )
+    return int(db.scalar(stmt) or 0)
+
+
+def list_liabilities(
+    db: Session,
+    profile_id: int,
+    skip: int,
+    limit: int,
+    *,
+    liability_type: str | None = None,
+    status_filter: str | None = None,
+    due_this_month: bool | None = None,
+    search: str | None = None,
+) -> list[FinanceLiability]:
+    stmt = select(FinanceLiability).where(FinanceLiability.profile_id == profile_id)
+    if liability_type and str(liability_type).strip().upper() not in ('', 'ALL'):
+        stmt = stmt.where(FinanceLiability.liability_type == str(liability_type).strip().upper())
+    q = (search or '').strip()
+    if q:
+        stmt = stmt.where(FinanceLiability.liability_name.ilike(f'%{q}%'))
+    sf = (status_filter or '').strip().upper()
+    today = date.today()
+    if sf == 'ACTIVE':
+        stmt = stmt.where(
+            func.upper(FinanceLiability.status) == 'ACTIVE',
+            FinanceLiability.outstanding_amount > 0.01,
+        )
+    elif sf == 'CLOSED' or sf == 'PAID':
+        stmt = stmt.where(
+            or_(
+                func.upper(FinanceLiability.status) == 'CLOSED',
+                FinanceLiability.outstanding_amount <= 0.01,
+            )
+        )
+    elif sf == 'OVERDUE':
+        stmt = stmt.where(
+            FinanceLiability.due_date.is_not(None),
+            FinanceLiability.due_date < today,
+            FinanceLiability.outstanding_amount > 0.01,
+            func.upper(FinanceLiability.status) == 'ACTIVE',
+        )
+    if due_this_month:
+        ms = date(today.year, today.month, 1)
+        me = date(today.year, today.month, calendar.monthrange(today.year, today.month)[1])
+        stmt = stmt.where(
+            FinanceLiability.due_date.is_not(None),
+            FinanceLiability.due_date >= ms,
+            FinanceLiability.due_date <= me,
+        )
+    stmt = stmt.order_by(FinanceLiability.due_date.asc().nullslast(), FinanceLiability.liability_name)
+    stmt = stmt.offset(skip).limit(limit)
     return list(db.scalars(stmt).all())
+
+
+def get_liability_for_profile(db: Session, liability_id: int, profile_id: int) -> FinanceLiability | None:
+    row = db.get(FinanceLiability, liability_id)
+    if row is None or row.profile_id != profile_id:
+        return None
+    return row
 
 
 def create_liability(db: Session, row: FinanceLiability) -> FinanceLiability:
@@ -89,6 +212,177 @@ def create_liability(db: Session, row: FinanceLiability) -> FinanceLiability:
     db.commit()
     db.refresh(row)
     return row
+
+
+def update_liability_row(db: Session, row: FinanceLiability) -> FinanceLiability:
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_liability_for_profile(db: Session, profile_id: int, liability_id: int) -> None:
+    row = get_liability_for_profile(db, liability_id, profile_id)
+    if row is None:
+        raise ValueError('Liability not found')
+    db.delete(row)
+    db.commit()
+
+
+def list_liability_payments(db: Session, liability_id: int) -> list[LiabilityPayment]:
+    stmt = (
+        select(LiabilityPayment)
+        .where(LiabilityPayment.liability_id == liability_id)
+        .order_by(LiabilityPayment.payment_date.desc(), LiabilityPayment.id.desc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def sum_liability_interest_paid(db: Session, liability_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(LiabilityPayment.interest_paid), 0)).where(
+        LiabilityPayment.liability_id == liability_id
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def record_liability_payment(
+    db: Session,
+    profile_id: int,
+    liability_id: int,
+    *,
+    payment_date: date,
+    amount_paid: float,
+    interest_paid: float,
+    payment_mode: str,
+    finance_account_id: int | None,
+    notes: str | None,
+) -> LiabilityPayment:
+    ln = get_liability_for_profile(db, liability_id, profile_id)
+    if ln is None:
+        raise ValueError('Liability not found')
+    if str(ln.status).upper() == 'CLOSED':
+        raise ValueError('Liability is closed')
+    ap = float(amount_paid)
+    ip = float(interest_paid)
+    if ap <= 0:
+        raise ValueError('Amount paid must be positive')
+    due = max(0.0, float(ln.outstanding_amount))
+    if ap > due + 0.02:
+        raise ValueError('Payment exceeds outstanding balance')
+    mode = str(payment_mode or 'CASH').strip().upper()
+    acc_id: int | None = None
+    if mode == 'BANK':
+        if finance_account_id is None:
+            raise ValueError('Select a bank account for BANK mode')
+        if get_account_for_profile(db, finance_account_id, profile_id) is None:
+            raise ValueError('Account not found')
+        acc_id = finance_account_id
+        _bump_account_balance(db, profile_id, acc_id, -ap)
+    elif mode != 'CASH':
+        raise ValueError('payment_mode must be CASH or BANK')
+    elif finance_account_id is not None:
+        raise ValueError('Do not set finance_account_id for CASH payments')
+    row = LiabilityPayment(
+        liability_id=liability_id,
+        payment_date=payment_date,
+        amount_paid=ap,
+        interest_paid=ip,
+        payment_mode=mode,
+        finance_account_id=acc_id,
+        notes=(notes.strip() or None) if notes else None,
+    )
+    db.add(row)
+    ln.outstanding_amount = max(0.0, due - ap)
+    if ln.outstanding_amount <= 0.01:
+        ln.outstanding_amount = 0.0
+        ln.status = 'CLOSED'
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def close_liability_if_zero(db: Session, profile_id: int, liability_id: int) -> FinanceLiability:
+    ln = get_liability_for_profile(db, liability_id, profile_id)
+    if ln is None:
+        raise ValueError('Liability not found')
+    if float(ln.outstanding_amount) > 0.01:
+        raise ValueError('Outstanding balance remains')
+    ln.status = 'CLOSED'
+    ln.outstanding_amount = 0.0
+    db.commit()
+    db.refresh(ln)
+    return ln
+
+
+def sum_liabilities_outstanding_active(db: Session, profile_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(FinanceLiability.outstanding_amount), 0)).where(
+        FinanceLiability.profile_id == profile_id,
+        func.upper(FinanceLiability.status) == 'ACTIVE',
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_liabilities_outstanding_overdue(db: Session, profile_id: int, *, today: date | None = None) -> float:
+    today = today or date.today()
+    stmt = select(func.coalesce(func.sum(FinanceLiability.outstanding_amount), 0)).where(
+        FinanceLiability.profile_id == profile_id,
+        FinanceLiability.due_date.is_not(None),
+        FinanceLiability.due_date < today,
+        FinanceLiability.outstanding_amount > 0.01,
+        func.upper(FinanceLiability.status) == 'ACTIVE',
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_liabilities_due_in_month(db: Session, profile_id: int, y: int, m: int) -> float:
+    ms = date(y, m, 1)
+    me = date(y, m, calendar.monthrange(y, m)[1])
+    stmt = select(func.coalesce(func.sum(FinanceLiability.outstanding_amount), 0)).where(
+        FinanceLiability.profile_id == profile_id,
+        FinanceLiability.due_date.is_not(None),
+        FinanceLiability.due_date >= ms,
+        FinanceLiability.due_date <= me,
+        FinanceLiability.outstanding_amount > 0.01,
+        func.upper(FinanceLiability.status) == 'ACTIVE',
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def liabilities_due_between(db: Session, profile_id: int, start: date, end: date) -> list[dict]:
+    stmt = (
+        select(
+            FinanceLiability.id,
+            FinanceLiability.liability_name,
+            FinanceLiability.due_date,
+            FinanceLiability.outstanding_amount,
+            FinanceLiability.minimum_due,
+        )
+        .where(
+            FinanceLiability.profile_id == profile_id,
+            FinanceLiability.due_date.is_not(None),
+            FinanceLiability.due_date >= start,
+            FinanceLiability.due_date <= end,
+            FinanceLiability.outstanding_amount > 0.01,
+            func.upper(FinanceLiability.status) == 'ACTIVE',
+        )
+        .order_by(FinanceLiability.due_date, FinanceLiability.liability_name)
+    )
+    return [
+        {
+            'liability_id': int(r[0]),
+            'liability_name': str(r[1]),
+            'due_date': r[2],
+            'outstanding_amount': float(r[3]),
+            'minimum_due': float(r[4]) if r[4] is not None else None,
+        }
+        for r in db.execute(stmt).all()
+    ]
+
+
+def sum_liabilities_total_book(db: Session, profile_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(FinanceLiability.total_amount), 0)).where(
+        FinanceLiability.profile_id == profile_id
+    )
+    return float(db.scalar(stmt) or 0)
 
 
 def list_recent_mixed(
@@ -479,23 +773,24 @@ def sum_expense_unassigned(db: Session, profile_id: int, start: date | None, end
     return float(db.scalar(stmt) or 0)
 
 
-def sum_investments_current(db: Session, profile_id: int) -> float:
-    stmt = select(func.coalesce(func.sum(FinanceInvestment.current_value), 0)).where(
+def sum_investments_invested(db: Session, profile_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(FinanceInvestment.invested_amount), 0)).where(
         FinanceInvestment.profile_id == profile_id
     )
     return float(db.scalar(stmt) or 0)
 
 
 def sum_assets(db: Session, profile_id: int) -> float:
-    stmt = select(func.coalesce(func.sum(FinanceAsset.value), 0)).where(FinanceAsset.profile_id == profile_id)
-    return float(db.scalar(stmt) or 0)
+    """Sum of **effective** fixed-asset values (depreciation applied when configured)."""
+    from fastapi_service.services.pf_asset_valuation import effective_current_value
+
+    rows = list_all_assets(db, profile_id)
+    return sum(effective_current_value(r) for r in rows)
 
 
 def sum_liabilities(db: Session, profile_id: int) -> float:
-    stmt = select(func.coalesce(func.sum(FinanceLiability.amount), 0)).where(
-        FinanceLiability.profile_id == profile_id
-    )
-    return float(db.scalar(stmt) or 0)
+    """Total outstanding on active liabilities (money you owe) — used in net worth."""
+    return sum_liabilities_outstanding_active(db, profile_id)
 
 
 def sum_account_balances(db: Session, profile_id: int) -> float:
@@ -784,9 +1079,467 @@ def expense_by_account_breakdown(
     return [(r[0], str(r[1]), float(r[2])) for r in db.execute(stmt).all()]
 
 
-def list_loans(db: Session, profile_id: int) -> list[Loan]:
-    stmt = select(Loan).where(Loan.profile_id == profile_id).order_by(Loan.start_date.desc())
+def _expense_scope(
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+):
+    conds = [FinanceExpense.profile_id == profile_id]
+    if start is not None:
+        conds.append(FinanceExpense.entry_date >= start)
+    if end is not None:
+        conds.append(FinanceExpense.entry_date <= end)
+    if account_id is not None:
+        conds.append(FinanceExpense.account_id == account_id)
+    if expense_category_id is not None:
+        conds.append(FinanceExpense.expense_category_id == expense_category_id)
+    pb = (paid_by_contains or '').strip()
+    if pb:
+        conds.append(FinanceExpense.paid_by.ilike(f'%{pb}%'))
+    return and_(*conds)
+
+
+def _income_scope(
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    account_id: int | None = None,
+    income_category_id: int | None = None,
+    person_contains: str | None = None,
+):
+    conds = [FinanceIncome.profile_id == profile_id]
+    if start is not None:
+        conds.append(FinanceIncome.entry_date >= start)
+    if end is not None:
+        conds.append(FinanceIncome.entry_date <= end)
+    if account_id is not None:
+        conds.append(FinanceIncome.account_id == account_id)
+    if income_category_id is not None:
+        conds.append(FinanceIncome.income_category_id == income_category_id)
+    p = (person_contains or '').strip()
+    if p:
+        conds.append(
+            or_(
+                FinanceIncome.received_from.ilike(f'%{p}%'),
+                FinanceIncome.description.ilike(f'%{p}%'),
+            )
+        )
+    return and_(*conds)
+
+
+def sum_expense_scoped(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+) -> float:
+    stmt = select(func.coalesce(func.sum(FinanceExpense.amount), 0)).where(
+        _expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains)
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_income_scoped(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    account_id: int | None = None,
+    income_category_id: int | None = None,
+    person_contains: str | None = None,
+) -> float:
+    stmt = select(func.coalesce(func.sum(FinanceIncome.amount), 0)).where(
+        _income_scope(profile_id, start, end, account_id, income_category_id, person_contains)
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def expense_by_category_scoped(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+) -> list[tuple[str, float]]:
+    stmt = (
+        select(FinanceExpense.category, func.sum(FinanceExpense.amount))
+        .where(_expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains))
+        .group_by(FinanceExpense.category)
+        .order_by(func.sum(FinanceExpense.amount).desc())
+    )
+    return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]
+
+
+def expense_by_paid_by_scoped(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+) -> list[tuple[str, float]]:
+    stmt = select(FinanceExpense.paid_by, func.sum(FinanceExpense.amount)).where(
+        _expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains)
+    )
+    stmt = stmt.group_by(FinanceExpense.paid_by)
+    merged: dict[str, float] = {}
+    for pb, total in db.execute(stmt).all():
+        label = (pb or '').strip() or '(Unspecified)'
+        merged[label] = merged.get(label, 0.0) + float(total)
+    return sorted(merged.items(), key=lambda x: -x[1])
+
+
+def expense_by_account_scoped(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+) -> list[tuple[int | None, str, float]]:
+    an = func.coalesce(FinanceAccount.account_name, '(No account)')
+    stmt = (
+        select(FinanceExpense.account_id, an, func.sum(FinanceExpense.amount))
+        .outerjoin(FinanceAccount, FinanceExpense.account_id == FinanceAccount.id)
+        .where(_expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains))
+        .group_by(FinanceExpense.account_id, an)
+        .order_by(func.sum(FinanceExpense.amount).desc())
+    )
+    return [(r[0], str(r[1]), float(r[2])) for r in db.execute(stmt).all()]
+
+
+def sum_expense_emi_scoped(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+) -> float:
+    emi_exact = ('EMI – Loans', 'EMI – Credit Card')
+    stmt = select(func.coalesce(func.sum(FinanceExpense.amount), 0)).where(
+        _expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains),
+        or_(
+            FinanceExpense.category.in_(emi_exact),
+            FinanceExpense.category.ilike('%EMI%'),
+        ),
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_investments_added_in_range(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+) -> float:
+    stmt = select(func.coalesce(func.sum(FinanceInvestment.invested_amount), 0)).where(
+        FinanceInvestment.profile_id == profile_id
+    )
+    if start is not None:
+        stmt = stmt.where(FinanceInvestment.investment_date >= start)
+    if end is not None:
+        stmt = stmt.where(FinanceInvestment.investment_date <= end)
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_loan_payments_in_range(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+) -> float:
+    stmt = (
+        select(func.coalesce(func.sum(LoanPayment.total_paid), 0))
+        .join(Loan, LoanPayment.loan_id == Loan.id)
+        .where(Loan.profile_id == profile_id)
+    )
+    if start is not None:
+        stmt = stmt.where(LoanPayment.payment_date >= start)
+    if end is not None:
+        stmt = stmt.where(LoanPayment.payment_date <= end)
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_loan_interest_collected_in_range(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+) -> float:
+    stmt = (
+        select(func.coalesce(func.sum(LoanPayment.interest_paid), 0))
+        .join(Loan, LoanPayment.loan_id == Loan.id)
+        .where(Loan.profile_id == profile_id)
+    )
+    if start is not None:
+        stmt = stmt.where(LoanPayment.payment_date >= start)
+    if end is not None:
+        stmt = stmt.where(LoanPayment.payment_date <= end)
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_loan_originations_in_range(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+) -> float:
+    """Approximate new lending: loans whose start_date falls in the window (initial principal at booking)."""
+    stmt = select(func.coalesce(func.sum(Loan.loan_amount), 0)).where(Loan.profile_id == profile_id)
+    if start is not None:
+        stmt = stmt.where(Loan.start_date >= start)
+    if end is not None:
+        stmt = stmt.where(Loan.start_date <= end)
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_liability_cash_paid_in_range(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+) -> float:
+    stmt = (
+        select(func.coalesce(func.sum(LiabilityPayment.amount_paid), 0))
+        .join(FinanceLiability, LiabilityPayment.liability_id == FinanceLiability.id)
+        .where(FinanceLiability.profile_id == profile_id)
+    )
+    if start is not None:
+        stmt = stmt.where(LiabilityPayment.payment_date >= start)
+    if end is not None:
+        stmt = stmt.where(LiabilityPayment.payment_date <= end)
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_liability_interest_paid_in_range(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+) -> float:
+    stmt = (
+        select(func.coalesce(func.sum(LiabilityPayment.interest_paid), 0))
+        .join(FinanceLiability, LiabilityPayment.liability_id == FinanceLiability.id)
+        .where(FinanceLiability.profile_id == profile_id)
+    )
+    if start is not None:
+        stmt = stmt.where(LiabilityPayment.payment_date >= start)
+    if end is not None:
+        stmt = stmt.where(LiabilityPayment.payment_date <= end)
+    return float(db.scalar(stmt) or 0)
+
+
+def liability_repayments_by_loan_in_range(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+) -> list[tuple[str, float]]:
+    stmt = (
+        select(FinanceLiability.liability_name, func.sum(LiabilityPayment.amount_paid))
+        .join(FinanceLiability, LiabilityPayment.liability_id == FinanceLiability.id)
+        .where(FinanceLiability.profile_id == profile_id)
+    )
+    if start is not None:
+        stmt = stmt.where(LiabilityPayment.payment_date >= start)
+    if end is not None:
+        stmt = stmt.where(LiabilityPayment.payment_date <= end)
+    stmt = stmt.group_by(FinanceLiability.liability_name).order_by(func.sum(LiabilityPayment.amount_paid).desc())
+    return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]
+
+
+def list_loans(
+    db: Session,
+    profile_id: int,
+    *,
+    loan_type: str | None = None,
+    search: str | None = None,
+) -> list[Loan]:
+    stmt = select(Loan).where(Loan.profile_id == profile_id)
+    if loan_type and str(loan_type).strip().upper() not in ('', 'ALL'):
+        stmt = stmt.where(Loan.loan_type == str(loan_type).strip().upper())
+    q = (search or '').strip()
+    if q:
+        stmt = stmt.where(Loan.borrower_name.ilike(f'%{q}%'))
+    stmt = stmt.order_by(Loan.start_date.desc())
     return list(db.scalars(stmt).all())
+
+
+def loan_balance_due_for_loan(db: Session, ln: Loan) -> float:
+    if _loan_has_schedule(db, ln.id):
+        return _unpaid_schedule_total(db, ln.id)
+    if ln.remaining_amount is not None:
+        return max(0.0, float(ln.remaining_amount))
+    last_bal = db.scalar(
+        select(LoanPayment.balance_remaining)
+        .where(LoanPayment.loan_id == ln.id)
+        .order_by(LoanPayment.payment_date.desc(), LoanPayment.id.desc())
+        .limit(1)
+    )
+    if last_bal is not None:
+        return max(0.0, float(last_bal))
+    return max(0.0, float(ln.loan_amount))
+
+
+def loan_overdue_unpaid_emi_sum(db: Session, loan_id: int, *, today: date | None = None) -> float:
+    today = today or date.today()
+    stmt = select(func.coalesce(func.sum(LoanSchedule.emi_amount), 0)).where(
+        LoanSchedule.loan_id == loan_id,
+        func.lower(LoanSchedule.payment_status) != 'paid',
+        LoanSchedule.due_date < today,
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def count_unpaid_schedule_rows(db: Session, loan_id: int) -> int:
+    n = db.scalar(
+        select(func.count())
+        .select_from(LoanSchedule)
+        .where(
+            LoanSchedule.loan_id == loan_id,
+            func.lower(LoanSchedule.payment_status) != 'paid',
+        )
+    )
+    return int(n or 0)
+
+
+def profile_overdue_emi_amount(db: Session, profile_id: int, *, today: date | None = None) -> float:
+    today = today or date.today()
+    stmt = select(func.coalesce(func.sum(LoanSchedule.emi_amount), 0)).select_from(LoanSchedule).join(
+        Loan, LoanSchedule.loan_id == Loan.id
+    ).where(
+        Loan.profile_id == profile_id,
+        func.lower(LoanSchedule.payment_status) != 'paid',
+        LoanSchedule.due_date < today,
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def interest_paid_by_loan_ids(db: Session, profile_id: int, loan_ids: list[int]) -> dict[int, float]:
+    if not loan_ids:
+        return {}
+    stmt = (
+        select(LoanPayment.loan_id, func.coalesce(func.sum(LoanPayment.interest_paid), 0))
+        .join(Loan, LoanPayment.loan_id == Loan.id)
+        .where(Loan.profile_id == profile_id, LoanPayment.loan_id.in_(loan_ids))
+        .group_by(LoanPayment.loan_id)
+    )
+    return {int(r[0]): float(r[1]) for r in db.execute(stmt).all()}
+
+
+def upcoming_unpaid_emis_in_range(
+    db: Session, profile_id: int, start: date, end: date
+) -> list[dict]:
+    stmt = (
+        select(
+            Loan.id,
+            Loan.borrower_name,
+            LoanSchedule.emi_number,
+            LoanSchedule.due_date,
+            LoanSchedule.emi_amount,
+        )
+        .join(Loan, LoanSchedule.loan_id == Loan.id)
+        .where(
+            Loan.profile_id == profile_id,
+            func.lower(LoanSchedule.payment_status) != 'paid',
+            LoanSchedule.due_date >= start,
+            LoanSchedule.due_date <= end,
+        )
+        .order_by(LoanSchedule.due_date, Loan.id, LoanSchedule.emi_number)
+    )
+    return [
+        {
+            'loan_id': int(r[0]),
+            'borrower_name': str(r[1]),
+            'emi_number': int(r[2]),
+            'due_date': r[3],
+            'emi_amount': float(r[4]),
+        }
+        for r in db.execute(stmt).all()
+    ]
+
+
+def loan_reminder_rows(db: Session, profile_id: int, *, today: date | None = None) -> list[dict]:
+    """Overdue unpaid EMIs, due today, due tomorrow (one row per installment)."""
+    today = today or date.today()
+    tomorrow = today + timedelta(days=1)
+    items: list[dict] = []
+
+    overdue_stmt = (
+        select(
+            Loan.id,
+            Loan.borrower_name,
+            LoanSchedule.emi_number,
+            LoanSchedule.due_date,
+            LoanSchedule.emi_amount,
+        )
+        .join(Loan, LoanSchedule.loan_id == Loan.id)
+        .where(
+            Loan.profile_id == profile_id,
+            func.lower(LoanSchedule.payment_status) != 'paid',
+            LoanSchedule.due_date < today,
+        )
+        .order_by(LoanSchedule.due_date, Loan.id)
+    )
+    for r in db.execute(overdue_stmt).all():
+        items.append(
+            {
+                'loan_id': int(r[0]),
+                'borrower_name': str(r[1]),
+                'emi_number': int(r[2]),
+                'due_date': r[3],
+                'emi_amount': float(r[4]),
+                'kind': 'OVERDUE',
+            }
+        )
+
+    for target, kind in ((today, 'DUE_TODAY'), (tomorrow, 'DUE_TOMORROW')):
+        due_stmt = (
+            select(
+                Loan.id,
+                Loan.borrower_name,
+                LoanSchedule.emi_number,
+                LoanSchedule.due_date,
+                LoanSchedule.emi_amount,
+            )
+            .join(Loan, LoanSchedule.loan_id == Loan.id)
+            .where(
+                Loan.profile_id == profile_id,
+                func.lower(LoanSchedule.payment_status) != 'paid',
+                LoanSchedule.due_date == target,
+            )
+            .order_by(Loan.id, LoanSchedule.emi_number)
+        )
+        for r in db.execute(due_stmt).all():
+            items.append(
+                {
+                    'loan_id': int(r[0]),
+                    'borrower_name': str(r[1]),
+                    'emi_number': int(r[2]),
+                    'due_date': r[3],
+                    'emi_amount': float(r[4]),
+                    'kind': kind,
+                }
+            )
+    return items
 
 
 def get_loan_for_profile(db: Session, loan_id: int, profile_id: int) -> Loan | None:
@@ -858,13 +1611,59 @@ def create_loan(db: Session, row: Loan) -> Loan:
     return row
 
 
+def _simple_interest_accrued(principal: float, annual_rate_pct: float, start: date, end: date) -> float:
+    """Simple interest: principal * (rate/100) * (days/365). No accrual before start or when end < start."""
+    if end < start:
+        return 0.0
+    days = (end - start).days
+    if days <= 0:
+        return 0.0
+    return float(principal) * (float(annual_rate_pct) / 100.0) * (days / 365.0)
+
+
 def create_loan_with_schedule_options(
     db: Session,
     row: Loan,
     *,
     term_months: int | None = None,
     commission_percent: float | None = None,
+    loan_kind: str = 'emi_schedule',
 ) -> Loan:
+    if loan_kind == 'interest_free':
+        row.interest_rate = 0.0
+        row.interest_free_days = None
+        row.term_months = None
+        row.commission_percent = None
+        row.commission_amount = None
+        row.total_interest = 0.0
+        row.total_amount = float(row.loan_amount)
+        row.emi_amount = None
+        row.remaining_amount = float(row.loan_amount)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    if loan_kind == 'simple_accrual':
+        principal = float(row.loan_amount)
+        rate = float(row.interest_rate or 0)
+        today = date.today()
+        accrued = _simple_interest_accrued(principal, rate, row.start_date, today)
+        accrued_r = round(accrued, 2)
+        total_due = round(principal + accrued_r, 2)
+        row.interest_free_days = None
+        row.term_months = None
+        row.commission_percent = None
+        row.commission_amount = None
+        row.total_interest = accrued_r
+        row.total_amount = total_due
+        row.emi_amount = None
+        row.remaining_amount = total_due
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
     if commission_percent is not None and commission_percent > 0:
         row.commission_percent = commission_percent
         row.commission_amount = float(row.loan_amount) * float(commission_percent) / 100.0
@@ -1118,7 +1917,13 @@ def _loan_payments_metric_by_month(
     return [(r[0], float(r[1])) for r in db.execute(stmt).all()]
 
 
-def loan_dashboard_analytics(db: Session, profile_id: int, year: int | None = None) -> dict:
+def loan_dashboard_analytics(
+    db: Session,
+    profile_id: int,
+    year: int | None = None,
+    *,
+    pending_emi_installments_total: float | None = None,
+) -> dict:
     y = year or date.today().year
     principal = sum_loan_principal_for_profile(db, profile_id)
     interest_book = sum_loan_total_interest_book(db, profile_id)
@@ -1139,6 +1944,10 @@ def loan_dashboard_analytics(db: Session, profile_id: int, year: int | None = No
         'collected': collected,
         'remaining': remaining,
     }
+    today = date.today()
+    week_end = today + timedelta(days=7)
+    overdue_emi = profile_overdue_emi_amount(db, profile_id, today=today)
+    upcoming_week = upcoming_unpaid_emis_in_range(db, profile_id, today, week_end)
     return {
         'year': y,
         'total_loan_given': principal,
@@ -1146,7 +1955,9 @@ def loan_dashboard_analytics(db: Session, profile_id: int, year: int | None = No
         'total_amount_expected': expected,
         'total_collected': collected,
         'total_remaining_receivable': remaining,
-        'pending_emi_installments_total': sum_pending_loan_schedule_emis(db, profile_id),
+        'pending_emi_installments_total': float(pending_emi_installments_total)
+        if pending_emi_installments_total is not None
+        else sum_pending_loan_schedule_emis(db, profile_id),
         'active_loans': active,
         'closed_loans': closed,
         'this_month_collection': this_month,
@@ -1155,6 +1966,8 @@ def loan_dashboard_analytics(db: Session, profile_id: int, year: int | None = No
         'interest_profit_by_month': [{'month': m, 'amount': v} for m, v in profit_monthly],
         'given_vs_collected_vs_remaining': bar_compare,
         'active_vs_closed_pie': pie,
+        'overdue_emi_amount': overdue_emi,
+        'upcoming_emis_this_week': upcoming_week,
     }
 
 

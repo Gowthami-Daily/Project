@@ -51,15 +51,15 @@ function PersonalFinanceDashboardCharts({
 
   return (
     <>
-      <section aria-label="Charts" className="grid gap-4 lg:grid-cols-2">
-        <div className={pfChartCard}>
+      <section aria-label="Charts" className="grid min-w-0 gap-4 lg:grid-cols-2">
+        <div className={`min-w-0 ${pfChartCard}`}>
           <h2 className={chartTitleCls}>Income vs expense</h2>
           <p className={chartSubCls}>
             Monthly · {dashYear}
             {bankFilter ? ` · ${filterBankName || 'filtered account'}` : ''}
           </p>
-          <div className="mt-3 h-[280px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
+            <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
               <BarChart data={barIeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="pfBarIncome" x1="0" y1="0" x2="0" y2="1">
@@ -83,16 +83,16 @@ function PersonalFinanceDashboardCharts({
           </div>
         </div>
 
-        <div className={pfChartCard}>
+        <div className={`min-w-0 ${pfChartCard}`}>
           <h2 className={chartTitleCls}>Expense by category</h2>
           <p className={chartSubCls}>
             {bankFilter ? `${dashMonthLabel} · ${filterBankName || 'filtered'}` : `${dashMonthLabel} · expenses in this month`}
           </p>
-          <div className="mt-3 h-[280px] w-full">
+          <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
             {pieData.length === 0 ? (
               <p className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">No expense data yet</p>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
                 <PieChart>
                   <Pie
                     data={pieData}
@@ -125,15 +125,15 @@ function PersonalFinanceDashboardCharts({
           </div>
         </div>
 
-        <div className={pfChartCard}>
+        <div className={`min-w-0 ${pfChartCard}`}>
           <h2 className={chartTitleCls}>{bankFilter ? 'Account cashflow (cumulative)' : 'Net worth trend'}</h2>
           <p className={chartSubCls}>
             {bankFilter
               ? `Running income − expense by month · ${filterBankName || 'this account'} · ${dashYear}`
               : `Base includes assets, investments, loan receivable, liabilities; plus cumulative savings · ${dashYear}`}
           </p>
-          <div className="mt-3 h-[280px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
+            <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
               <LineChart data={networthData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="pfLineNwDash" x1="0" y1="0" x2="1" y2="0">
@@ -162,16 +162,16 @@ function PersonalFinanceDashboardCharts({
           </div>
         </div>
 
-        <div className={pfChartCard}>
+        <div className={`min-w-0 ${pfChartCard}`}>
           <h2 className={chartTitleCls}>Investment allocation</h2>
           <p className={chartSubCls}>
             {bankFilter ? 'Profile-wide by instrument type (bank filter does not apply)' : 'By instrument type'}
           </p>
-          <div className="mt-3 h-[280px] w-full">
+          <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
             {invBarData.length === 0 ? (
               <p className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">No investments yet</p>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
                 <BarChart data={invBarData} layout="vertical" margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
                   <XAxis type="number" tick={{ fontSize: 11, fill: axisStroke }} stroke={axisStroke} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} />

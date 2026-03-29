@@ -8,6 +8,7 @@ import {
   ChartPieIcon,
   CheckCircleIcon,
   CreditCardIcon,
+  ExclamationTriangleIcon,
   ReceiptPercentIcon,
   ScaleIcon,
   TruckIcon,
@@ -55,8 +56,8 @@ const LazyDashboardCharts = lazy(() => import('./PersonalFinanceDashboardCharts.
 
 const LOAN_CHART_COLORS = ['#1E3A8A', '#0ea5e9', '#22c55e', '#a855f7', '#f59e0b', '#ec4899', '#64748b']
 
-const chartTitle = 'text-base font-bold text-sky-950 dark:text-slate-100'
-const chartSub = 'mt-0.5 text-xs text-slate-500 dark:text-slate-400'
+const chartTitle = 'text-base font-bold text-sky-950 dark:text-[var(--pf-text)]'
+const chartSub = 'mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]'
 
 const DASH_TABS = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -168,16 +169,15 @@ export default function PersonalFinanceDashboardPage() {
     const cacheKey = dashboardBundleCacheKey(accountQuery, dashYear, dashMonth)
     const bustCache = bundleTickRef.current !== tick
     bundleTickRef.current = tick
-    if (!bustCache) {
-      const cached = readDashboardBundleCache(cacheKey)
-      if (cached) {
-        hydrateFromBundle(cached)
-        setLoadError('')
-        setLoading(false)
-        return
-      }
+    const cached = readDashboardBundleCache(cacheKey)
+    if (cached) {
+      hydrateFromBundle(cached)
+      setLoadError('')
+      setLoading(false)
+      if (!bustCache) return
+    } else {
+      setLoading(true)
     }
-    setLoading(true)
     setLoadError('')
     try {
       const b = await getDashboardBundle(accountQuery, dashYear, dashMonth, { recentLimit: 12 })
@@ -238,17 +238,9 @@ export default function PersonalFinanceDashboardPage() {
   useEffect(() => {
     if (!summary) {
       setDashStage(0)
-      return undefined
+      return
     }
-    let id2
-    const id1 = requestAnimationFrame(() => {
-      setDashStage(1)
-      id2 = requestAnimationFrame(() => setDashStage(2))
-    })
-    return () => {
-      cancelAnimationFrame(id1)
-      if (id2 != null) cancelAnimationFrame(id2)
-    }
+    setDashStage(2)
   }, [summary])
 
   const pieData = useMemo(
@@ -456,7 +448,7 @@ export default function PersonalFinanceDashboardPage() {
             subtitle={bankFilter ? 'Profile-wide' : 'Assets − liabilities'}
             icon={ScaleIcon}
             iconTintClass="bg-violet-100 text-violet-700 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-violet-600 md:to-indigo-600"
+            gradientClass="md:bg-gradient-to-br md:from-[#7c3aed] md:to-[#4f46e5]"
           />
           <KpiCard
             title="This month income"
@@ -464,7 +456,7 @@ export default function PersonalFinanceDashboardPage() {
             subtitle={bankFilter ? filterBankName || 'Account' : dashMonthLabel}
             icon={ArrowTrendingUpIcon}
             iconTintClass="bg-emerald-100 text-emerald-700 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-emerald-500 md:to-teal-600"
+            gradientClass="md:bg-gradient-to-br md:from-[#059669] md:to-[#10b981]"
           />
           <KpiCard
             title="This month expense"
@@ -472,7 +464,7 @@ export default function PersonalFinanceDashboardPage() {
             subtitle={bankFilter ? filterBankName || 'Account' : dashMonthLabel}
             icon={CreditCardIcon}
             iconTintClass="bg-rose-100 text-rose-600 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-rose-500 md:to-orange-500"
+            gradientClass="md:bg-gradient-to-br md:from-[#dc2626] md:to-[#ef4444]"
           />
           <KpiCard
             title="EMI due"
@@ -480,7 +472,7 @@ export default function PersonalFinanceDashboardPage() {
             subtitle="Expense · EMI categories"
             icon={CalendarDaysIcon}
             iconTintClass="bg-orange-100 text-orange-700 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-orange-500 md:to-amber-600"
+            gradientClass="md:bg-gradient-to-br md:from-[#d97706] md:to-[#f59e0b]"
           />
           <KpiCard
             title="Balance"
@@ -488,7 +480,7 @@ export default function PersonalFinanceDashboardPage() {
             subtitle={bankFilter ? filterBankName || 'This account' : 'All accounts'}
             icon={BanknotesIcon}
             iconTintClass="bg-sky-100 text-sky-700 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-sky-500 md:to-blue-600"
+            gradientClass="md:bg-gradient-to-br md:from-[#2563eb] md:to-[#3b82f6]"
           />
           <KpiCard
             wrapperClassName="hidden md:block"
@@ -503,16 +495,20 @@ export default function PersonalFinanceDashboardPage() {
             wrapperClassName="hidden md:block"
             title="Fixed assets"
             value={formatInr(summary?.total_assets)}
-            subtitle="Recorded"
+            subtitle="Effective value (incl. depreciation)"
             icon={BuildingLibraryIcon}
             iconTintClass="bg-amber-100 text-amber-700 md:bg-white/20 md:text-white"
             gradientClass="md:bg-gradient-to-br md:from-amber-500 md:to-yellow-600"
           />
           <KpiCard
             wrapperClassName="hidden md:block"
-            title="Liabilities"
+            title="Liabilities (outstanding)"
             value={formatInr(summary?.total_liabilities)}
-            subtitle="Non-loan"
+            subtitle={
+              summary?.liability_overdue_amount != null
+                ? `Overdue ${formatInr(summary.liability_overdue_amount)} · Due this week: ${Array.isArray(summary?.liability_due_this_week) ? summary.liability_due_this_week.length : '—'}`
+                : 'Active balances you owe'
+            }
             icon={ReceiptPercentIcon}
             iconTintClass="bg-slate-200 text-slate-700 md:bg-white/20 md:text-white"
             gradientClass="md:bg-gradient-to-br md:from-slate-600 md:to-slate-800"
@@ -586,8 +582,8 @@ export default function PersonalFinanceDashboardPage() {
             <section className={pfChartCard} aria-label="EMI receivable vs expense">
               <h2 className={chartTitle}>EMI · paid (expense) vs pending (receivable)</h2>
               <p className={chartSub}>{dashMonthLabel} · profile-wide</p>
-              <div className="mt-3 h-[200px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="mt-3 h-[200px] min-h-[200px] min-w-0 w-full">
+                <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={160}>
                   <BarChart
                     data={[
                       {
@@ -727,22 +723,13 @@ export default function PersonalFinanceDashboardPage() {
       {activeTab === 'cashflow' && (
         <>
           <section aria-label="Month cashflow snapshot" className="space-y-4">
-            <div className="rounded-2xl border border-sky-200/60 bg-white px-4 py-3 shadow-sm shadow-sky-950/[0.03] ring-1 ring-sky-100/40 sm:px-5">
-              <h2 className="text-lg font-bold text-sky-950">{dashMonthLabel} · cashflow snapshot</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Profile-wide for the selected month (ignores bank filter)
-                {cashflowMonth?.period_start && cashflowMonth?.period_end
-                  ? ` · ${cashflowMonth.period_start} → ${cashflowMonth.period_end}`
-                  : null}
-              </p>
-            </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <KpiCard
                 title={`Expense · ${dashMonthLabel}`}
                 value={formatInr(cashflowMonth?.total_expense_month)}
                 subtitle="All recorded expenses in this period"
                 icon={CreditCardIcon}
-                gradientClass="md:bg-gradient-to-br md:from-rose-500 md:to-orange-500"
+                gradientClass="md:bg-gradient-to-br md:from-[#dc2626] md:to-[#ef4444]"
               />
               <KpiCard
                 title="Food & groceries"
@@ -789,17 +776,17 @@ export default function PersonalFinanceDashboardPage() {
             </div>
           </section>
 
-          <section aria-label="Month cashflow charts" className="grid gap-4 lg:grid-cols-2">
-            <div className={pfChartCard}>
+          <section aria-label="Month cashflow charts" className="grid min-w-0 gap-4 lg:grid-cols-2">
+            <div className={`min-w-0 ${pfChartCard}`}>
               <h2 className={chartTitle}>{dashMonthLabel} · amounts at a glance</h2>
               <p className={chartSub}>Same buckets as the cards (₹)</p>
-              <div className="mt-3 h-[320px] w-full">
+              <div className="mt-3 h-[320px] min-h-[320px] min-w-0 w-full">
                 {cashflowBarData.length === 0 || cashflowBarData.every((d) => d.value === 0) ? (
                   <p className="flex h-full items-center justify-center text-sm text-slate-500">
                     No expense data for {dashMonthLabel} yet
                   </p>
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={240}>
                     <BarChart
                       data={cashflowBarData}
                       layout="vertical"
@@ -821,7 +808,7 @@ export default function PersonalFinanceDashboardPage() {
               </div>
             </div>
 
-            <div className={pfChartCard}>
+            <div className={`min-w-0 ${pfChartCard}`}>
               <h2 className={chartTitle}>Month breakdown · table</h2>
               <p className={chartSub}>Quick copy-friendly totals</p>
               <div className={`mt-3 ${pfTableWrap}`}>
@@ -850,13 +837,6 @@ export default function PersonalFinanceDashboardPage() {
       {activeTab === 'loans' && (
         <>
           <section aria-label="Loans lending portfolio" className="space-y-4">
-            <div className="rounded-2xl border border-sky-200/60 bg-white px-4 py-3 shadow-sm shadow-sky-950/[0.03] ring-1 ring-sky-100/40 sm:px-5">
-              <h2 className="text-lg font-bold text-sky-950">Loans (you lend)</h2>
-              <p className="text-xs text-slate-500">
-                Profile-wide lending · charts use {dashYear}
-                {bankFilter ? ' (unchanged by bank filter)' : ''}
-              </p>
-            </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <KpiCard
                 title="Total loan given"
@@ -914,15 +894,33 @@ export default function PersonalFinanceDashboardPage() {
                 icon={CalendarDaysIcon}
                 gradientClass="md:bg-gradient-to-br md:from-rose-500 md:to-pink-600"
               />
+              <KpiCard
+                title="Overdue EMI (receivable)"
+                value={formatInr(loanAnalytics?.overdue_emi_amount)}
+                subtitle="Unpaid installments past due date"
+                icon={ExclamationTriangleIcon}
+                gradientClass="md:bg-gradient-to-br md:from-red-600 md:to-orange-600"
+              />
+              <KpiCard
+                title="Upcoming EMIs (7 days)"
+                value={
+                  Array.isArray(loanAnalytics?.upcoming_emis_this_week)
+                    ? String(loanAnalytics.upcoming_emis_this_week.length)
+                    : '—'
+                }
+                subtitle="Count of installments due in the next week"
+                icon={CalendarDaysIcon}
+                gradientClass="md:bg-gradient-to-br md:from-violet-600 md:to-purple-700"
+              />
             </div>
           </section>
 
-          <section aria-label="Loan charts" className="grid gap-4 lg:grid-cols-2">
-            <div className={pfChartCard}>
+          <section aria-label="Loan charts" className="grid min-w-0 gap-4 lg:grid-cols-2">
+            <div className={`min-w-0 ${pfChartCard}`}>
               <h2 className={chartTitle}>Loan: given vs collected vs remaining</h2>
               <p className={chartSub}>Portfolio totals (₹)</p>
-              <div className="mt-3 h-[280px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
+                <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
                   <BarChart
                     data={[
                       {
@@ -947,11 +945,11 @@ export default function PersonalFinanceDashboardPage() {
               </div>
             </div>
 
-            <div className={pfChartCard}>
+            <div className={`min-w-0 ${pfChartCard}`}>
               <h2 className={chartTitle}>Monthly EMI collection</h2>
               <p className={chartSub}>{dashYear} · total paid per month</p>
-              <div className="mt-3 h-[280px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
+                <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
                   <LineChart
                     data={(loanAnalytics?.collections_by_month ?? []).map((r) => ({
                       month: r.month,
@@ -969,11 +967,11 @@ export default function PersonalFinanceDashboardPage() {
               </div>
             </div>
 
-            <div className={pfChartCard}>
+            <div className={`min-w-0 ${pfChartCard}`}>
               <h2 className={chartTitle}>Interest collected by month</h2>
               <p className={chartSub}>{dashYear} · from payment records</p>
-              <div className="mt-3 h-[280px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
+                <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
                   <LineChart
                     data={(loanAnalytics?.interest_profit_by_month ?? []).map((r) => ({
                       month: r.month,
@@ -991,16 +989,16 @@ export default function PersonalFinanceDashboardPage() {
               </div>
             </div>
 
-            <div className={pfChartCard}>
+            <div className={`min-w-0 ${pfChartCard}`}>
               <h2 className={chartTitle}>Active vs closed loans</h2>
               <p className={chartSub}>Loan count</p>
-              <div className="mt-3 h-[280px] w-full">
+              <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
                 {(() => {
                   const pieLoan = (loanAnalytics?.active_vs_closed_pie ?? []).filter((x) => Number(x.value) > 0)
                   return pieLoan.length === 0 ? (
                     <p className="flex h-full items-center justify-center text-sm text-slate-500">No loans yet</p>
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
                       <PieChart>
                         <Pie
                           data={pieLoan}

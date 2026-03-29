@@ -1,12 +1,55 @@
-/* Personal Finance — mobile-first fintech shell (scoped via .pf-app parent) */
+/* Personal Finance — design tokens + mobile shell (scoped under .pf-app) */
 .pf-app {
+  /* Light (fintech) */
+  --pf-bg: #f1f5f9;
+  --pf-sidebar: #ffffff;
+  --pf-header: rgba(255, 255, 255, 0.96);
+  --pf-content: rgba(255, 255, 255, 0.5);
+  --pf-card: #ffffff;
+  --pf-card-hover: #f8fafc;
+  --pf-border: #e2e8f0;
+  --pf-text: #0f172a;
+  --pf-text-muted: #64748b;
   --pf-primary: #1e3a8a;
   --pf-primary-hover: #172554;
-  --pf-green: #10b981;
-  --pf-red: #ef4444;
-  --pf-bg: #f1f5f9;
-  --pf-card: #ffffff;
+  --pf-success: #10b981;
+  --pf-danger: #ef4444;
+  --pf-warning: #f59e0b;
+  --pf-purple: #8b5cf6;
+  --pf-input-bg: #ffffff;
+  --pf-th-bg: #e0f2fe;
+  --pf-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+  --pf-shadow-hover: 0 6px 24px rgba(15, 23, 42, 0.1);
+
   font-family: 'Inter', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  background-color: var(--pf-bg);
+  color: var(--pf-text);
+}
+
+/* Industry dark — layered surfaces (Stripe / Linear / Notion-style) */
+.pf-app.dark {
+  --pf-bg: #0b1220;
+  --pf-sidebar: #0f172a;
+  --pf-header: #111827;
+  --pf-content: #0b1220;
+  --pf-card: #1e293b;
+  --pf-card-hover: #273449;
+  --pf-border: #334155;
+  --pf-text: #e5e7eb;
+  --pf-text-muted: #94a3b8;
+  --pf-primary: #3b82f6;
+  --pf-primary-hover: #2563eb;
+  --pf-success: #10b981;
+  --pf-danger: #ef4444;
+  --pf-warning: #f59e0b;
+  --pf-purple: #8b5cf6;
+  --pf-input-bg: #020617;
+  --pf-th-bg: #020617;
+  --pf-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  --pf-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.35);
+
+  background-color: var(--pf-bg);
+  color: var(--pf-text);
 }
 
 @keyframes pf-sheet-up {
@@ -56,4 +99,32 @@
 
 .pf-app main {
   transition: opacity 0.22s ease;
+}
+
+/* Collapsible PF sidebar (desktop width rail) */
+.pf-app .pf-sidebar-rail {
+  transition:
+    width 0.3s ease,
+    min-width 0.3s ease;
+}
+
+/* Sidebar section headings (Stripe / Linear style) */
+.pf-app .sidebar-section-title {
+  letter-spacing: 0.08em;
+}
+
+/* Primary CTA — uses theme tokens */
+.pf-app .pf-btn-primary-solid {
+  border-radius: 10px;
+  background: var(--pf-primary);
+  color: #fff;
+  transition:
+    background 0.2s ease,
+    transform 0.15s ease;
+}
+.pf-app .pf-btn-primary-solid:hover {
+  background: var(--pf-primary-hover);
+}
+.pf-app .pf-btn-primary-solid:active {
+  transform: scale(0.97);
 }

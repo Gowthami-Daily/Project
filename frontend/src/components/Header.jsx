@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { IconCart, IconMoon, IconSun } from './icons.jsx'
 
 const nav = [
@@ -39,6 +40,12 @@ export default function Header({ dark, onToggleDark, cartCount }) {
         </nav>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          <Link
+            to="/personal-finance"
+            className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900 shadow-sm transition hover:bg-emerald-100 sm:inline dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-100 dark:hover:bg-emerald-900/80"
+          >
+            Finance login
+          </Link>
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
@@ -98,6 +105,13 @@ export default function Header({ dark, onToggleDark, cartCount }) {
               {item.label}
             </a>
           ))}
+          <Link
+            to="/personal-finance"
+            className="rounded-lg px-3 py-2 font-semibold text-emerald-800 transition hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/50"
+            onClick={() => setMenuOpen(false)}
+          >
+            Finance login
+          </Link>
         </nav>
       </div>
     </header>

@@ -7,10 +7,12 @@ import {
   createFinanceLoan,
   createLoanPayment,
   deleteFinanceLoan,
+  getFinanceLoansSummary,
   listFinanceAccounts,
   listFinanceLoans,
   listLoanPayments,
   listLoanSchedule,
+  patchFinanceLoan,
   patchLoanScheduleCredit,
   payLoanEmi,
   pfFetchBlob,
@@ -41,17 +43,39 @@ import {
   pfThSmActionCol,
   pfThSmRight,
   pfTrHover,
+  pfChartCard,
+  pfSelectCompact,
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
+import PfSegmentedControl from '../PfSegmentedControl.jsx'
 
 function todayISODate() {
   const d = new Date()
   return d.toISOString().slice(0, 10)
 }
 
+/** Match backend: simple interest principal × (rate/100) × (days/365). */
+function simpleAccrualPreview(principal, annualRatePct, startIso) {
+  const p = Number(principal)
+  const r = Number(annualRatePct)
+  if (!p || p <= 0 || !r || r <= 0 || !startIso) return null
+  const start = new Date(`${startIso}T12:00:00`)
+  if (Number.isNaN(start.getTime())) return null
+  const end = new Date()
+  end.setHours(12, 0, 0, 0)
+  const days = Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000))
+  const accrued = p * (r / 100) * (days / 365)
+  const accruedR = Math.round(accrued * 100) / 100
+  const total = Math.round((p + accruedR) * 100) / 100
+  return { days, accrued: accruedR, total }
+}
+
 function balanceDue(loan) {
   if (loan == null) return 0
+  if (loan.balance_due != null && loan.balance_due !== '') {
+    return Number(loan.balance_due)
+  }
   if (loan.remaining_amount != null && loan.remaining_amount !== '') {
     return Number(loan.remaining_amount)
   }
@@ -69,9 +93,60 @@ function canRecordPaymentFromList(loan) {
 
 function progressBarTone(pct) {
   if (pct == null) return 'bg-slate-400'
-  if (pct > 50) return 'bg-emerald-500'
-  if (pct >= 20) return 'bg-amber-500'
+  if (pct >= 70) return 'bg-emerald-500'
+  if (pct >= 30) return 'bg-amber-500'
   return 'bg-red-500'
+}
+
+function loanTypeLabel(t) {
+  const m = {
+    EMI: 'EMI',
+    INTEREST_FREE: 'Interest-free',
+    SIMPLE_INTEREST: 'Simple interest',
+  }
+  return m[t] || t || '—'
+}
+
+function loanTypeBadgeCls(t) {
+  switch (t) {
+    case 'EMI':
+      return 'border border-blue-200 bg-blue-100 text-blue-900'
+    case 'INTEREST_FREE':
+      return 'border border-emerald-200 bg-emerald-100 text-emerald-900'
+    case 'SIMPLE_INTEREST':
+      return 'border border-amber-200 bg-amber-100 text-amber-950'
+    default:
+      return 'border border-slate-200 bg-slate-100 text-slate-800'
+  }
+}
+
+function displayStatusBadge(displayStatus, isOverdue) {
+  if (isOverdue || displayStatus === 'OVERDUE') {
+    return (
+      <span className="inline-flex rounded-full border border-red-200 bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-900">
+        Overdue
+      </span>
+    )
+  }
+  if (displayStatus === 'COMPLETED') {
+    return (
+      <span className="inline-flex rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-900">
+        Completed
+      </span>
+    )
+  }
+  if (displayStatus === 'CLOSED') {
+    return (
+      <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+        Closed
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-900">
+      Active
+    </span>
+  )
 }
 
 function formatNextEmiDue(iso) {
@@ -131,9 +206,22 @@ export default function PfLoansPage() {
   const [termMonths, setTermMonths] = useState('')
   const [commissionPct, setCommissionPct] = useState('')
   const [interestFreeDays, setInterestFreeDays] = useState('')
+  const [loanKind, setLoanKind] = useState('emi_schedule')
   const [showRecordPaymentForm, setShowRecordPaymentForm] = useState(false)
   const [showAddAmountForm, setShowAddAmountForm] = useState(false)
   const [loanExportBusy, setLoanExportBusy] = useState(false)
+  const [loanSummary, setLoanSummary] = useState(null)
+  const [filterLoanType, setFilterLoanType] = useState('ALL')
+  const [filterStatus, setFilterStatus] = useState('ACTIVE')
+  const [searchBorrower, setSearchBorrower] = useState('')
+  const [searchDebounced, setSearchDebounced] = useState('')
+  const [borrowerPhone, setBorrowerPhone] = useState('')
+  const [borrowerAddress, setBorrowerAddress] = useState('')
+  const [loanNotesField, setLoanNotesField] = useState('')
+  const [detailPhone, setDetailPhone] = useState('')
+  const [detailAddress, setDetailAddress] = useState('')
+  const [detailNotes, setDetailNotes] = useState('')
+  const [savingBorrowerMeta, setSavingBorrowerMeta] = useState(false)
   const [addDisburseDate, setAddDisburseDate] = useState(todayISODate)
   const [addDisburseAmount, setAddDisburseAmount] = useState('')
   const [addDisburseNotes, setAddDisburseNotes] = useState('')
@@ -150,12 +238,31 @@ export default function PfLoansPage() {
     return m
   }, [accounts])
 
+  const loanQueryParams = useMemo(
+    () => ({
+      loan_type: filterLoanType === 'ALL' ? undefined : filterLoanType,
+      status: filterStatus === 'ALL' ? undefined : filterStatus,
+      search: searchDebounced.trim() || undefined,
+    }),
+    [filterLoanType, filterStatus, searchDebounced],
+  )
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchDebounced(searchBorrower), 400)
+    return () => window.clearTimeout(t)
+  }, [searchBorrower])
+
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [loanData, accData] = await Promise.all([listFinanceLoans(), listFinanceAccounts()])
+      const [loanData, summaryData, accData] = await Promise.all([
+        listFinanceLoans(loanQueryParams),
+        getFinanceLoansSummary().catch(() => null),
+        listFinanceAccounts(),
+      ])
       setLoans(Array.isArray(loanData) ? loanData : [])
+      setLoanSummary(summaryData && typeof summaryData === 'object' ? summaryData : null)
       setAccounts(Array.isArray(accData) ? accData : [])
     } catch (e) {
       if (e.status === 401) {
@@ -167,7 +274,7 @@ export default function PfLoansPage() {
     } finally {
       setLoading(false)
     }
-  }, [onSessionInvalid])
+  }, [onSessionInvalid, loanQueryParams])
 
   useEffect(() => {
     load()
@@ -203,6 +310,18 @@ export default function PfLoansPage() {
       cancelled = true
     }
   }, [viewLoan?.id, tick])
+
+  useEffect(() => {
+    if (!viewLoan) return
+    setDetailPhone(viewLoan.borrower_phone ?? '')
+    setDetailAddress(viewLoan.borrower_address ?? '')
+    setDetailNotes(viewLoan.notes ?? '')
+  }, [
+    viewLoan?.id,
+    viewLoan?.borrower_phone,
+    viewLoan?.borrower_address,
+    viewLoan?.notes,
+  ])
 
   useEffect(() => {
     if (!viewLoan?.id) return
@@ -255,15 +374,24 @@ export default function PfLoansPage() {
 
   function resetNewLoanForm() {
     setBorrowerName('')
+    setBorrowerPhone('')
+    setBorrowerAddress('')
+    setLoanNotesField('')
     setLoanAmount('')
     setInterestRate('')
     setInterestFreeDays('')
     setEndDate('')
     setTermMonths('')
     setCommissionPct('')
-    setStartDate(todayISODate)
+    setStartDate(todayISODate())
     setStatus('ACTIVE')
+    setLoanKind('emi_schedule')
   }
+
+  const accrualPreview = useMemo(() => {
+    if (loanKind !== 'simple_accrual') return null
+    return simpleAccrualPreview(loanAmount, interestRate, startDate)
+  }, [loanKind, loanAmount, interestRate, startDate])
 
   async function refreshDetail() {
     if (!viewLoan?.id) return
@@ -274,7 +402,7 @@ export default function PfLoansPage() {
       ])
       setDetailSchedule(Array.isArray(sch) ? sch : [])
       setDetailPayments(Array.isArray(pay) ? pay : [])
-      const data = await listFinanceLoans()
+      const data = await listFinanceLoans(loanQueryParams)
       setLoans(Array.isArray(data) ? data : [])
       const updated = (Array.isArray(data) ? data : []).find((x) => x.id === viewLoan.id)
       if (updated) setViewLoan(updated)
@@ -310,23 +438,56 @@ export default function PfLoansPage() {
     setSubmittingLoan(true)
     setError('')
     try {
-      const tm = termMonths === '' ? null : Number(termMonths)
-      const cp = commissionPct === '' ? null : Number(commissionPct)
-      const ifd =
-        interestFreeDays === '' || interestFreeDays == null
-          ? null
-          : Math.max(0, Math.floor(Number(interestFreeDays)))
-      await createFinanceLoan({
+      const base = {
         borrower_name: borrowerName.trim(),
         loan_amount: Number(loanAmount),
-        interest_rate: interestRate === '' ? null : Number(interestRate),
-        interest_free_days: ifd != null && !Number.isNaN(ifd) && ifd > 0 ? ifd : null,
         start_date: startDate,
         end_date: endDate || null,
         status: status.trim() || 'ACTIVE',
-        term_months: tm && tm > 0 ? tm : null,
-        commission_percent: cp != null && !Number.isNaN(cp) && cp > 0 ? cp : null,
-      })
+        loan_kind: loanKind,
+        borrower_phone: borrowerPhone.trim() || null,
+        borrower_address: borrowerAddress.trim() || null,
+        notes: loanNotesField.trim() || null,
+      }
+      let payload
+      if (loanKind === 'interest_free') {
+        payload = {
+          ...base,
+          interest_rate: 0,
+          interest_free_days: null,
+          term_months: null,
+          commission_percent: null,
+        }
+      } else if (loanKind === 'simple_accrual') {
+        const r = Number(interestRate)
+        if (!r || r <= 0 || Number.isNaN(r)) {
+          setError('Enter annual interest % for simple interest loans.')
+          setSubmittingLoan(false)
+          return
+        }
+        payload = {
+          ...base,
+          interest_rate: r,
+          interest_free_days: null,
+          term_months: null,
+          commission_percent: null,
+        }
+      } else {
+        const tm = termMonths === '' ? null : Number(termMonths)
+        const cp = commissionPct === '' ? null : Number(commissionPct)
+        const ifd =
+          interestFreeDays === '' || interestFreeDays == null
+            ? null
+            : Math.max(0, Math.floor(Number(interestFreeDays)))
+        payload = {
+          ...base,
+          interest_rate: interestRate === '' ? null : Number(interestRate),
+          interest_free_days: ifd != null && !Number.isNaN(ifd) && ifd > 0 ? ifd : null,
+          term_months: tm && tm > 0 ? tm : null,
+          commission_percent: cp != null && !Number.isNaN(cp) && cp > 0 ? cp : null,
+        }
+      }
+      await createFinanceLoan(payload)
       resetNewLoanForm()
       setShowNewLoanModal(false)
       await load()
@@ -497,6 +658,32 @@ export default function PfLoansPage() {
     }
   }
 
+  async function handleSaveBorrowerMeta(e) {
+    e.preventDefault()
+    if (!viewLoan?.id) return
+    setSavingBorrowerMeta(true)
+    setError('')
+    try {
+      const updated = await patchFinanceLoan(viewLoan.id, {
+        borrower_phone: detailPhone.trim() || null,
+        borrower_address: detailAddress.trim() || null,
+        notes: detailNotes.trim() || null,
+      })
+      setViewLoan(updated)
+      await load()
+      refresh()
+    } catch (err) {
+      if (err.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        setError(err.message || 'Could not save borrower details')
+      }
+    } finally {
+      setSavingBorrowerMeta(false)
+    }
+  }
+
   async function handleDeleteLoan(l) {
     const ok = window.confirm(
       `Delete loan for “${l.borrower_name}”?\n\nThis removes the loan, EMI schedule, and all payment history. This cannot be undone.`,
@@ -521,8 +708,11 @@ export default function PfLoansPage() {
     }
   }
 
+  /* z above PfBottomNav (z-50) so modal actions are not covered on mobile */
   const modalBackdrop =
-    'fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm md:items-center md:p-4'
+    'fixed inset-0 z-[55] flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm md:items-center md:p-4'
+  const modalPanelPb =
+    'pb-[max(1.5rem,calc(5.5rem+env(safe-area-inset-bottom)))]'
 
   return (
     <div className="space-y-6">
@@ -545,6 +735,107 @@ export default function PfLoansPage() {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{error}</div>
       ) : null}
 
+      {loanSummary ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {[
+            { label: 'Total given', value: formatInr(loanSummary.total_given) },
+            { label: 'Total received', value: formatInr(loanSummary.total_received) },
+            { label: 'Outstanding', value: formatInr(loanSummary.total_outstanding) },
+            { label: 'Overdue (EMI)', value: formatInr(loanSummary.overdue_amount) },
+            { label: 'Interest earned', value: formatInr(loanSummary.interest_earned_lifetime) },
+          ].map((c) => (
+            <div key={c.label} className={pfChartCard}>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{c.label}</p>
+              <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">{c.value}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {loanSummary &&
+      (loanSummary.reminders?.length > 0 || loanSummary.upcoming_emis_this_week?.length > 0) ? (
+        <div className={`${cardCls} border-amber-200/80 bg-amber-50/40`}>
+          <h3 className="text-sm font-bold text-amber-950">EMI reminders</h3>
+          <ul className="mt-2 space-y-1.5 text-sm text-amber-950">
+            {(loanSummary.reminders || []).slice(0, 12).map((r, i) => (
+              <li key={`r-${r.loan_id}-${r.emi_number}-${i}`}>
+                <span className="font-semibold">{r.borrower_name}</span>
+                {r.kind === 'OVERDUE' ? (
+                  <span className="text-red-700"> — overdue (due {r.due_date})</span>
+                ) : r.kind === 'DUE_TODAY' ? (
+                  <span> — due today</span>
+                ) : (
+                  <span> — due tomorrow ({r.due_date})</span>
+                )}
+                {r.emi_amount != null ? (
+                  <span className="tabular-nums"> · {formatInr(r.emi_amount)}</span>
+                ) : null}
+              </li>
+            ))}
+            {(loanSummary.upcoming_emis_this_week || []).length > 0 ? (
+              <li className="pt-2 text-xs font-semibold uppercase tracking-wide text-amber-900/80">
+                This week (next 7 days)
+              </li>
+            ) : null}
+            {(loanSummary.upcoming_emis_this_week || []).slice(0, 15).map((u) => (
+              <li key={`u-${u.loan_id}-${u.emi_number}`} className="text-xs">
+                {u.borrower_name} · due {formatNextEmiDue(u.due_date)} · {formatInr(u.emi_amount)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className={`${cardCls} flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end`}>
+        <div className="min-w-[10rem] flex-1">
+          <label className={labelCls} htmlFor="pf-loan-filter-type">
+            Loan type
+          </label>
+          <select
+            id="pf-loan-filter-type"
+            className={`${pfSelectCompact} mt-1 w-full sm:w-auto`}
+            value={filterLoanType}
+            onChange={(e) => setFilterLoanType(e.target.value)}
+          >
+            <option value="ALL">All types</option>
+            <option value="EMI">EMI</option>
+            <option value="INTEREST_FREE">Interest-free</option>
+            <option value="SIMPLE_INTEREST">Simple interest</option>
+          </select>
+        </div>
+        <div className="min-w-[10rem] flex-1">
+          <label className={labelCls} htmlFor="pf-loan-filter-status">
+            Status
+          </label>
+          <select
+            id="pf-loan-filter-status"
+            className={`${pfSelectCompact} mt-1 w-full sm:w-auto`}
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+          >
+            <option value="ALL">All</option>
+            <option value="ACTIVE">Active</option>
+            <option value="CLOSED">Closed</option>
+            <option value="OVERDUE">Overdue</option>
+            <option value="COMPLETED">Completed</option>
+          </select>
+        </div>
+        <div className="min-w-[12rem] flex-[2]">
+          <label className={labelCls} htmlFor="pf-loan-search">
+            Search borrower
+          </label>
+          <input
+            id="pf-loan-search"
+            type="search"
+            placeholder="Name…"
+            className={inputCls}
+            value={searchBorrower}
+            onChange={(e) => setSearchBorrower(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+      </div>
+
       <div className={cardCls}>
         <h2 className="text-base font-bold text-slate-900">Your loans</h2>
         {loading ? (
@@ -562,18 +853,32 @@ export default function PfLoansPage() {
                     key={l.id}
                     className="rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_2px_14px_rgba(15,23,42,0.06)] transition active:scale-[0.99]"
                   >
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="font-bold text-slate-900">{l.borrower_name}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${loanTypeBadgeCls(l.loan_type)}`}
+                          >
+                            {loanTypeLabel(l.loan_type)}
+                          </span>
+                          {displayStatusBadge(l.display_status, l.is_overdue)}
+                        </div>
                         <p className="mt-1 text-xs text-slate-600">
-                          Balance: <span className="font-mono font-semibold text-slate-900">{formatInr(balanceDue(l))}</span>
+                          Given{' '}
+                          <span className="font-mono font-semibold text-slate-900">{formatInr(l.loan_amount)}</span>
+                          {' · '}
+                          Balance{' '}
+                          <span className="font-mono font-semibold text-slate-900">{formatInr(balanceDue(l))}</span>
                         </p>
                         <p className="mt-0.5 text-xs text-slate-500">EMI: {emi}</p>
                         {l.next_emi_due ? (
                           <p className="mt-1 text-xs font-medium text-[#1E3A8A]">
                             Next due: {formatNextEmiDue(l.next_emi_due)}
                           </p>
-                        ) : null}
+                        ) : (
+                          <p className="mt-1 text-xs text-slate-400">Next due: —</p>
+                        )}
                       </div>
                     </div>
                     {pct != null ? (
@@ -636,39 +941,56 @@ export default function PfLoansPage() {
               })}
             </div>
             <div className={`${pfTableWrap} mt-4 hidden md:block`}>
-            <table className={`${pfTable} min-w-[480px]`}>
+            <table className={`${pfTable} min-w-[920px]`}>
               <thead>
                 <tr>
                   <th className={pfTh}>Borrower</th>
+                  <th className={pfTh}>Loan type</th>
+                  <th className={pfThRight}>Given</th>
                   <th className={pfThRight}>Balance due</th>
+                  <th className={pfThRight}>Next due</th>
+                  <th className={pfTh}>Progress</th>
                   <th className={`${pfThRight} ${pfThActionsWide}`}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {loans.map((l) => (
+                {loans.map((l) => {
+                  const pct = loanCollectedPercent(l)
+                  return (
                   <tr key={l.id} className={pfTrHover}>
                     <td className={`${pfTd} font-medium text-slate-900`}>
                       <div>{l.borrower_name}</div>
-                      {(() => {
-                        const pct = loanCollectedPercent(l)
-                        if (pct == null) return null
-                        return (
-                          <div className="mt-2 max-w-[14rem]">
-                            <div className="flex items-center justify-between gap-2 text-[10px] text-slate-500">
-                              <span>Repaid</span>
-                              <span className="font-semibold tabular-nums text-slate-700">{pct}%</span>
-                            </div>
-                            <div className="mt-0.5 h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                              <div
-                                className={`h-full rounded-full transition-[width] duration-500 ease-out ${progressBarTone(pct)}`}
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                          </div>
-                        )
-                      })()}
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {displayStatusBadge(l.display_status, l.is_overdue)}
+                      </div>
                     </td>
+                    <td className={pfTd}>
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${loanTypeBadgeCls(l.loan_type)}`}
+                      >
+                        {loanTypeLabel(l.loan_type)}
+                      </span>
+                    </td>
+                    <td className={pfTdRight}>{formatInr(l.loan_amount)}</td>
                     <td className={pfTdRight}>{formatInr(balanceDue(l))}</td>
+                    <td className={pfTdRight}>
+                      {l.next_emi_due ? formatNextEmiDue(l.next_emi_due) : '—'}
+                    </td>
+                    <td className={`${pfTd} max-w-[8rem]`}>
+                      {pct != null ? (
+                        <>
+                          <div className="text-[10px] font-semibold tabular-nums text-slate-600">{pct}%</div>
+                          <div className="mt-0.5 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                            <div
+                              className={`h-full rounded-full transition-[width] duration-500 ease-out ${progressBarTone(pct)}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </td>
                     <td className={pfTdActions}>
                       <div className={pfActionRow}>
                         <button
@@ -710,7 +1032,8 @@ export default function PfLoansPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -729,7 +1052,7 @@ export default function PfLoansPage() {
           }}
         >
           <div
-            className="max-h-[min(92dvh,900px)] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl md:rounded-2xl"
+            className={`pf-sheet-panel max-h-[min(92dvh,900px)] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl md:rounded-2xl ${modalPanelPb}`}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-4">
@@ -747,6 +1070,29 @@ export default function PfLoansPage() {
             </div>
             <form onSubmit={handleLoanSubmit} className="mt-4 grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Loan type</p>
+                <PfSegmentedControl
+                  className="mt-2 w-full"
+                  options={[
+                    { id: 'emi_schedule', label: 'EMI schedule' },
+                    { id: 'interest_free', label: 'Interest-free' },
+                    { id: 'simple_accrual', label: 'Simple interest' },
+                  ]}
+                  value={loanKind}
+                  onChange={setLoanKind}
+                />
+                {loanKind === 'interest_free' ? (
+                  <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-950">
+                    For friends: no interest. Amount they owe stays equal to principal until they repay (no EMI table).
+                  </p>
+                ) : null}
+                {loanKind === 'simple_accrual' ? (
+                  <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                    Ongoing loan: interest builds by the day from <strong>start date</strong> through <strong>today</strong> (365-day simple interest). A future start date means ₹0 interest until then.
+                  </p>
+                ) : null}
+              </div>
+              <div className="sm:col-span-2">
                 <label htmlFor="ln-borrower" className={labelCls}>
                   Borrower / label
                 </label>
@@ -756,6 +1102,37 @@ export default function PfLoansPage() {
                   value={borrowerName}
                   onChange={(e) => setBorrowerName(e.target.value)}
                   required
+                />
+              </div>
+              <div>
+                <label htmlFor="ln-phone" className={labelCls}>
+                  Borrower phone <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <input
+                  id="ln-phone"
+                  className={inputCls}
+                  value={borrowerPhone}
+                  onChange={(e) => setBorrowerPhone(e.target.value)}
+                  inputMode="tel"
+                  autoComplete="tel"
+                />
+              </div>
+              <div>
+                <label htmlFor="ln-addr" className={labelCls}>
+                  Borrower address <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <input id="ln-addr" className={inputCls} value={borrowerAddress} onChange={(e) => setBorrowerAddress(e.target.value)} />
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="ln-notes" className={labelCls}>
+                  Notes <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <textarea
+                  id="ln-notes"
+                  rows={2}
+                  className={`${inputCls} resize-y`}
+                  value={loanNotesField}
+                  onChange={(e) => setLoanNotesField(e.target.value)}
                 />
               </div>
               <div>
@@ -773,38 +1150,50 @@ export default function PfLoansPage() {
                   required
                 />
               </div>
-              <div>
-                <label htmlFor="ln-rate" className={labelCls}>
-                  Interest % (optional)
-                </label>
-                <input
-                  id="ln-rate"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className={inputCls}
-                  value={interestRate}
-                  onChange={(e) => setInterestRate(e.target.value)}
-                />
-              </div>
-              <div>
-                <label htmlFor="ln-grace" className={labelCls}>
-                  Interest-free days (optional)
-                </label>
-                <input
-                  id="ln-grace"
-                  type="number"
-                  min="0"
-                  step="1"
-                  className={inputCls}
-                  value={interestFreeDays}
-                  onChange={(e) => setInterestFreeDays(e.target.value)}
-                  placeholder="0"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  With <strong className="font-medium text-slate-600">term + interest %</strong>, total interest is reduced as if accrual starts after this many days (no interest for that period).
-                </p>
-              </div>
+              {loanKind === 'interest_free' ? (
+                <div className="flex flex-col justify-end rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-slate-600">Interest</p>
+                  <p className="mt-0.5 text-sm font-bold text-slate-800">0% — principal only</p>
+                </div>
+              ) : (
+                <div>
+                  <label htmlFor="ln-rate" className={labelCls}>
+                    Interest % {loanKind === 'simple_accrual' ? '(required)' : '(optional)'}
+                  </label>
+                  <input
+                    id="ln-rate"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className={inputCls}
+                    value={interestRate}
+                    onChange={(e) => setInterestRate(e.target.value)}
+                    required={loanKind === 'simple_accrual'}
+                  />
+                </div>
+              )}
+              {loanKind === 'emi_schedule' ? (
+                <div>
+                  <label htmlFor="ln-grace" className={labelCls}>
+                    Interest-free days (optional)
+                  </label>
+                  <input
+                    id="ln-grace"
+                    type="number"
+                    min="0"
+                    step="1"
+                    className={inputCls}
+                    value={interestFreeDays}
+                    onChange={(e) => setInterestFreeDays(e.target.value)}
+                    placeholder="0"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    With <strong className="font-medium text-slate-600">term + interest %</strong>, total interest is reduced as if accrual starts after this many days (no interest for that period).
+                  </p>
+                </div>
+              ) : (
+                <div aria-hidden className="hidden sm:block" />
+              )}
               <div>
                 <label htmlFor="ln-start" className={labelCls}>
                   Start date
@@ -830,34 +1219,55 @@ export default function PfLoansPage() {
                 </label>
                 <input id="ln-status" className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)} />
               </div>
-              <div>
-                <label htmlFor="ln-term" className={labelCls}>
-                  Term (months) — EMI schedule
-                </label>
-                <input
-                  id="ln-term"
-                  type="number"
-                  min="1"
-                  className={inputCls}
-                  value={termMonths}
-                  onChange={(e) => setTermMonths(e.target.value)}
-                  placeholder="Needs interest %"
-                />
-              </div>
-              <div>
-                <label htmlFor="ln-comm" className={labelCls}>
-                  Commission % (optional)
-                </label>
-                <input
-                  id="ln-comm"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className={inputCls}
-                  value={commissionPct}
-                  onChange={(e) => setCommissionPct(e.target.value)}
-                />
-              </div>
+              {loanKind === 'emi_schedule' ? (
+                <div>
+                  <label htmlFor="ln-term" className={labelCls}>
+                    Term (months) — EMI schedule
+                  </label>
+                  <input
+                    id="ln-term"
+                    type="number"
+                    min="1"
+                    className={inputCls}
+                    value={termMonths}
+                    onChange={(e) => setTermMonths(e.target.value)}
+                    placeholder="Needs interest %"
+                  />
+                </div>
+              ) : (
+                <div aria-hidden className="hidden sm:block" />
+              )}
+              {loanKind === 'emi_schedule' ? (
+                <div>
+                  <label htmlFor="ln-comm" className={labelCls}>
+                    Commission % (optional)
+                  </label>
+                  <input
+                    id="ln-comm"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className={inputCls}
+                    value={commissionPct}
+                    onChange={(e) => setCommissionPct(e.target.value)}
+                  />
+                </div>
+              ) : null}
+              {loanKind === 'simple_accrual' && accrualPreview ? (
+                <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-3 text-sm text-amber-950">
+                  <p className="font-semibold">Estimated through today</p>
+                  <p className="mt-1 tabular-nums">
+                    {accrualPreview.days} day{accrualPreview.days === 1 ? '' : 's'} since start · Accrued{' '}
+                    {formatInr(accrualPreview.accrued)} · <strong>Total due {formatInr(accrualPreview.total)}</strong>
+                  </p>
+                  <p className="mt-1 text-xs text-amber-900/85">
+                    Same 365-day simple formula is applied when you create the loan (principal + accrued interest).
+                  </p>
+                </div>
+              ) : null}
+              {loanKind === 'simple_accrual' && loanAmount && interestRate && startDate && !accrualPreview ? (
+                <p className="sm:col-span-2 text-xs text-slate-500">Enter valid principal, rate, and start date to preview total due.</p>
+              ) : null}
               <div className="flex flex-wrap gap-2 sm:col-span-2">
                 <button type="submit" disabled={submittingLoan} className={btnPrimary}>
                   {submittingLoan ? 'Saving…' : 'Create loan'}
@@ -890,7 +1300,7 @@ export default function PfLoansPage() {
           }}
         >
           <div
-            className="pf-sheet-panel max-h-[min(92dvh,900px)] w-full max-w-5xl overflow-y-auto rounded-t-2xl bg-white p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-xl md:rounded-2xl"
+            className={`pf-sheet-panel max-h-[min(92dvh,900px)] w-full max-w-5xl overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl md:rounded-2xl ${modalPanelPb}`}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -898,17 +1308,38 @@ export default function PfLoansPage() {
                 <h2 id="pf-schedule-title" className="text-lg font-bold text-slate-900 dark:text-slate-100">
                   {viewLoan.borrower_name}
                 </h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  Principal {formatInr(viewLoan.loan_amount)}
-                  {viewLoan.start_date ? ` · ${viewLoan.start_date}` : ''}
-                  {viewLoan.end_date ? ` → ${viewLoan.end_date}` : ''} · {viewLoan.status}
-                  {viewLoan.interest_rate != null ? ` · ${viewLoan.interest_rate}%` : ''}
-                  {Number(viewLoan.interest_free_days) > 0
-                    ? ` · ${viewLoan.interest_free_days}d interest-free`
-                    : ''}
-                  {viewLoan.emi_amount != null ? ` · EMI ${formatInr(viewLoan.emi_amount)}` : ''}
-                  {viewLoan.remaining_amount != null ? ` · Due ${formatInr(viewLoan.remaining_amount)}` : ''}
-                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide ${loanTypeBadgeCls(viewLoan.loan_type)}`}
+                  >
+                    {loanTypeLabel(viewLoan.loan_type)}
+                  </span>
+                  {displayStatusBadge(viewLoan.display_status, viewLoan.is_overdue)}
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-600 dark:text-slate-400 sm:grid-cols-2 lg:grid-cols-3">
+                  <p>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">Given</span>{' '}
+                    {formatInr(viewLoan.loan_amount)}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">Balance due</span>{' '}
+                    {formatInr(balanceDue(viewLoan))}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">Interest collected</span>{' '}
+                    {formatInr(viewLoan.interest_collected_lifetime ?? 0)}
+                  </p>
+                  <p>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">Next EMI</span>{' '}
+                    {viewLoan.next_emi_due ? formatNextEmiDue(viewLoan.next_emi_due) : '—'}
+                    {viewLoan.next_emi_amount != null ? ` · ${formatInr(viewLoan.next_emi_amount)}` : ''}
+                  </p>
+                  <p className="sm:col-span-2">
+                    {viewLoan.start_date ? `Start ${viewLoan.start_date}` : ''}
+                    {viewLoan.end_date ? ` → ${viewLoan.end_date}` : ''}
+                    {viewLoan.interest_rate != null ? ` · ${viewLoan.interest_rate}%` : ''}
+                  </p>
+                </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <PfExportMenu
@@ -933,6 +1364,45 @@ export default function PfLoansPage() {
               </div>
             </div>
 
+            <form onSubmit={handleSaveBorrowerMeta} className="mt-4 rounded-xl border border-sky-100 bg-sky-50/40 p-4 dark:border-slate-600 dark:bg-slate-800/50">
+              <p className="text-xs font-bold uppercase tracking-wide text-sky-900 dark:text-sky-200">Borrower profile</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls} htmlFor="pf-d-phone">
+                    Phone
+                  </label>
+                  <input
+                    id="pf-d-phone"
+                    className={inputCls}
+                    value={detailPhone}
+                    onChange={(e) => setDetailPhone(e.target.value)}
+                    inputMode="tel"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={labelCls} htmlFor="pf-d-addr">
+                    Address
+                  </label>
+                  <input id="pf-d-addr" className={inputCls} value={detailAddress} onChange={(e) => setDetailAddress(e.target.value)} />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={labelCls} htmlFor="pf-d-notes">
+                    Notes
+                  </label>
+                  <textarea
+                    id="pf-d-notes"
+                    rows={2}
+                    className={`${inputCls} resize-y`}
+                    value={detailNotes}
+                    onChange={(e) => setDetailNotes(e.target.value)}
+                  />
+                </div>
+              </div>
+              <button type="submit" disabled={savingBorrowerMeta} className={`${btnSecondary} mt-3 text-xs`}>
+                {savingBorrowerMeta ? 'Saving…' : 'Save borrower details'}
+              </button>
+            </form>
+
             {!detailLoading ? (
               <div className="mt-4 flex flex-wrap gap-2">
                 {hasEmiSchedule && String(viewLoan.status || '').toUpperCase() !== 'CLOSED' ? (
@@ -943,7 +1413,7 @@ export default function PfLoansPage() {
                       scheduleSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                     }
                   >
-                    Record EMI payment
+                    Record payment
                   </button>
                 ) : null}
                 {canRecordManualPayment ? (

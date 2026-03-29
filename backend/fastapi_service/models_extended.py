@@ -183,10 +183,15 @@ class FinanceInvestment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
     investment_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, default='')
     invested_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
-    current_value: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    investment_date: Mapped[date] = mapped_column(Date, nullable=False)
     platform: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    as_of_date: Mapped[date] = mapped_column(Date, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class FinanceAsset(Base):
@@ -195,8 +200,20 @@ class FinanceAsset(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
     asset_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    asset_type: Mapped[str] = mapped_column(String(80), nullable=False)
-    value: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    asset_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    purchase_value: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    current_value: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    depreciation_rate: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    linked_liability_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_liabilities.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class FinanceLiability(Base):
@@ -205,10 +222,39 @@ class FinanceLiability(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
     liability_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    liability_type: Mapped[str] = mapped_column(String(80), nullable=False)
-    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    liability_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    total_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    outstanding_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     interest_rate: Mapped[float | None] = mapped_column(Numeric(6, 3), nullable=True)
-    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    minimum_due: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    installment_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    billing_cycle_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lender_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default='ACTIVE')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class LiabilityPayment(Base):
+    __tablename__ = 'liability_payments'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    liability_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('finance_liabilities.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    payment_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    amount_paid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    interest_paid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    payment_mode: Mapped[str] = mapped_column(String(16), nullable=False, default='CASH')
+    finance_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Loan(Base):
@@ -217,6 +263,10 @@ class Loan(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
     borrower_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    loan_type: Mapped[str] = mapped_column(String(24), nullable=False, default='EMI')
+    borrower_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    borrower_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     loan_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     interest_rate: Mapped[float | None] = mapped_column(Numeric(6, 3), nullable=True)
     interest_free_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -268,3 +318,28 @@ class LoanPayment(Base):
         Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
     )
     credit_as_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class UserPermission(Base):
+    """Per-user module access (personal finance & exports); enforced in future middleware."""
+
+    __tablename__ = 'user_permissions'
+    __table_args__ = (UniqueConstraint('user_id', 'module_name', name='uq_user_permissions_user_module'),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    module_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    can_view: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    can_edit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    can_delete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    can_export: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class AuditLog(Base):
+    __tablename__ = 'audit_logs'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

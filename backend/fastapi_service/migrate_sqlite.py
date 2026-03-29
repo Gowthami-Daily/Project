@@ -15,6 +15,21 @@ def ensure_users_role_id_column(engine: Engine) -> None:
         conn.execute(text('ALTER TABLE users ADD COLUMN role_id INTEGER'))
 
 
+def ensure_users_last_login_column(engine: Engine) -> None:
+    dialect = engine.dialect.name
+    if dialect not in ('sqlite', 'postgresql'):
+        return
+    insp = inspect(engine)
+    if 'users' not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns('users')}
+    if 'last_login' in cols:
+        return
+    type_sql = 'TIMESTAMPTZ' if dialect == 'postgresql' else 'TIMESTAMP'
+    with engine.begin() as conn:
+        conn.execute(text(f'ALTER TABLE users ADD COLUMN last_login {type_sql}'))
+
+
 def _pf_loan_extension_column_defs(dialect_name: str) -> list[tuple[str, str]]:
     """SQL types for new nullable columns on ``loans`` (must match ``models_extended.Loan``)."""
     if dialect_name == 'postgresql':

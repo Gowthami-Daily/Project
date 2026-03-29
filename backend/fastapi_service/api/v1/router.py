@@ -1,9 +1,10 @@
 from fastapi import APIRouter
 
-from fastapi_service.api.v1 import auth, farmers, pf_dashboard, pf_export, pf_finance, pf_profiles, pf_reports
+from fastapi_service.api.v1 import auth, farmers, pf_dashboard, pf_export, pf_finance, pf_profiles, pf_reports, super_admin
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(super_admin.router)
 
 pf = APIRouter(prefix='/pf', tags=['personal-finance'])
 pf.include_router(pf_profiles.router, prefix='/profiles')

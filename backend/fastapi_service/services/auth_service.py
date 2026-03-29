@@ -1,9 +1,12 @@
+from datetime import datetime, timezone
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from fastapi_service.core.password import hash_password, verify_password
 from fastapi_service.core.security import create_access_token
 from fastapi_service.models import User
+from fastapi_service.models_extended import AuditLog
 from fastapi_service.repositories import profile_repo
 from fastapi_service.repositories import user_repo
 from fastapi_service.schemas_auth import UserCreate
@@ -41,6 +44,13 @@ def issue_token(db: Session, user: User, active_profile_id: int | None = None) -
 def bootstrap_new_user(db: Session, user: User) -> None:
     pf_profile_service.sync_legacy_role_to_role_id(db, user)
     pf_profile_service.ensure_personal_profile(db, user)
+
+
+def finalize_successful_login(db: Session, user: User) -> None:
+    user.last_login = datetime.now(timezone.utc)
+    db.add(AuditLog(user_id=user.id, action='login', detail=None))
+    db.commit()
+    db.refresh(user)
 
 
 def register(db: Session, payload: UserCreate) -> User:
