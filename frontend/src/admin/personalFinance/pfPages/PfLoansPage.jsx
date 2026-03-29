@@ -1,4 +1,4 @@
-import { BanknotesIcon, PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/solid'
+import { BanknotesIcon, CalendarDaysIcon, PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/solid'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
@@ -28,6 +28,10 @@ import {
   inputCls,
   labelCls,
   pfActionRow,
+  pfModalCloseBtn,
+  pfModalHeader,
+  pfModalOverlay,
+  pfModalSurface,
   pfTable,
   pfTableWrap,
   pfTd,
@@ -53,6 +57,21 @@ import PfSegmentedControl from '../PfSegmentedControl.jsx'
 function todayISODate() {
   const d = new Date()
   return d.toISOString().slice(0, 10)
+}
+
+/** Open browser date picker; falls back to focus (Firefox / older Chromium). */
+function openNativeDatePicker(inputEl) {
+  if (!inputEl) return
+  try {
+    if (typeof inputEl.showPicker === 'function') {
+      inputEl.showPicker()
+      return
+    }
+  } catch {
+    /* not allowed or unsupported */
+  }
+  inputEl.focus()
+  inputEl.click()
 }
 
 /** Match backend: simple interest principal × (rate/100) × (days/365). */
@@ -231,6 +250,8 @@ export default function PfLoansPage() {
   const recordPaymentSectionRef = useRef(null)
   const addAmountSectionRef = useRef(null)
   const scheduleSectionRef = useRef(null)
+  const newLoanStartDateRef = useRef(null)
+  const newLoanEndDateRef = useRef(null)
 
   const accountNameById = useMemo(() => {
     const m = new Map()
@@ -708,9 +729,6 @@ export default function PfLoansPage() {
     }
   }
 
-  /* z above PfBottomNav (z-50) so modal actions are not covered on mobile */
-  const modalBackdrop =
-    'fixed inset-0 z-[55] flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm md:items-center md:p-4'
   const modalPanelPb =
     'pb-[max(1.5rem,calc(5.5rem+env(safe-area-inset-bottom)))]'
 
@@ -1043,7 +1061,7 @@ export default function PfLoansPage() {
 
       {showNewLoanModal ? (
         <div
-          className={modalBackdrop}
+          className={pfModalOverlay}
           role="dialog"
           aria-modal="true"
           aria-labelledby="pf-new-loan-title"
@@ -1052,23 +1070,23 @@ export default function PfLoansPage() {
           }}
         >
           <div
-            className={`pf-sheet-panel max-h-[min(92dvh,900px)] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl md:rounded-2xl ${modalPanelPb}`}
+            className={`${pfModalSurface} max-w-2xl p-5 md:p-6 ${modalPanelPb}`}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4">
-              <h2 id="pf-new-loan-title" className="text-lg font-bold text-slate-900">
+            <div className={pfModalHeader}>
+              <h2 id="pf-new-loan-title" className="text-lg font-semibold text-[var(--pf-text)]">
                 New loan
               </h2>
               <button
                 type="button"
                 onClick={() => setShowNewLoanModal(false)}
-                className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"
+                className={pfModalCloseBtn}
                 aria-label="Close"
               >
                 <XMarkIcon className="h-6 w-6" />
               </button>
             </div>
-            <form onSubmit={handleLoanSubmit} className="mt-4 grid gap-4 sm:grid-cols-2">
+            <form onSubmit={handleLoanSubmit} className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Loan type</p>
                 <PfSegmentedControl
@@ -1198,20 +1216,48 @@ export default function PfLoansPage() {
                 <label htmlFor="ln-start" className={labelCls}>
                   Start date
                 </label>
-                <input
-                  id="ln-start"
-                  type="date"
-                  className={inputCls}
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  required
-                />
+                <div className="relative mt-1 flex items-center gap-2">
+                  <input
+                    ref={newLoanStartDateRef}
+                    id="ln-start"
+                    type="date"
+                    className={`${inputCls} pf-date-with-btn !mt-0 min-w-0 flex-1 pr-2`}
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-[var(--pf-border)] bg-[var(--pf-input-bg)] text-[var(--pf-primary)] shadow-sm transition hover:bg-[var(--pf-card-hover)] active:scale-[0.97]"
+                    aria-label="Open calendar for start date"
+                    onClick={() => openNativeDatePicker(newLoanStartDateRef.current)}
+                  >
+                    <CalendarDaysIcon className="h-5 w-5" aria-hidden />
+                  </button>
+                </div>
               </div>
               <div>
                 <label htmlFor="ln-end" className={labelCls}>
                   End date (optional)
                 </label>
-                <input id="ln-end" type="date" className={inputCls} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                <div className="relative mt-1 flex items-center gap-2">
+                  <input
+                    ref={newLoanEndDateRef}
+                    id="ln-end"
+                    type="date"
+                    className={`${inputCls} pf-date-with-btn !mt-0 min-w-0 flex-1 pr-2`}
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-[var(--pf-border)] bg-[var(--pf-input-bg)] text-[var(--pf-primary)] shadow-sm transition hover:bg-[var(--pf-card-hover)] active:scale-[0.97]"
+                    aria-label="Open calendar for end date"
+                    onClick={() => openNativeDatePicker(newLoanEndDateRef.current)}
+                  >
+                    <CalendarDaysIcon className="h-5 w-5" aria-hidden />
+                  </button>
+                </div>
               </div>
               <div>
                 <label htmlFor="ln-status" className={labelCls}>
@@ -1272,11 +1318,7 @@ export default function PfLoansPage() {
                 <button type="submit" disabled={submittingLoan} className={btnPrimary}>
                   {submittingLoan ? 'Saving…' : 'Create loan'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setShowNewLoanModal(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
+                <button type="button" onClick={() => setShowNewLoanModal(false)} className={btnSecondary}>
                   Cancel
                 </button>
               </div>
@@ -1287,7 +1329,7 @@ export default function PfLoansPage() {
 
       {viewLoan ? (
         <div
-          className={modalBackdrop}
+          className={pfModalOverlay}
           role="dialog"
           aria-modal="true"
           aria-labelledby="pf-schedule-title"
@@ -1300,12 +1342,12 @@ export default function PfLoansPage() {
           }}
         >
           <div
-            className={`pf-sheet-panel max-h-[min(92dvh,900px)] w-full max-w-5xl overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl md:rounded-2xl ${modalPanelPb}`}
+            className={`${pfModalSurface} max-w-5xl p-5 md:p-6 ${modalPanelPb}`}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className={`${pfModalHeader} flex-wrap`}>
               <div className="min-w-0 flex-1">
-                <h2 id="pf-schedule-title" className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                <h2 id="pf-schedule-title" className="text-lg font-semibold text-[var(--pf-text)]">
                   {viewLoan.borrower_name}
                 </h2>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1356,7 +1398,7 @@ export default function PfLoansPage() {
                     setShowAddAmountForm(false)
                     setViewLoan(null)
                   }}
-                  className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className={pfModalCloseBtn}
                   aria-label="Close"
                 >
                   <XMarkIcon className="h-6 w-6" />
@@ -1364,7 +1406,10 @@ export default function PfLoansPage() {
               </div>
             </div>
 
-            <form onSubmit={handleSaveBorrowerMeta} className="mt-4 rounded-xl border border-sky-100 bg-sky-50/40 p-4 dark:border-slate-600 dark:bg-slate-800/50">
+            <form
+              onSubmit={handleSaveBorrowerMeta}
+              className="mt-4 rounded-xl border border-sky-100 bg-sky-50/40 p-4 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]/80"
+            >
               <p className="text-xs font-bold uppercase tracking-wide text-sky-900 dark:text-sky-200">Borrower profile</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>

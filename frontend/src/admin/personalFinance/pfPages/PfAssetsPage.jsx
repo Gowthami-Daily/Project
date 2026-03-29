@@ -14,7 +14,20 @@ import {
   triggerDownloadBlob,
 } from '../api.js'
 import PfExportMenu from '../PfExportMenu.jsx'
-import { btnDanger, btnPrimary, btnSecondary, cardCls, inputCls, labelCls, pfChartCard, pfSelectCompact } from '../pfFormStyles.js'
+import {
+  btnDanger,
+  btnPrimary,
+  btnSecondary,
+  cardCls,
+  inputCls,
+  labelCls,
+  pfChartCard,
+  pfModalCloseBtn,
+  pfModalHeader,
+  pfModalOverlay,
+  pfModalSurface,
+  pfSelectCompact,
+} from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 
@@ -30,9 +43,6 @@ const ASSET_TYPES = [
   { value: 'BUSINESS_ASSET', label: 'Business asset' },
   { value: 'OTHER', label: 'Other asset' },
 ]
-
-const modalBackdrop =
-  'fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm md:items-center md:p-4'
 
 function formatShortDate(iso) {
   if (!iso) return '—'
@@ -455,22 +465,22 @@ export default function PfAssetsPage() {
       )}
 
       {showAddModal ? (
-        <div className={modalBackdrop} role="dialog" aria-modal="true" aria-labelledby="ast-modal-title">
-          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl dark:bg-slate-900 md:rounded-2xl md:p-6">
-            <div className="flex items-start justify-between gap-2">
-              <h2 id="ast-modal-title" className="text-lg font-bold text-slate-900 dark:text-slate-50">
+        <div className={pfModalOverlay} role="dialog" aria-modal="true" aria-labelledby="ast-modal-title">
+          <div className={`${pfModalSurface} max-h-[92vh] max-w-lg p-5 md:p-6`}>
+            <div className={pfModalHeader}>
+              <h2 id="ast-modal-title" className="text-lg font-semibold text-[var(--pf-text)]">
                 {editId ? 'Edit asset' : 'Add asset'}
               </h2>
               <button
                 type="button"
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className={pfModalCloseBtn}
                 onClick={() => setShowAddModal(false)}
                 aria-label="Close"
               >
                 <XMarkIcon className="h-6 w-6" />
               </button>
             </div>
-            <form onSubmit={handleSave} className="mt-4 grid gap-4">
+            <form onSubmit={handleSave} className="grid gap-4">
               <div>
                 <label htmlFor="ast-na" className={labelCls}>
                   Asset name
@@ -618,13 +628,13 @@ export default function PfAssetsPage() {
       ) : null}
 
       {viewId ? (
-        <div className={modalBackdrop} role="dialog" aria-modal="true">
-          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl dark:bg-slate-900 md:rounded-2xl md:p-6">
-            <div className="flex items-start justify-between gap-2">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-slate-50">Asset details</h2>
+        <div className={pfModalOverlay} role="dialog" aria-modal="true">
+          <div className={`${pfModalSurface} max-h-[92vh] max-w-lg p-5 md:p-6`}>
+            <div className={pfModalHeader}>
+              <h2 className="text-lg font-semibold text-[var(--pf-text)]">Asset details</h2>
               <button
                 type="button"
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className={pfModalCloseBtn}
                 onClick={() => {
                   setViewId(null)
                   setViewRow(null)
@@ -635,11 +645,11 @@ export default function PfAssetsPage() {
               </button>
             </div>
             {!viewRow ? (
-              <p className="mt-6 text-slate-500">Loading…</p>
+              <p className="mt-4 text-[var(--pf-text-muted)]">Loading…</p>
             ) : (
               <>
-                <p className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-50">{viewRow.asset_name}</p>
-                <p className="text-sm text-slate-500">{typeLabel(viewRow.asset_type)}</p>
+                <p className="mt-1 text-xl font-bold text-[var(--pf-text)]">{viewRow.asset_name}</p>
+                <p className="text-sm text-[var(--pf-text-muted)]">{typeLabel(viewRow.asset_type)}</p>
                 <dl className="mt-4 space-y-2 text-sm">
                   <div className="flex justify-between gap-2 border-b border-slate-100 pb-2 dark:border-slate-800">
                     <dt className="text-slate-500">Purchase value</dt>

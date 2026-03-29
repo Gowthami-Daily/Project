@@ -131,7 +131,7 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
       <aside
         className={[
           'fixed inset-y-0 left-0 z-[55] flex w-[min(280px,88vw)] max-w-[280px] flex-col border-r border-[var(--pf-border)] bg-[var(--pf-sidebar)] shadow-[var(--pf-shadow)] transition-[width,transform] duration-300 ease-out md:max-w-none md:translate-x-0 md:shadow-none',
-          'pf-sidebar-rail md:relative md:z-0',
+          'pf-sidebar-rail md:relative md:z-0 md:h-full md:min-h-0 md:max-h-full md:shrink-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
           collapsed ? 'md:w-[72px] md:min-w-[72px]' : 'md:w-[240px] md:min-w-[240px]',
         ].join(' ')}

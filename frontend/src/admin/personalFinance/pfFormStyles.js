@@ -85,3 +85,29 @@ export const pfThSmActionCol = 'min-w-[6.5rem] whitespace-nowrap'
 export const pfChartCard =
   'rounded-[14px] border p-4 shadow-[var(--pf-shadow)] ring-1 transition-all duration-200 sm:p-5 ' +
   'border-sky-200/55 bg-white ring-sky-100/30 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)] dark:ring-[var(--pf-border)]/40 dark:hover:bg-[var(--pf-card-hover)]'
+
+/** Modal overlay — rgba(0,0,0,0.6) + blur; use only inside `.pf-app` */
+export const pfModalOverlay = 'pf-modal-overlay'
+
+export const pfModalOverlay60 = 'pf-modal-overlay pf-modal-overlay--60'
+
+export const pfModalOverlay65 = 'pf-modal-overlay pf-modal-overlay--65'
+
+export const pfModalOverlay70 = 'pf-modal-overlay pf-modal-overlay--70'
+
+/** Modal panel: layered surface (#0F172A dark), 14px radius, open animation */
+export const pfModalSurface = 'pf-modal-surface pf-modal-surface--animate'
+
+/** Compact centered dialog (no max-height cap) */
+export const pfModalSurfaceFit = 'pf-modal-surface pf-modal-surface--animate pf-modal-surface--fit'
+
+/** Flush header bar — pair with panel `p-5 md:p-6` */
+export const pfModalHeader =
+  '-mx-5 -mt-5 mb-4 flex items-start justify-between gap-4 rounded-t-[14px] border-b border-[var(--pf-border)] bg-[var(--pf-modal-header-bg)] px-5 py-4 md:-mx-6 md:-mt-6 md:mb-5 md:px-6'
+
+export const pfModalCloseBtn =
+  'rounded-lg p-1 text-[var(--pf-text-muted)] opacity-70 transition hover:opacity-100 hover:bg-[var(--pf-card-hover)]'
+
+/** Sticky-style footer strip inside modals */
+export const pfModalFooter =
+  'flex shrink-0 flex-wrap gap-2 border-t border-[var(--pf-border)] bg-[var(--pf-modal-footer-bg)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))]'

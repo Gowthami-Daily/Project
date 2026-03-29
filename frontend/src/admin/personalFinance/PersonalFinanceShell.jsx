@@ -40,16 +40,30 @@ function PersonalFinanceShellInner() {
 
   useEffect(() => {
     if (!mobileNavOpen) return
+    const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const onKey = (e) => {
       if (e.key === 'Escape') setMobileNavOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => {
-      document.body.style.overflow = ''
+      document.body.style.overflow = prev
       window.removeEventListener('keydown', onKey)
     }
   }, [mobileNavOpen])
+
+  /* Single-scroll shell: prevent document scroll; only .pf-main-scroll scrolls */
+  useEffect(() => {
+    if (!user) return undefined
+    const prevHtml = document.documentElement.style.overflow
+    const prevBody = document.body.style.overflow
+    document.documentElement.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.documentElement.style.overflow = prevHtml
+      document.body.style.overflow = prevBody
+    }
+  }, [user])
 
   const sessionCtx = useMemo(
     () => ({ onSessionInvalid: invalidateSession, onLogout: logout, user }),
@@ -87,7 +101,9 @@ function PersonalFinanceShellInner() {
   return (
     <PfOutletErrorBoundary>
       <PfRefreshProvider>
-        <div className={`pf-app min-h-screen antialiased ${isDark ? 'dark' : ''}`}>
+        <div
+          className={`pf-app pf-app-layout flex h-dvh max-h-dvh min-h-0 flex-col overflow-hidden antialiased ${isDark ? 'dark' : ''}`}
+        >
           <PfToolbar
             onSessionInvalid={invalidateSession}
             onLogout={logout}
@@ -95,7 +111,7 @@ function PersonalFinanceShellInner() {
             onToggleSidebarCollapsed={toggleSidebarCollapsed}
             onOpenMobileNav={() => setMobileNavOpen(true)}
           />
-          <div className="mx-auto flex max-w-[1600px] flex-col md:flex-row md:items-stretch">
+          <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col md:flex-row md:items-stretch">
             <PfSidebar
               user={user}
               collapsed={sidebarCollapsed}
@@ -103,8 +119,8 @@ function PersonalFinanceShellInner() {
               onCloseMobile={() => setMobileNavOpen(false)}
               onLogout={logout}
             />
-            <div className="flex min-h-[calc(100vh-92px)] min-w-0 flex-1 flex-col border-[var(--pf-border)]/80 md:border-l md:bg-[var(--pf-content)]">
-              <main className="pf-page-enter min-w-0 flex-1 px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 md:py-6 md:pb-6">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-[var(--pf-border)]/80 md:border-l md:bg-[var(--pf-content)]">
+              <main className="pf-main-scroll pf-page-enter min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-smooth px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 md:py-6 md:pb-6">
                 <Suspense fallback={pfPageFallback}>
                   <Outlet context={sessionCtx} />
                 </Suspense>

@@ -25,6 +25,11 @@ import {
   inputCls,
   labelCls,
   pfChartCard,
+  pfModalCloseBtn,
+  pfModalHeader,
+  pfModalOverlay,
+  pfModalSurface,
+  pfModalSurfaceFit,
   pfSelectCompact,
   pfTable,
   pfTableWrap,
@@ -89,9 +94,6 @@ function statusBadge(displayStatus) {
     </span>
   )
 }
-
-const modalBackdrop =
-  'fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm md:items-center md:p-4'
 
 function emptyForm() {
   return {
@@ -605,27 +607,27 @@ export default function PfLiabilitiesPage() {
 
       {showAddModal ? (
         <div
-          className={modalBackdrop}
+          className={pfModalOverlay}
           role="dialog"
           aria-modal="true"
           onMouseDown={(e) => e.target === e.currentTarget && setShowAddModal(false)}
         >
           <div
-            className="max-h-[min(92dvh,880px)] w-full max-w-xl overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl dark:bg-slate-900 md:rounded-2xl"
+            className={`${pfModalSurface} max-w-xl p-5 md:p-6`}
             onMouseDown={(ev) => ev.stopPropagation()}
           >
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{editId ? 'Edit liability' : 'Add liability'}</h2>
+            <div className={pfModalHeader}>
+              <h2 className="text-lg font-semibold text-[var(--pf-text)]">{editId ? 'Edit liability' : 'Add liability'}</h2>
               <button
                 type="button"
-                className="rounded p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className={pfModalCloseBtn}
                 onClick={() => setShowAddModal(false)}
                 aria-label="Close"
               >
                 <XMarkIcon className="h-6 w-6" />
               </button>
             </div>
-            <form onSubmit={handleSaveForm} className="mt-4 grid gap-3 sm:grid-cols-2">
+            <form onSubmit={handleSaveForm} className="grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label className={labelCls} htmlFor="fm-name">
                   Name
@@ -729,17 +731,19 @@ export default function PfLiabilitiesPage() {
 
       {payId ? (
         <div
-          className={modalBackdrop}
+          className={pfModalOverlay}
           role="dialog"
           aria-modal="true"
           onMouseDown={(e) => e.target === e.currentTarget && setPayId(null)}
         >
           <div
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900"
+            className={`${pfModalSurfaceFit} max-w-md p-5 md:p-6`}
             onMouseDown={(ev) => ev.stopPropagation()}
           >
-            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Record payment</h2>
-            <form onSubmit={handlePaySubmit} className="mt-4 grid gap-3">
+            <div className={pfModalHeader}>
+              <h2 className="text-lg font-semibold text-[var(--pf-text)]">Record payment</h2>
+            </div>
+            <form onSubmit={handlePaySubmit} className="grid gap-3">
               <div>
                 <label className={labelCls}>Date</label>
                 <input type="date" className={inputCls} value={payDate} onChange={(e) => setPayDate(e.target.value)} required />
@@ -790,19 +794,19 @@ export default function PfLiabilitiesPage() {
 
       {viewId && viewRow ? (
         <div
-          className={modalBackdrop}
+          className={pfModalOverlay}
           role="dialog"
           aria-modal="true"
           onMouseDown={(e) => e.target === e.currentTarget && setViewId(null)}
         >
           <div
-            className="max-h-[min(92dvh,900px)] w-full max-w-3xl overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl dark:bg-slate-900 md:rounded-2xl"
+            className={`${pfModalSurface} max-w-3xl p-5 md:p-6`}
             onMouseDown={(ev) => ev.stopPropagation()}
           >
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className={`${pfModalHeader} flex-wrap`}>
               <div>
-                <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">{viewRow.liability_name}</h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400">{typeLabel(viewRow.liability_type)}</p>
+                <h2 className="text-lg font-semibold text-[var(--pf-text)]">{viewRow.liability_name}</h2>
+                <p className="text-xs text-[var(--pf-text-muted)]">{typeLabel(viewRow.liability_type)}</p>
                 <div className="mt-2">{statusBadge(viewRow.display_status)}</div>
               </div>
               <div className="flex items-center gap-2">
@@ -813,14 +817,14 @@ export default function PfLiabilitiesPage() {
                     { key: 'xlsx', label: 'Export Excel', onClick: () => handleStatementExport(viewId, 'excel') },
                   ]}
                 />
-                <button type="button" className="rounded p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" onClick={() => setViewId(null)} aria-label="Close">
+                <button type="button" className={pfModalCloseBtn} onClick={() => setViewId(null)} aria-label="Close">
                   <XMarkIcon className="h-6 w-6" />
                 </button>
               </div>
             </div>
 
             {detailLoading ? (
-              <p className="mt-4 text-sm text-slate-500">Loading…</p>
+              <p className="mt-4 text-sm text-[var(--pf-text-muted)]">Loading…</p>
             ) : (
               <>
                 <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">

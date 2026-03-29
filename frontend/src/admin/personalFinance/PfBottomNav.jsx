@@ -9,6 +9,7 @@ import {
 } from '@heroicons/react/24/solid'
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
+import { pfModalOverlay60, pfModalSurface } from './pfFormStyles.js'
 
 const navH = 'min-h-[64px]'
 const navItem =
@@ -25,7 +26,7 @@ function PfQuickAddSheet({ open, onClose }) {
   }
   return (
     <div
-      className="fixed inset-0 z-[60] flex flex-col justify-end bg-slate-900/45 backdrop-blur-sm md:hidden"
+      className={`${pfModalOverlay60} flex flex-col justify-end md:hidden`}
       role="dialog"
       aria-modal="true"
       aria-label="Quick add"
@@ -34,7 +35,7 @@ function PfQuickAddSheet({ open, onClose }) {
       }}
     >
       <div
-        className="pf-sheet-panel rounded-t-2xl border border-[var(--pf-border)] bg-[var(--pf-card)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[var(--pf-shadow)]"
+        className={`${pfModalSurface} max-h-[min(88dvh,560px)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))]`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--pf-border)]" />

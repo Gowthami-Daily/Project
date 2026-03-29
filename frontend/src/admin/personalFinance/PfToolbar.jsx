@@ -85,7 +85,7 @@ export default function PfToolbar({
     (loading ? 'Loading…' : 'Profile')
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[var(--pf-border)] bg-[var(--pf-header)] backdrop-blur-md">
+    <header className="z-40 shrink-0 border-b border-[var(--pf-border)] bg-[var(--pf-header)] backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-2 px-4 sm:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
