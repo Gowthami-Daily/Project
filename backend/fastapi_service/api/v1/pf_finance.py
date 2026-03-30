@@ -1,6 +1,7 @@
 from datetime import date as date_type
+from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 
 from fastapi_service.core.dependencies import ActiveProfileId, CurrentUser, DbSession, Pagination
 from fastapi_service.models_extended import (
@@ -18,6 +19,9 @@ from fastapi_service.models_extended import (
 )
 from fastapi_service.repositories import pf_finance_repo
 from fastapi_service.schemas_extended import (
+    AccountBalanceSummaryOut,
+    AccountTransactionOut,
+    AccountTransferOut,
     AssetsPageSummaryOut,
     FinanceAccountBalanceUpdate,
     FinanceAccountCreate,
@@ -38,8 +42,11 @@ from fastapi_service.schemas_extended import (
     FinanceLiabilityOut,
     FinanceLiabilityUpdate,
     LiabilitiesPageSummaryOut,
+    LiabilityEmiPayBody,
     LiabilityPaymentCreate,
     LiabilityPaymentOut,
+    LiabilityPendingEmiOut,
+    LiabilityScheduleOut,
     LoanAddPrincipalBody,
     LoanCreate,
     LoanOut,
@@ -47,6 +54,8 @@ from fastapi_service.schemas_extended import (
     LoansPageSummaryOut,
     LoanPaymentCreate,
     LoanPaymentOut,
+    LoanEmiPayBody,
+    LoanPendingEmiOut,
     LoanScheduleCreditUpdate,
     LoanScheduleOut,
     PfMasterCategoryOut,
@@ -60,6 +69,7 @@ from fastapi_service.services import (
     pf_liability_ui_service,
     pf_loan_ui_service,
     pf_profile_service,
+    pf_transfer_attachment,
 )
 from fastapi_service.services.rbac_service import FinanceParticipant
 
@@ -149,8 +159,113 @@ def delete_account(
     try:
         pf_finance_repo.delete_account(db, profile_id, account_id)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        msg = str(e)
+        code = (
+            status.HTTP_400_BAD_REQUEST
+            if 'transfer history' in msg.lower()
+            else status.HTTP_404_NOT_FOUND
+        )
+        raise HTTPException(status_code=code, detail=msg) from e
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post('/accounts/transfer', response_model=AccountTransferOut, status_code=201)
+def create_account_transfer(
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    from_account_id: int = Form(...),
+    to_account_id: int = Form(...),
+    amount: float = Form(...),
+    transfer_date: date_type = Form(...),
+    transfer_method: str = Form('INTERNAL'),
+    reference_number: str | None = Form(None),
+    notes: str | None = Form(None),
+    attachment: UploadFile | None = File(None),
+):
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    attachment_url = None
+    if attachment is not None and (attachment.filename or '').strip():
+        try:
+            attachment_url = pf_transfer_attachment.save_transfer_attachment(profile_id, attachment)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    try:
+        return pf_finance_repo.create_account_transfer(
+            db,
+            profile_id,
+            user.id,
+            from_account_id=from_account_id,
+            to_account_id=to_account_id,
+            amount=amount,
+            transfer_date=transfer_date,
+            transfer_method=transfer_method,
+            reference_number=reference_number,
+            notes=notes,
+            attachment_url=attachment_url,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.get('/accounts/transfer-history', response_model=list[AccountTransferOut])
+def list_transfer_history(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    page: Pagination,
+) -> list:
+    return pf_finance_repo.list_account_transfers(db, profile_id, page.skip, page.limit)
+
+
+@router.get('/accounts/{account_id}/statement', response_model=list[AccountTransactionOut])
+def get_account_statement(
+    account_id: int,
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    page: Pagination,
+    start_date: date_type | None = Query(None),
+    end_date: date_type | None = Query(None),
+):
+    try:
+        return pf_finance_repo.list_account_statement_lines(
+            db,
+            profile_id,
+            account_id,
+            start_date,
+            end_date,
+            page.skip,
+            page.limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+
+@router.get('/accounts/balance-summary', response_model=AccountBalanceSummaryOut)
+def get_balance_summary(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> AccountBalanceSummaryOut:
+    split = pf_finance_repo.sum_account_balances_cash_vs_bank(db, profile_id)
+    rows = pf_finance_repo.list_accounts(db, profile_id, 0, 500)
+    accounts = [
+        {
+            'id': a.id,
+            'account_name': a.account_name,
+            'account_type': a.account_type or '',
+            'balance': float(a.balance),
+        }
+        for a in rows
+    ]
+    return AccountBalanceSummaryOut(
+        cash_balance=split['cash'],
+        bank_balance=split['bank'],
+        total_balance=split['total'],
+        accounts=accounts,
+    )
 
 
 @router.get('/expense-categories', response_model=list[PfMasterCategoryOut])
@@ -642,7 +757,28 @@ def list_liabilities(
     )
 
 
+@router.get('/liabilities/pending-emi', response_model=list[LiabilityPendingEmiOut])
+def list_pending_liability_emis_api(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> list[LiabilityPendingEmiOut]:
+    rows = pf_finance_repo.list_pending_liability_emis(db, profile_id)
+    return [
+        LiabilityPendingEmiOut(
+            schedule_id=r['schedule_id'],
+            liability_id=r['liability_id'],
+            liability_name=r['liability_name'],
+            emi_number=r['emi_number'],
+            due_date=r['due_date'],
+            emi_amount=Decimal(str(round(r['emi_amount'], 2))),
+        )
+        for r in rows
+    ]
+
+
 @router.post('/liabilities', response_model=FinanceLiabilityOut, status_code=201)
+@router.post('/liabilities/add', response_model=FinanceLiabilityOut, status_code=201)
 def create_liability(
     _: FinanceParticipant,
     body: FinanceLiabilityCreate,
@@ -660,14 +796,24 @@ def create_liability(
         outstanding_amount=ost,
         interest_rate=body.interest_rate,
         minimum_due=body.minimum_due,
-        installment_amount=body.installment_amount,
-        due_date=body.due_date,
+        installment_amount=None if body.build_emi_schedule else body.installment_amount,
+        due_date=None if body.build_emi_schedule else body.due_date,
         billing_cycle_day=body.billing_cycle_day,
         lender_name=(body.lender_name.strip() or None) if body.lender_name else None,
         notes=(body.notes.strip() or None) if body.notes else None,
         status=(body.status or 'ACTIVE').strip().upper(),
     )
-    row = pf_finance_repo.create_liability(db, row)
+    if body.build_emi_schedule:
+        row = pf_finance_repo.create_liability_with_emi_schedule(
+            db,
+            row,
+            term_months=int(body.term_months or 0),
+            emi_start_date=body.emi_schedule_start_date,  # required when build_emi_schedule (validator)
+            emi_interest_method=pf_loan_ui_service.normalize_emi_interest_method(body.emi_interest_method),
+            interest_free_days=body.interest_free_days,
+        )
+    else:
+        row = pf_finance_repo.create_liability(db, row)
     return pf_liability_ui_service.enrich_liability(db, row)
 
 
@@ -740,6 +886,95 @@ def get_liability(
     return pf_liability_ui_service.enrich_liability(db, ln)
 
 
+@router.get('/liabilities/{liability_id}/schedule', response_model=list[LiabilityScheduleOut])
+def get_liability_schedule(
+    _: FinanceParticipant,
+    liability_id: int,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> list[LiabilityScheduleOut]:
+    _liability_for_profile(db, liability_id, profile_id)
+    return pf_finance_repo.list_liability_schedule(db, liability_id)
+
+
+@router.patch('/liabilities/{liability_id}/schedule/{emi_number}/credit', response_model=LiabilityScheduleOut)
+def patch_liability_schedule_credit(
+    _: FinanceParticipant,
+    liability_id: int,
+    emi_number: int,
+    body: LoanScheduleCreditUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LiabilityScheduleOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _liability_for_profile(db, liability_id, profile_id)
+    try:
+        return pf_finance_repo.patch_liability_schedule_credit(
+            db,
+            profile_id,
+            liability_id,
+            emi_number,
+            credit_as_cash=body.credit_as_cash,
+            finance_account_id=body.finance_account_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.post('/liabilities/{liability_id}/emi/{emi_number}/pay', response_model=LiabilityScheduleOut)
+def pay_liability_emi(
+    _: FinanceParticipant,
+    liability_id: int,
+    emi_number: int,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    payment_date: date_type | None = Query(default=None, description='Defaults to today if omitted.'),
+    finance_account_id: int | None = Query(
+        default=None,
+        description='Bank account debited (optional; uses EMI row assignment if omitted).',
+    ),
+) -> LiabilityScheduleOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _liability_for_profile(db, liability_id, profile_id)
+    try:
+        return pf_finance_repo.mark_liability_emi_paid(
+            db,
+            profile_id,
+            liability_id,
+            emi_number,
+            payment_date,
+            finance_account_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.post('/liabilities/emi/pay', response_model=LiabilityScheduleOut)
+@router.post('/liabilities/emis/pay', response_model=LiabilityScheduleOut)
+def pay_liability_emi_json(
+    _: FinanceParticipant,
+    body: LiabilityEmiPayBody,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LiabilityScheduleOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _liability_for_profile(db, body.liability_id, profile_id)
+    try:
+        return pf_finance_repo.mark_liability_emi_paid(
+            db,
+            profile_id,
+            body.liability_id,
+            body.emi_number,
+            body.payment_date,
+            body.finance_account_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
 @router.get('/liabilities/{liability_id}/payments', response_model=list[LiabilityPaymentOut])
 def list_liability_payments_api(
     _: FinanceParticipant,
@@ -796,6 +1031,7 @@ def close_liability_api(
 
 
 @router.get('/loans', response_model=list[LoanOut])
+@router.get('/loans/list', response_model=list[LoanOut])
 def list_loans(
     _: FinanceParticipant,
     db: DbSession,
@@ -834,7 +1070,29 @@ def loans_page_summary(
     return pf_loan_ui_service.loans_page_summary(db, profile_id)
 
 
+@router.get('/loans/pending-emi', response_model=list[LoanPendingEmiOut])
+def list_pending_loan_emis(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> list[LoanPendingEmiOut]:
+    rows = pf_finance_repo.list_pending_loan_emis(db, profile_id)
+    return [
+        LoanPendingEmiOut(
+            schedule_id=r['schedule_id'],
+            loan_id=r['loan_id'],
+            borrower_name=r['borrower_name'],
+            emi_number=r['emi_number'],
+            due_date=r['due_date'],
+            emi_amount=Decimal(str(round(r['emi_amount'], 2))),
+            emi_settlement=r['emi_settlement'],
+        )
+        for r in rows
+    ]
+
+
 @router.post('/loans', response_model=LoanOut, status_code=201)
+@router.post('/loans/add', response_model=LoanOut, status_code=201)
 def create_loan(
     _: FinanceParticipant,
     body: LoanCreate,
@@ -856,6 +1114,8 @@ def create_loan(
         start_date=body.start_date,
         end_date=body.end_date,
         status=body.status,
+        emi_interest_method=pf_loan_ui_service.normalize_emi_interest_method(body.emi_interest_method),
+        emi_settlement=pf_loan_ui_service.normalize_emi_settlement(body.emi_settlement),
     )
     row = pf_finance_repo.create_loan_with_schedule_options(
         db,
@@ -863,6 +1123,7 @@ def create_loan(
         term_months=body.term_months,
         commission_percent=body.commission_percent,
         loan_kind=body.loan_kind,
+        emi_interest_method=row.emi_interest_method,
     )
     return _loan_out_fresh(db, profile_id, row)
 
@@ -972,6 +1233,30 @@ def pay_loan_emi(
             emi_number,
             payment_date,
             finance_account_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.post('/loans/emi/pay', response_model=LoanScheduleOut)
+@router.post('/loans/emis/pay', response_model=LoanScheduleOut)
+def pay_loan_emi_json(
+    _: FinanceParticipant,
+    body: LoanEmiPayBody,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> LoanScheduleOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _loan_for_profile(db, body.loan_id, profile_id)
+    try:
+        return pf_finance_repo.mark_emi_paid(
+            db,
+            profile_id,
+            body.loan_id,
+            body.emi_number,
+            body.payment_date,
+            body.finance_account_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

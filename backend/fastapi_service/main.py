@@ -1,8 +1,10 @@
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from starlette.middleware.gzip import GZipMiddleware
 
 from fastapi_service.api.v1.router import api_router
@@ -21,6 +23,8 @@ async def lifespan(app: FastAPI):
     from fastapi_service.migrate_sqlite import (
         ensure_loan_bank_account_columns,
         ensure_loan_credit_as_cash_columns,
+        ensure_liability_emi_columns,
+        ensure_loan_emi_interest_and_settlement_columns,
         ensure_pf_finance_expense_income_columns,
         ensure_pf_loan_extension_columns,
         ensure_loan_interest_free_days_column,
@@ -34,6 +38,8 @@ async def lifespan(app: FastAPI):
     ensure_users_last_login_column(engine)
     ensure_pf_loan_extension_columns(engine)
     ensure_loan_interest_free_days_column(engine)
+    ensure_liability_emi_columns(engine)
+    ensure_loan_emi_interest_and_settlement_columns(engine)
     ensure_loan_bank_account_columns(engine)
     ensure_loan_credit_as_cash_columns(engine)
     ensure_pf_finance_expense_income_columns(engine)
@@ -109,6 +115,48 @@ app.include_router(api_router, prefix='/api/v1')
 app.include_router(inflow_router.router)
 app.include_router(ledger_router.router)
 app.include_router(outflow_router.router)
+
+
+@app.get('/')
+def root():
+    return {'message': 'Finance API running'}
+
+
+@app.get('/health')
+def health_check():
+    db_status = 'ok'
+    try:
+        with engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+    except Exception:
+        db_status = 'error'
+
+    return {
+        'status': 'ok',
+        'database': db_status,
+        'timestamp': datetime.now(timezone.utc),
+    }
+
+
+@app.get('/warmup')
+def warmup():
+    return {'status': 'warmed'}
+
+
+@app.get('/system/info')
+def system_info():
+    return {
+        'app': 'Finance Management System',
+        'version': '1.0',
+        'modules': [
+            'income',
+            'expenses',
+            'loans',
+            'accounts',
+            'investments',
+            'assets',
+        ],
+    }
 
 
 @app.get('/hello')

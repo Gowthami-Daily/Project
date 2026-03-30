@@ -19,6 +19,9 @@ node_modules/
 dist/
 build/
 
+# Personal finance transfer attachments (local dev)
+backend/uploads/
+
 # OS
 .DS_Store
 Thumbs.db

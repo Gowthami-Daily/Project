@@ -293,6 +293,33 @@ export function deleteFinanceAccount(accountId) {
   return fin(`/accounts/${accountId}`, { method: 'DELETE' })
 }
 
+/** @param {FormData} formData — multipart: from_account_id, to_account_id, amount, transfer_date, transfer_method, optional reference_number, notes, attachment */
+export function postAccountTransfer(formData) {
+  return fin('/accounts/transfer', { method: 'POST', body: formData })
+}
+
+export function listAccountTransferHistory(params = {}) {
+  const q = new URLSearchParams({
+    skip: String(params.skip ?? 0),
+    limit: String(params.limit ?? 100),
+  })
+  return fin(`/accounts/transfer-history?${q}`)
+}
+
+export function getAccountStatement(accountId, params = {}) {
+  const q = new URLSearchParams({
+    skip: String(params.skip ?? 0),
+    limit: String(params.limit ?? 200),
+  })
+  if (params.start_date) q.set('start_date', String(params.start_date))
+  if (params.end_date) q.set('end_date', String(params.end_date))
+  return fin(`/accounts/${accountId}/statement?${q}`)
+}
+
+export function getAccountsBalanceSummary() {
+  return fin('/accounts/balance-summary')
+}
+
 export function listFinanceIncome(params = {}) {
   const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
   return fin(`/income?${q}`)
@@ -420,6 +447,32 @@ export function createFinanceLiability(body) {
   return fin('/liabilities', { method: 'POST', body: JSON.stringify(body) })
 }
 
+export function listLiabilitySchedule(liabilityId) {
+  return fin(`/liabilities/${liabilityId}/schedule`)
+}
+
+export function patchLiabilityScheduleCredit(liabilityId, emiNumber, { creditAsCash, financeAccountId }) {
+  return fin(`/liabilities/${liabilityId}/schedule/${emiNumber}/credit`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      credit_as_cash: Boolean(creditAsCash),
+      finance_account_id: financeAccountId == null ? null : Number(financeAccountId),
+    }),
+  })
+}
+
+export function payLiabilityEmi(liabilityId, emiNumber, params = {}) {
+  const q = new URLSearchParams()
+  if (params.paymentDate) q.set('payment_date', String(params.paymentDate))
+  if (params.financeAccountId != null) q.set('finance_account_id', String(params.financeAccountId))
+  const s = q.toString()
+  return fin(`/liabilities/${liabilityId}/emi/${emiNumber}/pay${s ? `?${s}` : ''}`, { method: 'POST' })
+}
+
+export function listPendingLiabilityEmis() {
+  return fin('/liabilities/pending-emi')
+}
+
 export function patchFinanceLiability(liabilityId, body) {
   return fin(`/liabilities/${liabilityId}`, { method: 'PATCH', body: JSON.stringify(body) })
 }
@@ -450,6 +503,14 @@ export function listFinanceLoans(params = {}) {
   if (params.search && String(params.search).trim()) q.set('search', String(params.search).trim())
   const s = q.toString()
   return fin(`/loans${s ? `?${s}` : ''}`)
+}
+
+export function listPendingLoanEmis() {
+  return fin('/loans/pending-emi')
+}
+
+export function payLoanEmiJson(body) {
+  return fin('/loans/emi/pay', { method: 'POST', body: JSON.stringify(body) })
 }
 
 export function getFinanceLoansSummary() {

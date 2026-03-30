@@ -125,6 +125,7 @@ const PfMonthlyStatementsPage = lazy(() => import('./admin/personalFinance/pfPag
 const PfReportsHubPage = lazy(() => import('./admin/personalFinance/pfPages/PfReportsHubPage.jsx'))
 const PfMorePage = lazy(() => import('./admin/personalFinance/PfMorePage.jsx'))
 const PfSettingsPage = lazy(() => import('./admin/personalFinance/PfSettingsPage.jsx'))
+const PfTransferPage = lazy(() => import('./admin/personalFinance/pfPages/PfTransferPage.jsx'))
 
 export default function App() {
   return (
@@ -135,6 +136,7 @@ export default function App() {
           <Route index element={<PersonalFinanceDashboardPage />} />
           <Route path="monthly-statements" element={<PfMonthlyStatementsPage />} />
           <Route path="accounts" element={<PfAccountsPage />} />
+          <Route path="transfer" element={<PfTransferPage />} />
           <Route path="income" element={<PfIncomePage />} />
           <Route path="expenses" element={<PfExpensesPage />} />
           <Route path="investments" element={<PfInvestmentsPage />} />

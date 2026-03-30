@@ -233,6 +233,10 @@ class FinanceLiability(Base):
     lender_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default='ACTIVE')
+    emi_interest_method: Mapped[str] = mapped_column(String(24), nullable=False, default='FLAT')
+    interest_free_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    term_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    emi_schedule_start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -255,6 +259,30 @@ class LiabilityPayment(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LiabilitySchedule(Base):
+    """EMI schedule for a liability (flat or reducing balance)."""
+
+    __tablename__ = 'liability_schedule'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    liability_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('finance_liabilities.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    emi_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    emi_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    principal_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    interest_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    remaining_balance: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    payment_status: Mapped[str] = mapped_column(String(20), nullable=False, default='Pending')
+    payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    amount_paid: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    finance_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
+    )
+    credit_as_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Loan(Base):
@@ -280,6 +308,8 @@ class Loan(Base):
     total_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     emi_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     remaining_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    emi_interest_method: Mapped[str] = mapped_column(String(24), nullable=False, default='FLAT')
+    emi_settlement: Mapped[str] = mapped_column(String(24), nullable=False, default='RECEIPT')
 
 
 class LoanSchedule(Base):
@@ -342,4 +372,46 @@ class AuditLog(Base):
     user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class AccountTransfer(Base):
+    """Internal transfer of funds between two finance accounts for the same profile."""
+
+    __tablename__ = 'account_transfers'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    from_account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
+    to_account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    transfer_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    transfer_method: Mapped[str] = mapped_column(String(40), nullable=False, default='INTERNAL')
+    reference_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attachment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class AccountTransaction(Base):
+    """
+    Ledger line per finance account (e.g. TRANSFER_IN / TRANSFER_OUT).
+    Positive ``amount`` is always the magnitude; type indicates effect on the account.
+    """
+
+    __tablename__ = 'account_transactions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
+    transaction_type: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    transfer_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('account_transfers.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    reference_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

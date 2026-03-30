@@ -27,13 +27,19 @@ def liability_display_status(ln: FinanceLiability, *, today: date | None = None)
 def enrich_liability(db: Session, ln: FinanceLiability) -> FinanceLiabilityOut:
     interest = pf_finance_repo.sum_liability_interest_paid(db, ln.id)
     st = liability_display_status(ln)
+    has_s = pf_finance_repo.liability_has_emi_schedule(db, ln.id)
+    next_emi = pf_finance_repo.next_pending_liability_emi(db, ln.id) if has_s else None
+    extra: dict = {
+        'display_status': st,
+        'interest_paid_lifetime': Decimal(str(round(interest, 2))),
+        'has_emi_schedule': has_s,
+    }
+    if next_emi:
+        d, amt = next_emi
+        extra['next_emi_due'] = d
+        extra['next_emi_amount'] = Decimal(str(round(amt, 2)))
     base = FinanceLiabilityOut.model_validate(ln, from_attributes=True)
-    return base.model_copy(
-        update={
-            'display_status': st,
-            'interest_paid_lifetime': Decimal(str(round(interest, 2))),
-        }
-    )
+    return base.model_copy(update=extra)
 
 
 def sum_profile_liability_interest_paid(db: Session, profile_id: int) -> float:

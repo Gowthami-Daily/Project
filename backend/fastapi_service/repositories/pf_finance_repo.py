@@ -5,6 +5,8 @@ from sqlalchemy import and_, delete, extract, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from fastapi_service.models_extended import (
+    AccountTransaction,
+    AccountTransfer,
     FinanceAccount,
     FinanceAsset,
     FinanceExpense,
@@ -12,6 +14,7 @@ from fastapi_service.models_extended import (
     FinanceInvestment,
     FinanceLiability,
     LiabilityPayment,
+    LiabilitySchedule,
     Loan,
     LoanPayment,
     LoanSchedule,
@@ -214,6 +217,349 @@ def create_liability(db: Session, row: FinanceLiability) -> FinanceLiability:
     return row
 
 
+def _insert_liability_flat_schedule_rows(
+    db: Session,
+    liability_id: int,
+    principal: float,
+    total_interest: float,
+    term_months: int,
+    start_date: date,
+) -> None:
+    n = int(term_months)
+    if n <= 0:
+        return
+    mp = principal / n
+    mi = total_interest / n
+    emi = round(mp + mi, 2)
+    mp_r, mi_r = round(mp, 2), round(mi, 2)
+    balance = principal
+    for i in range(1, n + 1):
+        balance -= mp
+        due = add_months(start_date, i)
+        db.add(
+            LiabilitySchedule(
+                liability_id=liability_id,
+                emi_number=i,
+                due_date=due,
+                emi_amount=emi,
+                principal_amount=mp_r,
+                interest_amount=mi_r,
+                remaining_balance=max(0.0, round(balance, 2)),
+                payment_status='Pending',
+            )
+        )
+
+
+def _insert_liability_reducing_schedule_rows(
+    db: Session,
+    liability_id: int,
+    principal: float,
+    annual_rate_pct: float,
+    term_months: int,
+    start_date: date,
+) -> tuple[float, float, float]:
+    n = int(term_months)
+    p = round(float(principal), 2)
+    if n <= 0:
+        return 0.0, p, 0.0
+    r = (float(annual_rate_pct) / 100.0) / 12.0
+    total_interest_acc = 0.0
+    if r <= 0:
+        emi = round(p / n, 2)
+        balance = p
+        for i in range(1, n + 1):
+            princ = emi if i < n else round(balance, 2)
+            intr = 0.0
+            emi_i = round(princ + intr, 2)
+            balance = round(balance - princ, 2)
+            due = add_months(start_date, i)
+            db.add(
+                LiabilitySchedule(
+                    liability_id=liability_id,
+                    emi_number=i,
+                    due_date=due,
+                    emi_amount=emi_i,
+                    principal_amount=princ,
+                    interest_amount=intr,
+                    remaining_balance=max(0.0, balance),
+                    payment_status='Pending',
+                )
+            )
+        return 0.0, p, emi
+
+    pow_term = (1 + r) ** n
+    emi = round(p * r * pow_term / (pow_term - 1), 2)
+    balance = p
+    for i in range(1, n):
+        interest = round(balance * r, 2)
+        princ = round(emi - interest, 2)
+        if princ > balance:
+            princ = round(balance, 2)
+        emi_i = round(princ + interest, 2)
+        balance = round(balance - princ, 2)
+        total_interest_acc += interest
+        due = add_months(start_date, i)
+        db.add(
+            LiabilitySchedule(
+                liability_id=liability_id,
+                emi_number=i,
+                due_date=due,
+                emi_amount=emi_i,
+                principal_amount=princ,
+                interest_amount=interest,
+                remaining_balance=balance,
+                payment_status='Pending',
+            )
+        )
+    interest = round(balance * r, 2)
+    princ = round(balance, 2)
+    emi_last = round(princ + interest, 2)
+    total_interest_acc += interest
+    due = add_months(start_date, n)
+    db.add(
+        LiabilitySchedule(
+            liability_id=liability_id,
+            emi_number=n,
+            due_date=due,
+            emi_amount=emi_last,
+            principal_amount=princ,
+            interest_amount=interest,
+            remaining_balance=0.0,
+            payment_status='Pending',
+        )
+    )
+    total_repay = round(p + total_interest_acc, 2)
+    return round(total_interest_acc, 2), total_repay, emi
+
+
+def create_liability_with_emi_schedule(
+    db: Session,
+    row: FinanceLiability,
+    *,
+    term_months: int,
+    emi_start_date: date,
+    emi_interest_method: str = 'FLAT',
+    interest_free_days: int | None = None,
+) -> FinanceLiability:
+    """Persist liability and build flat or reducing EMI rows. Principal = opening outstanding."""
+    principal = float(row.outstanding_amount)
+    tm = int(term_months)
+    rate = float(row.interest_rate or 0)
+    if tm < 1 or rate <= 0:
+        raise ValueError('EMI schedule requires term_months and interest_rate')
+    method = str(emi_interest_method or 'FLAT').strip().upper()
+    if method not in ('FLAT', 'REDUCING_BALANCE'):
+        method = 'FLAT'
+    row.emi_interest_method = method
+    row.term_months = tm
+    row.emi_schedule_start_date = emi_start_date
+    row.interest_free_days = int(interest_free_days) if interest_free_days else None
+    row.total_amount = max(float(row.total_amount), principal)
+
+    if method == 'REDUCING_BALANCE':
+        db.add(row)
+        db.flush()
+        _total_i, total_repay, emi_rep = _insert_liability_reducing_schedule_rows(
+            db, row.id, principal, rate, tm, emi_start_date
+        )
+        row.installment_amount = emi_rep
+        row.outstanding_amount = total_repay
+    else:
+        ifd = int(interest_free_days or 0)
+        grace_months = max(0.0, float(ifd) / 30.4375)
+        effective_months = max(0.0, float(tm) - grace_months)
+        years = effective_months / 12.0
+        total_interest = principal * (rate / 100.0) * years
+        total_amount = principal + total_interest
+        emi_amount = total_amount / tm
+        row.installment_amount = round(emi_amount, 2)
+        row.outstanding_amount = round(total_amount, 2)
+        db.add(row)
+        db.flush()
+        _insert_liability_flat_schedule_rows(db, row.id, principal, total_interest, tm, emi_start_date)
+
+    d = db.scalar(
+        select(func.min(LiabilitySchedule.due_date)).where(LiabilitySchedule.liability_id == row.id)
+    )
+    row.due_date = d
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def liability_has_emi_schedule(db: Session, liability_id: int) -> bool:
+    stmt = select(LiabilitySchedule.id).where(LiabilitySchedule.liability_id == liability_id).limit(1)
+    return db.scalar(stmt) is not None
+
+
+def _unpaid_liability_schedule_total(db: Session, liability_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(LiabilitySchedule.emi_amount), 0)).where(
+        LiabilitySchedule.liability_id == liability_id,
+        func.lower(LiabilitySchedule.payment_status) != 'paid',
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def next_pending_liability_emi(db: Session, liability_id: int) -> tuple[date, float] | None:
+    stmt = (
+        select(LiabilitySchedule.due_date, LiabilitySchedule.emi_amount)
+        .where(
+            LiabilitySchedule.liability_id == liability_id,
+            func.lower(LiabilitySchedule.payment_status) != 'paid',
+        )
+        .order_by(LiabilitySchedule.due_date, LiabilitySchedule.emi_number)
+        .limit(1)
+    )
+    r = db.execute(stmt).first()
+    if not r:
+        return None
+    return (r[0], float(r[1]))
+
+
+def list_liability_schedule(db: Session, liability_id: int) -> list[LiabilitySchedule]:
+    stmt = (
+        select(LiabilitySchedule)
+        .where(LiabilitySchedule.liability_id == liability_id)
+        .order_by(LiabilitySchedule.emi_number)
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_pending_liability_emis(db: Session, profile_id: int) -> list[dict]:
+    stmt = (
+        select(LiabilitySchedule, FinanceLiability)
+        .join(FinanceLiability, FinanceLiability.id == LiabilitySchedule.liability_id)
+        .where(FinanceLiability.profile_id == profile_id)
+        .where(func.lower(LiabilitySchedule.payment_status) != 'paid')
+        .order_by(LiabilitySchedule.due_date, FinanceLiability.id, LiabilitySchedule.emi_number)
+    )
+    out: list[dict] = []
+    for sch, ln in db.execute(stmt).all():
+        out.append(
+            {
+                'schedule_id': int(sch.id),
+                'liability_id': int(ln.id),
+                'liability_name': str(ln.liability_name),
+                'emi_number': int(sch.emi_number),
+                'due_date': sch.due_date,
+                'emi_amount': float(sch.emi_amount),
+            }
+        )
+    return out
+
+
+def patch_liability_schedule_credit(
+    db: Session,
+    profile_id: int,
+    liability_id: int,
+    emi_number: int,
+    *,
+    credit_as_cash: bool,
+    finance_account_id: int | None,
+) -> LiabilitySchedule:
+    ln = get_liability_for_profile(db, liability_id, profile_id)
+    if ln is None:
+        raise ValueError('Liability not found')
+    row = db.scalars(
+        select(LiabilitySchedule).where(
+            LiabilitySchedule.liability_id == liability_id,
+            LiabilitySchedule.emi_number == emi_number,
+        )
+    ).first()
+    if row is None:
+        raise ValueError('EMI not found')
+    if str(row.payment_status).lower() == 'paid':
+        raise ValueError('Cannot change payout method on a paid EMI')
+    if credit_as_cash:
+        row.credit_as_cash = True
+        row.finance_account_id = None
+    elif finance_account_id is not None:
+        if get_account_for_profile(db, finance_account_id, profile_id) is None:
+            raise ValueError('Account not found or not in this profile')
+        row.credit_as_cash = False
+        row.finance_account_id = finance_account_id
+    else:
+        row.credit_as_cash = False
+        row.finance_account_id = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def mark_liability_emi_paid(
+    db: Session,
+    profile_id: int,
+    liability_id: int,
+    emi_number: int,
+    payment_date: date | None = None,
+    finance_account_id: int | None = None,
+) -> LiabilitySchedule:
+    """Pay an EMI: expense + bank debit (or cash expense only), update outstanding and schedule."""
+    ln = get_liability_for_profile(db, liability_id, profile_id)
+    if ln is None:
+        raise ValueError('Liability not found')
+    if str(ln.status).upper() == 'CLOSED':
+        raise ValueError('Liability is closed')
+    row = db.scalars(
+        select(LiabilitySchedule).where(
+            LiabilitySchedule.liability_id == liability_id,
+            LiabilitySchedule.emi_number == emi_number,
+        )
+    ).first()
+    if row is None:
+        raise ValueError('EMI not found')
+    if str(row.payment_status).lower() == 'paid':
+        raise ValueError('EMI already marked paid')
+    pay_date = payment_date or date.today()
+    if finance_account_id is not None:
+        if get_account_for_profile(db, finance_account_id, profile_id) is None:
+            raise ValueError('Account not found or not in this profile')
+        row.finance_account_id = finance_account_id
+        row.credit_as_cash = False
+    as_cash = bool(row.credit_as_cash)
+    acc_id = None if as_cash else row.finance_account_id
+    db.add(
+        FinanceExpense(
+            profile_id=profile_id,
+            account_id=acc_id,
+            amount=float(row.emi_amount),
+            category='EMI – Loans',
+            entry_date=pay_date,
+            description=f'Liability EMI #{emi_number} — {ln.liability_name}',
+            payment_method='CASH' if as_cash else 'BANK',
+        )
+    )
+    if not as_cash:
+        if acc_id is None:
+            raise ValueError('Select a bank account for this EMI (or mark installment as cash)')
+        _bump_account_balance(db, profile_id, acc_id, -float(row.emi_amount))
+    mode = 'CASH' if as_cash else 'BANK'
+    row.payment_status = 'Paid'
+    row.payment_date = pay_date
+    row.amount_paid = float(row.emi_amount)
+    db.add(
+        LiabilityPayment(
+            liability_id=liability_id,
+            payment_date=pay_date,
+            amount_paid=float(row.emi_amount),
+            interest_paid=float(row.interest_amount),
+            payment_mode=mode,
+            finance_account_id=acc_id,
+            notes=None,
+        )
+    )
+    db.flush()
+    ln.outstanding_amount = _unpaid_liability_schedule_total(db, liability_id)
+    nxt = next_pending_liability_emi(db, liability_id)
+    ln.due_date = nxt[0] if nxt else None
+    if ln.outstanding_amount <= 0.01:
+        ln.outstanding_amount = 0.0
+        ln.status = 'CLOSED'
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def update_liability_row(db: Session, row: FinanceLiability) -> FinanceLiability:
     db.commit()
     db.refresh(row)
@@ -224,6 +570,8 @@ def delete_liability_for_profile(db: Session, profile_id: int, liability_id: int
     row = get_liability_for_profile(db, liability_id, profile_id)
     if row is None:
         raise ValueError('Liability not found')
+    db.execute(delete(LiabilityPayment).where(LiabilityPayment.liability_id == liability_id))
+    db.execute(delete(LiabilitySchedule).where(LiabilitySchedule.liability_id == liability_id))
     db.delete(row)
     db.commit()
 
@@ -261,6 +609,10 @@ def record_liability_payment(
         raise ValueError('Liability not found')
     if str(ln.status).upper() == 'CLOSED':
         raise ValueError('Liability is closed')
+    if liability_has_emi_schedule(db, liability_id):
+        raise ValueError(
+            'This liability has an EMI schedule — mark each installment paid from the schedule instead.'
+        )
     ap = float(amount_paid)
     ip = float(interest_paid)
     if ap <= 0:
@@ -459,6 +811,19 @@ def delete_account(db: Session, profile_id: int, account_id: int) -> None:
     row = get_account_for_profile(db, account_id, profile_id)
     if row is None:
         raise ValueError('Account not found')
+    xfer_cnt = db.scalar(
+        select(func.count())
+        .select_from(AccountTransfer)
+        .where(AccountTransfer.profile_id == profile_id)
+        .where(
+            or_(
+                AccountTransfer.from_account_id == account_id,
+                AccountTransfer.to_account_id == account_id,
+            )
+        )
+    )
+    if xfer_cnt and int(xfer_cnt) > 0:
+        raise ValueError('Cannot delete an account that has transfer history')
     db.execute(
         delete(FinanceIncome).where(
             FinanceIncome.profile_id == profile_id,
@@ -1574,7 +1939,7 @@ def _unpaid_schedule_total(db: Session, loan_id: int) -> float:
     return float(db.scalar(stmt) or 0)
 
 
-def _insert_schedule_rows(
+def _insert_flat_schedule_rows(
     db: Session,
     loan_id: int,
     principal: float,
@@ -1582,10 +1947,20 @@ def _insert_schedule_rows(
     term_months: int,
     start_date: date,
 ) -> None:
-    n = term_months
+    """
+    Flat interest (full principal × annual rate × years), then EMI = (P + interest) / n.
+
+    Matches: total_interest = P * (r/100) * t with t = tenure in years (here from effective months / 12);
+    each month: constant principal slice and constant interest slice; rows store principal_component,
+    interest_component, balance_principal (as principal_amount, interest_amount, remaining_balance).
+    """
+    n = int(term_months)
+    if n <= 0:
+        return
     mp = principal / n
     mi = total_interest / n
-    emi = mp + mi
+    emi = round(mp + mi, 2)
+    mp_r, mi_r = round(mp, 2), round(mi, 2)
     balance = principal
     for i in range(1, n + 1):
         balance -= mp
@@ -1596,12 +1971,100 @@ def _insert_schedule_rows(
                 emi_number=i,
                 due_date=due,
                 emi_amount=emi,
-                principal_amount=mp,
-                interest_amount=mi,
-                remaining_balance=max(0.0, balance),
+                principal_amount=mp_r,
+                interest_amount=mi_r,
+                remaining_balance=max(0.0, round(balance, 2)),
                 payment_status='Pending',
             )
         )
+
+
+def _insert_reducing_schedule_rows(
+    db: Session,
+    loan_id: int,
+    principal: float,
+    annual_rate_pct: float,
+    term_months: int,
+    start_date: date,
+) -> tuple[float, float, float]:
+    """
+    Reducing balance: monthly r = (annual % / 100) / 12, EMI = P*r*(1+r)^n / ((1+r)^n - 1).
+
+    Schedule rows carry principal_component, interest_component, balance_principal per period.
+    Returns (total_interest, total_repayable, representative_emi — first installments' EMI).
+    """
+    n = int(term_months)
+    p = round(float(principal), 2)
+    if n <= 0:
+        return 0.0, p, 0.0
+    r = (float(annual_rate_pct) / 100.0) / 12.0
+    total_interest_acc = 0.0
+    if r <= 0:
+        emi = round(p / n, 2)
+        balance = p
+        for i in range(1, n + 1):
+            princ = emi if i < n else round(balance, 2)
+            intr = 0.0
+            emi_i = round(princ + intr, 2)
+            balance = round(balance - princ, 2)
+            due = add_months(start_date, i)
+            db.add(
+                LoanSchedule(
+                    loan_id=loan_id,
+                    emi_number=i,
+                    due_date=due,
+                    emi_amount=emi_i,
+                    principal_amount=princ,
+                    interest_amount=intr,
+                    remaining_balance=max(0.0, balance),
+                    payment_status='Pending',
+                )
+            )
+        return 0.0, p, emi
+
+    pow_term = (1 + r) ** n
+    emi = round(p * r * pow_term / (pow_term - 1), 2)
+    balance = p
+    for i in range(1, n):
+        interest = round(balance * r, 2)
+        princ = round(emi - interest, 2)
+        if princ > balance:
+            princ = round(balance, 2)
+        emi_i = round(princ + interest, 2)
+        balance = round(balance - princ, 2)
+        total_interest_acc += interest
+        due = add_months(start_date, i)
+        db.add(
+            LoanSchedule(
+                loan_id=loan_id,
+                emi_number=i,
+                due_date=due,
+                emi_amount=emi_i,
+                principal_amount=princ,
+                interest_amount=interest,
+                remaining_balance=balance,
+                payment_status='Pending',
+            )
+        )
+    interest = round(balance * r, 2)
+    princ = round(balance, 2)
+    emi_last = round(princ + interest, 2)
+    total_interest_acc += interest
+    due = add_months(start_date, n)
+    db.add(
+        LoanSchedule(
+            loan_id=loan_id,
+            emi_number=n,
+            due_date=due,
+            emi_amount=emi_last,
+            principal_amount=princ,
+            interest_amount=interest,
+            remaining_balance=0.0,
+            payment_status='Pending',
+        )
+    )
+    total_repay = round(p + total_interest_acc, 2)
+    return round(total_interest_acc, 2), total_repay, emi
 
 
 def create_loan(db: Session, row: Loan) -> Loan:
@@ -1628,6 +2091,7 @@ def create_loan_with_schedule_options(
     term_months: int | None = None,
     commission_percent: float | None = None,
     loan_kind: str = 'emi_schedule',
+    emi_interest_method: str = 'FLAT',
 ) -> Loan:
     if loan_kind == 'interest_free':
         row.interest_rate = 0.0
@@ -1668,14 +2132,33 @@ def create_loan_with_schedule_options(
         row.commission_percent = commission_percent
         row.commission_amount = float(row.loan_amount) * float(commission_percent) / 100.0
     tm = term_months
+    method = str(emi_interest_method or getattr(row, 'emi_interest_method', None) or 'FLAT').strip().upper()
+    if method not in ('FLAT', 'REDUCING_BALANCE'):
+        method = 'FLAT'
+    row.emi_interest_method = method
     if tm and tm > 0 and row.interest_rate is not None:
         principal = float(row.loan_amount)
         rate = float(row.interest_rate)
         ifd = int(row.interest_free_days or 0)
-        # Interest accrues only for the part of the term after the grace period (~30.4375 days/month).
         grace_months = max(0.0, float(ifd) / 30.4375)
-        effective_tm = max(0.0, float(tm) - grace_months)
-        total_interest = principal * (rate / 100.0) * effective_tm
+        effective_months = max(0.0, float(tm) - grace_months)
+        if method == 'REDUCING_BALANCE':
+            row.term_months = tm
+            row.end_date = add_months(row.start_date, tm)
+            db.add(row)
+            db.flush()
+            total_interest, total_amount, emi_amount = _insert_reducing_schedule_rows(
+                db, row.id, principal, rate, tm, row.start_date
+            )
+            row.total_interest = total_interest
+            row.total_amount = total_amount
+            row.emi_amount = emi_amount
+            row.remaining_amount = total_amount
+            db.commit()
+            db.refresh(row)
+            return row
+        years = effective_months / 12.0
+        total_interest = principal * (rate / 100.0) * years
         total_amount = principal + total_interest
         emi_amount = total_amount / tm
         row.term_months = tm
@@ -1686,7 +2169,7 @@ def create_loan_with_schedule_options(
         row.end_date = add_months(row.start_date, tm)
         db.add(row)
         db.flush()
-        _insert_schedule_rows(db, row.id, principal, total_interest, tm, row.start_date)
+        _insert_flat_schedule_rows(db, row.id, principal, total_interest, tm, row.start_date)
         db.commit()
         db.refresh(row)
         return row
@@ -1703,6 +2186,31 @@ def list_loan_schedule(db: Session, loan_id: int) -> list[LoanSchedule]:
         .order_by(LoanSchedule.emi_number)
     )
     return list(db.scalars(stmt).all())
+
+
+def list_pending_loan_emis(db: Session, profile_id: int) -> list[dict]:
+    """All unpaid EMI schedule installments for the profile (due date order)."""
+    stmt = (
+        select(LoanSchedule, Loan)
+        .join(Loan, Loan.id == LoanSchedule.loan_id)
+        .where(Loan.profile_id == profile_id)
+        .where(func.lower(LoanSchedule.payment_status) != 'paid')
+        .order_by(LoanSchedule.due_date, Loan.id, LoanSchedule.emi_number)
+    )
+    out: list[dict] = []
+    for sch, ln in db.execute(stmt).all():
+        out.append(
+            {
+                'schedule_id': int(sch.id),
+                'loan_id': int(ln.id),
+                'borrower_name': str(ln.borrower_name),
+                'emi_settlement': str(getattr(ln, 'emi_settlement', None) or 'RECEIPT'),
+                'emi_number': int(sch.emi_number),
+                'due_date': sch.due_date,
+                'emi_amount': float(sch.emi_amount),
+            }
+        )
+    return out
 
 
 def patch_loan_schedule_credit(
@@ -1782,7 +2290,24 @@ def mark_emi_paid(
         row.credit_as_cash = False
     as_cash = bool(row.credit_as_cash)
     acc_id = None if as_cash else row.finance_account_id
-    if acc_id is not None:
+    settlement = str(getattr(ln, 'emi_settlement', None) or 'RECEIPT').strip().upper()
+    if settlement == 'PAYMENT':
+        db.add(
+            FinanceExpense(
+                profile_id=profile_id,
+                account_id=acc_id,
+                amount=float(row.emi_amount),
+                category='EMI – Loans',
+                entry_date=pay_date,
+                description=f'EMI #{emi_number} — {ln.borrower_name}',
+                payment_method='CASH' if as_cash else 'BANK',
+            )
+        )
+        if not as_cash:
+            if acc_id is None:
+                raise ValueError('Select a bank account for this EMI payment (or mark installment as cash)')
+            _bump_account_balance(db, profile_id, acc_id, -float(row.emi_amount))
+    elif acc_id is not None:
         _bump_account_balance(db, profile_id, acc_id, float(row.emi_amount))
     row.payment_status = 'Paid'
     row.payment_date = pay_date
@@ -1863,6 +2388,128 @@ def sum_loan_interest_collected_for_profile(db: Session, profile_id: int) -> flo
         .where(Loan.profile_id == profile_id)
     )
     return float(db.scalar(stmt) or 0)
+
+
+def sum_loan_principal_collected_for_profile(db: Session, profile_id: int) -> float:
+    """Lifetime principal component recovered (from EMI / payment rows)."""
+    stmt = (
+        select(func.coalesce(func.sum(LoanPayment.principal_paid), 0))
+        .join(Loan, LoanPayment.loan_id == Loan.id)
+        .where(Loan.profile_id == profile_id)
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_unpaid_loan_emi_due_in_calendar_month(
+    db: Session, profile_id: int, year: int, month: int
+) -> float:
+    """Sum of unpaid scheduled EMIs with due_date in the given calendar month (for dashboard 'EMI this month')."""
+    ms = date(year, month, 1)
+    last_d = calendar.monthrange(year, month)[1]
+    me = date(year, month, last_d)
+    stmt = (
+        select(func.coalesce(func.sum(LoanSchedule.emi_amount), 0))
+        .select_from(LoanSchedule)
+        .join(Loan, LoanSchedule.loan_id == Loan.id)
+        .where(
+            Loan.profile_id == profile_id,
+            func.lower(LoanSchedule.payment_status) != 'paid',
+            LoanSchedule.due_date >= ms,
+            LoanSchedule.due_date <= me,
+        )
+    )
+    return float(db.scalar(stmt) or 0)
+
+
+def emis_due_in_calendar_month_detail(
+    db: Session, profile_id: int, year: int, month: int
+) -> dict:
+    """
+    All unpaid EMI installments (lend + borrow) with due_date in the calendar month.
+    Used for dashboard cash planning; see ``pf_accounting_policy``.
+    """
+    ms = date(year, month, 1)
+    last_d = calendar.monthrange(year, month)[1]
+    me = date(year, month, last_d)
+
+    lend_stmt = (
+        select(
+            Loan.id,
+            Loan.borrower_name,
+            LoanSchedule.emi_number,
+            LoanSchedule.due_date,
+            LoanSchedule.emi_amount,
+        )
+        .select_from(LoanSchedule)
+        .join(Loan, LoanSchedule.loan_id == Loan.id)
+        .where(
+            Loan.profile_id == profile_id,
+            func.lower(LoanSchedule.payment_status) != 'paid',
+            LoanSchedule.due_date >= ms,
+            LoanSchedule.due_date <= me,
+        )
+        .order_by(LoanSchedule.due_date, Loan.borrower_name, LoanSchedule.emi_number)
+    )
+    borrow_stmt = (
+        select(
+            FinanceLiability.id,
+            FinanceLiability.liability_name,
+            LiabilitySchedule.emi_number,
+            LiabilitySchedule.due_date,
+            LiabilitySchedule.emi_amount,
+        )
+        .select_from(LiabilitySchedule)
+        .join(FinanceLiability, LiabilitySchedule.liability_id == FinanceLiability.id)
+        .where(
+            FinanceLiability.profile_id == profile_id,
+            func.lower(LiabilitySchedule.payment_status) != 'paid',
+            LiabilitySchedule.due_date >= ms,
+            LiabilitySchedule.due_date <= me,
+        )
+        .order_by(LiabilitySchedule.due_date, FinanceLiability.liability_name, LiabilitySchedule.emi_number)
+    )
+    lend_items: list[dict] = []
+    borrow_items: list[dict] = []
+    lend_total = 0.0
+    borrow_total = 0.0
+    for r in db.execute(lend_stmt).all():
+        amt = float(r[4])
+        lend_total += amt
+        lend_items.append(
+            {
+                'side': 'lend',
+                'entity_id': int(r[0]),
+                'name': str(r[1]),
+                'emi_number': int(r[2]),
+                'due_date': r[3].isoformat() if r[3] else None,
+                'amount': round(amt, 2),
+            }
+        )
+    for r in db.execute(borrow_stmt).all():
+        amt = float(r[4])
+        borrow_total += amt
+        borrow_items.append(
+            {
+                'side': 'borrow',
+                'entity_id': int(r[0]),
+                'name': str(r[1]),
+                'emi_number': int(r[2]),
+                'due_date': r[3].isoformat() if r[3] else None,
+                'amount': round(amt, 2),
+            }
+        )
+    items = [*lend_items, *borrow_items]
+    items.sort(key=lambda x: (x.get('due_date') or '', x['side'], x['name'], x['emi_number']))
+    return {
+        'year': year,
+        'month': month,
+        'lend_due_total': round(lend_total, 2),
+        'borrow_due_total': round(borrow_total, 2),
+        'combined_due_total': round(lend_total + borrow_total, 2),
+        'lend_count': len(lend_items),
+        'borrow_count': len(borrow_items),
+        'items': items,
+    }
 
 
 def sum_loan_payments_this_month(db: Session, profile_id: int, today: date | None = None) -> float:
@@ -1948,6 +2595,9 @@ def loan_dashboard_analytics(
     week_end = today + timedelta(days=7)
     overdue_emi = profile_overdue_emi_amount(db, profile_id, today=today)
     upcoming_week = upcoming_unpaid_emis_in_range(db, profile_id, today, week_end)
+    interest_lifetime = sum_loan_interest_collected_for_profile(db, profile_id)
+    principal_lifetime = sum_loan_principal_collected_for_profile(db, profile_id)
+    emi_due_this_month = sum_unpaid_loan_emi_due_in_calendar_month(db, profile_id, today.year, today.month)
     return {
         'year': y,
         'total_loan_given': principal,
@@ -1961,7 +2611,9 @@ def loan_dashboard_analytics(
         'active_loans': active,
         'closed_loans': closed,
         'this_month_collection': this_month,
-        'interest_collected_lifetime': sum_loan_interest_collected_for_profile(db, profile_id),
+        'interest_collected_lifetime': interest_lifetime,
+        'principal_collected_lifetime': principal_lifetime,
+        'emi_due_this_month': emi_due_this_month,
         'collections_by_month': [{'month': m, 'amount': v} for m, v in coll_monthly],
         'interest_profit_by_month': [{'month': m, 'amount': v} for m, v in profit_monthly],
         'given_vs_collected_vs_remaining': bar_compare,
@@ -2121,3 +2773,118 @@ def create_loan_payment(db: Session, row: LoanPayment) -> LoanPayment:
     db.commit()
     db.refresh(row)
     return row
+
+
+def create_account_transfer(
+    db: Session,
+    profile_id: int,
+    user_id: int | None,
+    *,
+    from_account_id: int,
+    to_account_id: int,
+    amount: float,
+    transfer_date: date,
+    transfer_method: str,
+    reference_number: str | None,
+    notes: str | None,
+    attachment_url: str | None,
+) -> AccountTransfer:
+    if from_account_id == to_account_id:
+        raise ValueError('From and to accounts must be different')
+    amt = float(amount)
+    if amt <= 0:
+        raise ValueError('Amount must be positive')
+    from_acc = get_account_for_profile(db, from_account_id, profile_id)
+    to_acc = get_account_for_profile(db, to_account_id, profile_id)
+    if from_acc is None or to_acc is None:
+        raise ValueError('Account not found or not in this profile')
+    if float(from_acc.balance) + 0.005 < amt:
+        raise ValueError('Insufficient balance in the source account')
+
+    xfer = AccountTransfer(
+        profile_id=profile_id,
+        from_account_id=from_account_id,
+        to_account_id=to_account_id,
+        amount=amt,
+        transfer_date=transfer_date,
+        transfer_method=(transfer_method or 'INTERNAL').strip()[:40] or 'INTERNAL',
+        reference_number=(reference_number or '').strip()[:128] or None,
+        notes=(notes or '').strip() or None,
+        attachment_url=attachment_url,
+        created_by=user_id,
+    )
+    db.add(xfer)
+    db.flush()
+
+    _bump_account_balance(db, profile_id, from_account_id, -amt)
+    _bump_account_balance(db, profile_id, to_account_id, amt)
+
+    db.add(
+        AccountTransaction(
+            profile_id=profile_id,
+            account_id=from_account_id,
+            transaction_type='TRANSFER_OUT',
+            amount=amt,
+            transfer_id=xfer.id,
+            entry_date=transfer_date,
+            reference_number=xfer.reference_number,
+            notes=xfer.notes,
+            created_by=user_id,
+        )
+    )
+    db.add(
+        AccountTransaction(
+            profile_id=profile_id,
+            account_id=to_account_id,
+            transaction_type='TRANSFER_IN',
+            amount=amt,
+            transfer_id=xfer.id,
+            entry_date=transfer_date,
+            reference_number=xfer.reference_number,
+            notes=xfer.notes,
+            created_by=user_id,
+        )
+    )
+    db.commit()
+    db.refresh(xfer)
+    return xfer
+
+
+def list_account_transfers(
+    db: Session, profile_id: int, skip: int, limit: int
+) -> list[AccountTransfer]:
+    stmt = (
+        select(AccountTransfer)
+        .where(AccountTransfer.profile_id == profile_id)
+        .order_by(AccountTransfer.transfer_date.desc(), AccountTransfer.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_account_statement_lines(
+    db: Session,
+    profile_id: int,
+    account_id: int,
+    start: date | None,
+    end: date | None,
+    skip: int,
+    limit: int,
+) -> list[AccountTransaction]:
+    if get_account_for_profile(db, account_id, profile_id) is None:
+        raise ValueError('Account not found')
+    stmt = (
+        select(AccountTransaction)
+        .where(
+            AccountTransaction.profile_id == profile_id,
+            AccountTransaction.account_id == account_id,
+        )
+        .order_by(AccountTransaction.entry_date.desc(), AccountTransaction.id.desc())
+    )
+    if start:
+        stmt = stmt.where(AccountTransaction.entry_date >= start)
+    if end:
+        stmt = stmt.where(AccountTransaction.entry_date <= end)
+    stmt = stmt.offset(skip).limit(limit)
+    return list(db.scalars(stmt).all())

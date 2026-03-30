@@ -1,5 +1,6 @@
 import {
   ArrowRightOnRectangleIcon,
+  ArrowsRightLeftIcon,
   BanknotesIcon,
   BuildingLibraryIcon,
   ChartBarIcon,
@@ -178,6 +179,13 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
           </SectionLabel>
           <div className="flex flex-col">
             <NavItem to="/personal-finance/accounts" icon={WalletIcon} label="Accounts" collapsed={collapsed} onNavigate={closeIfMobile} />
+            <NavItem
+              to="/personal-finance/transfer"
+              icon={ArrowsRightLeftIcon}
+              label="Transfer"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
             <NavItem to="/personal-finance/income" icon={BanknotesIcon} label="Income" collapsed={collapsed} onNavigate={closeIfMobile} />
             <NavItem
               to="/personal-finance/expenses"

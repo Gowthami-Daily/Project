@@ -11,12 +11,16 @@ import {
   listFinanceAccounts,
   listFinanceLiabilities,
   listLiabilityPayments,
+  listLiabilitySchedule,
   patchFinanceLiability,
+  patchLiabilityScheduleCredit,
+  payLiabilityEmi,
   pfFetchBlob,
   setPfToken,
   triggerDownloadBlob,
 } from '../api.js'
 import PfExportMenu from '../PfExportMenu.jsx'
+import PfSegmentedControl from '../PfSegmentedControl.jsx'
 import {
   btnDanger,
   btnPrimary,
@@ -35,8 +39,13 @@ import {
   pfTableWrap,
   pfTd,
   pfTdRight,
+  pfTdSm,
+  pfTdSmRight,
   pfTh,
   pfThRight,
+  pfThSm,
+  pfThSmActionCol,
+  pfThSmRight,
   pfTrHover,
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
@@ -67,6 +76,18 @@ function formatShortDate(iso) {
 
 function typeLabel(v) {
   return LIABILITY_TYPES.find((t) => t.value === v)?.label || v || '—'
+}
+
+function liabilityEmiMethodFromApi(v) {
+  const u = String(v || 'FLAT').toUpperCase().replace(/-/g, '_')
+  return u === 'REDUCING_BALANCE' ? 'reducing_balance' : 'flat'
+}
+
+/** Pay-from: cash vs bank account (liability EMI row). */
+function payFromSelectValue(s) {
+  if (s?.credit_as_cash === true) return 'cash'
+  if (s?.finance_account_id != null && s.finance_account_id !== '') return String(s.finance_account_id)
+  return ''
 }
 
 function statusBadge(displayStatus) {
@@ -109,6 +130,11 @@ function emptyForm() {
     lender_name: '',
     notes: '',
     status: 'ACTIVE',
+    build_emi_schedule: false,
+    emi_interest_method: 'flat',
+    term_months: '',
+    emi_schedule_start_date: '',
+    interest_free_days: '',
   }
 }
 
@@ -146,6 +172,15 @@ export default function PfLiabilitiesPage() {
   const [payNotes, setPayNotes] = useState('')
   const [paySubmitting, setPaySubmitting] = useState(false)
   const [closingId, setClosingId] = useState(null)
+  const [detailSchedule, setDetailSchedule] = useState([])
+  const [payingKey, setPayingKey] = useState('')
+  const [patchingKey, setPatchingKey] = useState('')
+
+  const accountNameById = useMemo(() => {
+    const m = new Map()
+    for (const a of accounts) m.set(a.id, a.account_name)
+    return m
+  }, [accounts])
 
   const queryParams = useMemo(
     () => ({
@@ -194,16 +229,22 @@ export default function PfLiabilitiesPage() {
     if (!viewId) {
       setViewRow(null)
       setPayments([])
+      setDetailSchedule([])
       return
     }
     let cancelled = false
     ;(async () => {
       setDetailLoading(true)
       try {
-        const [ln, pay] = await Promise.all([getFinanceLiability(viewId), listLiabilityPayments(viewId)])
+        const [ln, pay, sch] = await Promise.all([
+          getFinanceLiability(viewId),
+          listLiabilityPayments(viewId),
+          listLiabilitySchedule(viewId).catch(() => []),
+        ])
         if (!cancelled) {
           setViewRow(ln)
           setPayments(Array.isArray(pay) ? pay : [])
+          setDetailSchedule(Array.isArray(sch) ? sch : [])
         }
       } catch (e) {
         if (!cancelled && e.status !== 401) setError(e.message || 'Failed to load liability')
@@ -237,6 +278,11 @@ export default function PfLiabilitiesPage() {
       lender_name: r.lender_name ?? '',
       notes: r.notes ?? '',
       status: r.status ?? 'ACTIVE',
+      build_emi_schedule: false,
+      emi_interest_method: liabilityEmiMethodFromApi(r.emi_interest_method),
+      term_months: r.term_months != null ? String(r.term_months) : '',
+      emi_schedule_start_date: r.emi_schedule_start_date ? String(r.emi_schedule_start_date).slice(0, 10) : '',
+      interest_free_days: r.interest_free_days != null ? String(r.interest_free_days) : '',
     })
     setShowAddModal(true)
   }
@@ -262,6 +308,37 @@ export default function PfLiabilitiesPage() {
       lender_name: form.lender_name.trim() || null,
       notes: form.notes.trim() || null,
       status: form.status || 'ACTIVE',
+    }
+    if (!editId && form.build_emi_schedule) {
+      const tm = Number(form.term_months)
+      if (!form.emi_schedule_start_date) {
+        setError('Choose an EMI schedule start date (same rule as loans: first due is one month after).')
+        setSubmitting(false)
+        return
+      }
+      if (!tm || tm < 1 || Number.isNaN(tm)) {
+        setError('Enter term (months) for the EMI schedule.')
+        setSubmitting(false)
+        return
+      }
+      const ir = form.interest_rate === '' ? NaN : Number(form.interest_rate)
+      if (!ir || ir <= 0 || Number.isNaN(ir)) {
+        setError('Interest % is required to build an EMI schedule.')
+        setSubmitting(false)
+        return
+      }
+      body.build_emi_schedule = true
+      body.emi_interest_method = form.emi_interest_method
+      body.term_months = tm
+      body.emi_schedule_start_date = form.emi_schedule_start_date
+      body.interest_free_days =
+        form.interest_free_days === '' || form.interest_free_days == null
+          ? null
+          : Math.max(0, Math.floor(Number(form.interest_free_days)))
+      body.installment_amount = null
+      body.due_date = null
+    } else {
+      body.build_emi_schedule = false
     }
     try {
       if (editId) {
@@ -364,6 +441,71 @@ export default function PfLiabilitiesPage() {
       }
     } finally {
       setPaySubmitting(false)
+    }
+  }
+
+  async function onLiabilityCreditChange(liabilityId, emiNumber, value) {
+    const pk = `${liabilityId}-${emiNumber}`
+    setPatchingKey(pk)
+    setError('')
+    try {
+      if (value === '' || value == null) {
+        await patchLiabilityScheduleCredit(liabilityId, emiNumber, {
+          creditAsCash: false,
+          financeAccountId: null,
+        })
+      } else if (value === 'cash') {
+        await patchLiabilityScheduleCredit(liabilityId, emiNumber, { creditAsCash: true, financeAccountId: null })
+      } else {
+        await patchLiabilityScheduleCredit(liabilityId, emiNumber, {
+          creditAsCash: false,
+          financeAccountId: Number(value),
+        })
+      }
+      const sch = await listLiabilitySchedule(liabilityId)
+      setDetailSchedule(Array.isArray(sch) ? sch : [])
+      await load()
+      refresh()
+      if (viewId === liabilityId) {
+        setViewRow(await getFinanceLiability(liabilityId))
+      }
+    } catch (err) {
+      if (err.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        setError(err.message || 'Could not update EMI')
+      }
+    } finally {
+      setPatchingKey('')
+    }
+  }
+
+  async function handlePayLiabilityEmi(liabilityId, emiNumber) {
+    const pk = `${liabilityId}-${emiNumber}`
+    setPayingKey(pk)
+    setError('')
+    try {
+      await payLiabilityEmi(liabilityId, emiNumber)
+      const [sch, ln, pay] = await Promise.all([
+        listLiabilitySchedule(liabilityId),
+        getFinanceLiability(liabilityId),
+        listLiabilityPayments(liabilityId),
+      ])
+      setDetailSchedule(Array.isArray(sch) ? sch : [])
+      setViewRow(ln)
+      setPayments(Array.isArray(pay) ? pay : [])
+      await load()
+      refresh()
+    } catch (err) {
+      if (err.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        setError(err.message || 'EMI payment failed')
+      }
+    } finally {
+      setPayingKey('')
     }
   }
 
@@ -582,14 +724,25 @@ export default function PfLiabilitiesPage() {
                 <p>
                   Due: <span className="font-medium">{formatShortDate(r.due_date)}</span>
                 </p>
+                {r.has_emi_schedule && r.next_emi_due ? (
+                  <p className="text-xs text-sky-800 dark:text-sky-200">
+                    Next EMI: {formatShortDate(r.next_emi_due)}
+                    {r.next_emi_amount != null ? ` · ${formatInr(r.next_emi_amount)}` : ''}
+                  </p>
+                ) : null}
                 {r.interest_rate != null ? <p>Interest: {r.interest_rate}%</p> : null}
               </div>
               <div className="mt-4 flex flex-wrap gap-2 border-t border-sky-100/80 pt-4 dark:border-slate-600">
                 <button
                   type="button"
-                  disabled={Number(r.outstanding_amount) <= 0 || String(r.status).toUpperCase() === 'CLOSED'}
+                  disabled={
+                    Number(r.outstanding_amount) <= 0 ||
+                    String(r.status).toUpperCase() === 'CLOSED' ||
+                    r.has_emi_schedule === true
+                  }
                   className={`${btnSecondary} flex-1 justify-center text-xs`}
                   onClick={() => openPay(r)}
+                  title={r.has_emi_schedule ? 'Use EMI schedule in detail view' : undefined}
                 >
                   Pay
                 </button>
@@ -705,6 +858,86 @@ export default function PfLiabilitiesPage() {
                 </label>
                 <textarea id="fm-notes" rows={2} className={`${inputCls} resize-y`} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
               </div>
+              {!editId ? (
+                <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-600 dark:bg-slate-900/40">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-300 text-[#1E3A8A]"
+                      checked={form.build_emi_schedule}
+                      onChange={(e) => setForm((f) => ({ ...f, build_emi_schedule: e.target.checked }))}
+                    />
+                    Build EMI schedule (flat or reducing balance)
+                  </label>
+                  {form.build_emi_schedule ? (
+                    <div className="mt-3 grid gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          Interest method
+                        </p>
+                        <PfSegmentedControl
+                          className="mt-2 w-full"
+                          options={[
+                            { id: 'flat', label: 'Flat interest' },
+                            { id: 'reducing_balance', label: 'Reducing balance' },
+                          ]}
+                          value={form.emi_interest_method}
+                          onChange={(v) => setForm((f) => ({ ...f, emi_interest_method: v }))}
+                        />
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className={labelCls} htmlFor="fm-em-tm">
+                            Term (months)
+                          </label>
+                          <input
+                            id="fm-em-tm"
+                            type="number"
+                            min="1"
+                            className={inputCls}
+                            value={form.term_months}
+                            onChange={(e) => setForm((f) => ({ ...f, term_months: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label className={labelCls} htmlFor="fm-em-start">
+                            Schedule start
+                          </label>
+                          <input
+                            id="fm-em-start"
+                            type="date"
+                            className={inputCls}
+                            value={form.emi_schedule_start_date}
+                            onChange={(e) => setForm((f) => ({ ...f, emi_schedule_start_date: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                      {form.emi_interest_method === 'flat' ? (
+                        <div>
+                          <label className={labelCls} htmlFor="fm-em-grace">
+                            Interest-free days (optional)
+                          </label>
+                          <input
+                            id="fm-em-grace"
+                            type="number"
+                            min="0"
+                            step="1"
+                            className={inputCls}
+                            value={form.interest_free_days}
+                            onChange={(e) => setForm((f) => ({ ...f, interest_free_days: e.target.value }))}
+                            placeholder="0"
+                          />
+                        </div>
+                      ) : null}
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        <strong className="font-medium text-slate-600 dark:text-slate-300">Outstanding</strong> above is
+                        treated as principal. First EMI due is one month after schedule start (same as loans). Paying an
+                        EMI logs an expense and debits the selected bank account.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {editId ? (
                 <div className="sm:col-span-2">
                   <label className={labelCls} htmlFor="fm-st">
@@ -839,8 +1072,32 @@ export default function PfLiabilitiesPage() {
                   {viewRow.lender_name ? <p>Lender: {viewRow.lender_name}</p> : null}
                   {viewRow.notes ? <p className="sm:col-span-2 text-slate-600 dark:text-slate-400">{viewRow.notes}</p> : null}
                 </div>
+                {viewRow.has_emi_schedule ? (
+                  <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                    EMI method:{' '}
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      {liabilityEmiMethodFromApi(viewRow.emi_interest_method) === 'reducing_balance'
+                        ? 'reducing balance'
+                        : 'flat'}
+                    </span>
+                    {viewRow.term_months != null ? ` · ${viewRow.term_months} mo` : ''}
+                    {viewRow.next_emi_due ? (
+                      <>
+                        {' · '}
+                        Next: {formatShortDate(viewRow.next_emi_due)}
+                        {viewRow.next_emi_amount != null ? ` · ${formatInr(viewRow.next_emi_amount)}` : ''}
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <button type="button" className={`${btnSecondary} inline-flex items-center gap-1 text-xs`} onClick={() => openPay(viewRow)}>
+                  <button
+                    type="button"
+                    disabled={viewRow.has_emi_schedule === true}
+                    title={viewRow.has_emi_schedule ? 'Use EMI rows below' : undefined}
+                    className={`${btnSecondary} inline-flex items-center gap-1 text-xs disabled:opacity-50`}
+                    onClick={() => openPay(viewRow)}
+                  >
                     <BanknotesIcon className="h-4 w-4" />
                     Record payment
                   </button>
@@ -856,6 +1113,94 @@ export default function PfLiabilitiesPage() {
                     Delete
                   </button>
                 </div>
+                {detailSchedule.length > 0 ? (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">EMI schedule</h3>
+                    <div className={`${pfTableWrap} mt-2`}>
+                      <table className={`${pfTable} min-w-[48rem] text-xs`}>
+                        <thead>
+                          <tr>
+                            <th className={pfThSm}>#</th>
+                            <th className={pfThSm}>Due</th>
+                            <th className={pfThSmRight}>EMI</th>
+                            <th className={pfThSmRight}>Principal</th>
+                            <th className={pfThSmRight}>Interest</th>
+                            <th className={`${pfThSm} min-w-[10rem]`}>Pay from</th>
+                            <th className={pfThSm}>Status</th>
+                            <th className={`${pfThSmRight} ${pfThSmActionCol}`}> </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailSchedule.map((s) => {
+                            const paid = String(s.payment_status).toLowerCase() === 'paid'
+                            const pk = `${viewId}-${s.emi_number}`
+                            const accLabel =
+                              s.finance_account_id != null
+                                ? accountNameById.get(s.finance_account_id) ?? `#${s.finance_account_id}`
+                                : null
+                            const paidAsLabel = s.credit_as_cash ? 'Cash' : accLabel ?? '—'
+                            return (
+                              <tr key={s.id} className={pfTrHover}>
+                                <td className={pfTdSm}>{s.emi_number}</td>
+                                <td className={`${pfTdSm} text-slate-600 dark:text-slate-400`}>{s.due_date}</td>
+                                <td className={pfTdSmRight}>{formatInr(s.emi_amount)}</td>
+                                <td className={`${pfTdSmRight} text-slate-600 dark:text-slate-400`}>
+                                  {formatInr(s.principal_amount)}
+                                </td>
+                                <td className={`${pfTdSmRight} text-slate-600 dark:text-slate-400`}>
+                                  {formatInr(s.interest_amount)}
+                                </td>
+                                <td className={pfTdSm}>
+                                  {paid ? (
+                                    <span className="text-slate-700 dark:text-slate-300">{paidAsLabel}</span>
+                                  ) : (
+                                    <select
+                                      className={`${inputCls} max-w-[12rem] py-1 text-xs`}
+                                      disabled={patchingKey === pk}
+                                      value={payFromSelectValue(s)}
+                                      onChange={(e) => onLiabilityCreditChange(viewId, s.emi_number, e.target.value)}
+                                    >
+                                      <option value="">—</option>
+                                      <option value="cash">Cash</option>
+                                      {accounts.map((a) => (
+                                        <option key={a.id} value={a.id}>
+                                          {a.account_name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </td>
+                                <td className={pfTdSm}>
+                                  <span
+                                    className={
+                                      paid
+                                        ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
+                                        : 'rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
+                                    }
+                                  >
+                                    {paid ? 'Paid' : 'Due'}
+                                  </span>
+                                </td>
+                                <td className={`${pfTdSmRight} ${pfThSmActionCol}`}>
+                                  {paid ? null : (
+                                    <button
+                                      type="button"
+                                      disabled={payingKey === pk}
+                                      className="rounded-[10px] bg-[#1E3A8A] px-2 py-1 text-[10px] font-semibold text-white hover:bg-[#172554] disabled:opacity-60 dark:bg-sky-700"
+                                      onClick={() => handlePayLiabilityEmi(viewId, s.emi_number)}
+                                    >
+                                      {payingKey === pk ? '…' : 'Pay EMI'}
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
                 <h3 className="mt-6 text-sm font-bold text-slate-900 dark:text-slate-100">Payment history</h3>
                 <div className={`${pfTableWrap} mt-2`}>
                   <table className={`${pfTable} min-w-[420px] text-xs`}>

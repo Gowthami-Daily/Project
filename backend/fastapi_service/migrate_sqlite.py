@@ -197,6 +197,48 @@ def ensure_loan_interest_free_days_column(engine: Engine) -> None:
         conn.execute(text(f'ALTER TABLE loans ADD COLUMN interest_free_days {typ}'))
 
 
+def ensure_loan_emi_interest_and_settlement_columns(engine: Engine) -> None:
+    """Add ``emi_interest_method`` and ``emi_settlement`` on ``loans``."""
+    dialect = engine.dialect.name
+    if dialect not in ('sqlite', 'postgresql'):
+        return
+    insp = inspect(engine)
+    if not insp.has_table('loans'):
+        return
+    cols = {c['name'] for c in insp.get_columns('loans')}
+    meth = "TEXT NOT NULL DEFAULT 'FLAT'" if dialect == 'sqlite' else "VARCHAR(24) NOT NULL DEFAULT 'FLAT'"
+    sett = "TEXT NOT NULL DEFAULT 'RECEIPT'" if dialect == 'sqlite' else "VARCHAR(24) NOT NULL DEFAULT 'RECEIPT'"
+    with engine.begin() as conn:
+        if 'emi_interest_method' not in cols:
+            conn.execute(text(f'ALTER TABLE loans ADD COLUMN emi_interest_method {meth}'))
+        if 'emi_settlement' not in cols:
+            conn.execute(text(f'ALTER TABLE loans ADD COLUMN emi_settlement {sett}'))
+
+
+def ensure_liability_emi_columns(engine: Engine) -> None:
+    """Add EMI-related columns on ``finance_liabilities`` (schedule table via metadata.create_all)."""
+    dialect = engine.dialect.name
+    if dialect not in ('sqlite', 'postgresql'):
+        return
+    insp = inspect(engine)
+    if not insp.has_table('finance_liabilities'):
+        return
+    cols = {c['name'] for c in insp.get_columns('finance_liabilities')}
+    meth = "TEXT NOT NULL DEFAULT 'FLAT'" if dialect == 'sqlite' else "VARCHAR(24) NOT NULL DEFAULT 'FLAT'"
+    ifd = 'INTEGER'
+    tm = 'INTEGER'
+    esd = 'TEXT' if dialect == 'sqlite' else 'DATE'
+    with engine.begin() as conn:
+        if 'emi_interest_method' not in cols:
+            conn.execute(text(f'ALTER TABLE finance_liabilities ADD COLUMN emi_interest_method {meth}'))
+        if 'interest_free_days' not in cols:
+            conn.execute(text(f'ALTER TABLE finance_liabilities ADD COLUMN interest_free_days {ifd}'))
+        if 'term_months' not in cols:
+            conn.execute(text(f'ALTER TABLE finance_liabilities ADD COLUMN term_months {tm}'))
+        if 'emi_schedule_start_date' not in cols:
+            conn.execute(text(f'ALTER TABLE finance_liabilities ADD COLUMN emi_schedule_start_date {esd}'))
+
+
 def ensure_pf_payment_instrument_finance_account_column(engine: Engine) -> None:
     """Add ``finance_account_id`` on ``pf_payment_instruments``."""
     dialect = engine.dialect.name

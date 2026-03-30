@@ -113,6 +113,8 @@ export default function PersonalFinanceDashboardPage() {
   const [dashMonth, setDashMonth] = useState(() => new Date().getMonth() + 1)
   const [monthModalOpen, setMonthModalOpen] = useState(false)
   const [upcomingEmis, setUpcomingEmis] = useState([])
+  const [emisDueMonth, setEmisDueMonth] = useState(null)
+  const [accountingPolicy, setAccountingPolicy] = useState(null)
 
   const monthOptions = useMemo(() => buildDashboardMonthOptions(48), [])
   const accountQuery = bankFilter === '' ? undefined : bankFilter
@@ -142,6 +144,8 @@ export default function PersonalFinanceDashboardPage() {
     setCashflowMonth(b.cashflow_month && typeof b.cashflow_month === 'object' ? b.cashflow_month : null)
     setLoansList(Array.isArray(b.loans) ? b.loans : [])
     setUpcomingEmis(Array.isArray(b.upcoming_emis) ? b.upcoming_emis : [])
+    setEmisDueMonth(b.emis_due_selected_month && typeof b.emis_due_selected_month === 'object' ? b.emis_due_selected_month : null)
+    setAccountingPolicy(b.accounting_policy && typeof b.accounting_policy === 'object' ? b.accounting_policy : null)
     if (Array.isArray(b.accounts) && b.accounts.length > 0) {
       setAccounts(b.accounts)
     }
@@ -222,6 +226,8 @@ export default function PersonalFinanceDashboardPage() {
           setCashflowMonth(cf && typeof cf === 'object' ? cf : null)
           setLoansList(Array.isArray(loans) ? loans : [])
           setUpcomingEmis([])
+          setEmisDueMonth(null)
+          setAccountingPolicy(null)
         }
       } catch (e2) {
         setLoadError(e2.message || e.message || 'Failed to load dashboard')
@@ -475,12 +481,28 @@ export default function PersonalFinanceDashboardPage() {
             gradientClass="md:bg-gradient-to-br md:from-[#d97706] md:to-[#f59e0b]"
           />
           <KpiCard
-            title="Balance"
-            value={formatInr(summary?.cash_balance)}
-            subtitle={bankFilter ? filterBankName || 'This account' : 'All accounts'}
+            title="Cash balance"
+            value={formatInr(summary?.balance_cash ?? summary?.cash_balance)}
+            subtitle={bankFilter ? filterBankName || 'This account' : 'Cash-style accounts'}
             icon={BanknotesIcon}
             iconTintClass="bg-sky-100 text-sky-700 md:bg-white/20 md:text-white"
             gradientClass="md:bg-gradient-to-br md:from-[#2563eb] md:to-[#3b82f6]"
+          />
+          <KpiCard
+            title="Bank balance"
+            value={formatInr(summary?.balance_bank ?? 0)}
+            subtitle={bankFilter ? filterBankName || 'This account' : 'Bank / other accounts'}
+            icon={BanknotesIcon}
+            iconTintClass="bg-indigo-100 text-indigo-800 md:bg-white/20 md:text-white"
+            gradientClass="md:bg-gradient-to-br md:from-[#4338ca] md:to-[#6366f1]"
+          />
+          <KpiCard
+            title="Total balance"
+            value={formatInr(summary?.balance_total ?? summary?.cash_balance)}
+            subtitle={bankFilter ? filterBankName || 'This account' : 'All accounts'}
+            icon={BanknotesIcon}
+            iconTintClass="bg-cyan-100 text-cyan-800 md:bg-white/20 md:text-white"
+            gradientClass="md:bg-gradient-to-br md:from-[#0369a1] md:to-[#0ea5e9]"
           />
           <KpiCard
             wrapperClassName="hidden md:block"
@@ -524,6 +546,70 @@ export default function PersonalFinanceDashboardPage() {
           />
         </div>
       </section>
+
+      {emisDueMonth ? (
+        <section
+          aria-label="EMIs due in selected month"
+          className={`${pfChartCard} border-sky-200/80 dark:border-slate-600`}
+        >
+          <h2 className={chartTitle}>EMIs due · {dashMonthLabel}</h2>
+          <p className={chartSub}>
+            <span className="font-semibold text-slate-700 dark:text-slate-300">You lend</span>{' '}
+            {formatInr(emisDueMonth.lend_due_total)} ({emisDueMonth.lend_count ?? 0} installment
+            {(emisDueMonth.lend_count ?? 0) === 1 ? '' : 's'}) ·{' '}
+            <span className="font-semibold text-slate-700 dark:text-slate-300">You borrow</span>{' '}
+            {formatInr(emisDueMonth.borrow_due_total)} ({emisDueMonth.borrow_count ?? 0} installment
+            {(emisDueMonth.borrow_count ?? 0) === 1 ? '' : 's'}) ·{' '}
+            <span className="font-semibold text-slate-900 dark:text-slate-100">Net calendar exposure</span>{' '}
+            {formatInr(emisDueMonth.combined_due_total)}
+          </p>
+          {accountingPolicy?.one_liner ? (
+            <p className="mt-1 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
+              Policy v{accountingPolicy.version}: {accountingPolicy.one_liner}
+            </p>
+          ) : null}
+          {Array.isArray(emisDueMonth.items) && emisDueMonth.items.length > 0 ? (
+            <div className={`${pfTableWrap} mt-3 max-h-[min(22rem,50vh)] overflow-y-auto`}>
+              <table className={`${pfTable} min-w-[520px] text-xs`}>
+                <thead className="sticky top-0 bg-white dark:bg-slate-900">
+                  <tr>
+                    <th className={pfTh}>Side</th>
+                    <th className={pfTh}>Name</th>
+                    <th className={pfTh}>EMI #</th>
+                    <th className={pfTh}>Due</th>
+                    <th className={pfThRight}>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {emisDueMonth.items.map((row, idx) => (
+                    <tr key={`${row.side}-${row.entity_id}-${row.emi_number}-${idx}`} className={pfTrHover}>
+                      <td className={pfTd}>
+                        {row.side === 'lend' ? (
+                          <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold uppercase text-teal-900 dark:bg-teal-950/60 dark:text-teal-200">
+                            Lend
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-950 dark:bg-amber-950/50 dark:text-amber-200">
+                            Borrow
+                          </span>
+                        )}
+                      </td>
+                      <td className={`${pfTd} max-w-[10rem] truncate font-medium`}>{row.name}</td>
+                      <td className={pfTd}>{row.emi_number}</td>
+                      <td className={`${pfTd} text-slate-600 dark:text-slate-400`}>{row.due_date ?? '—'}</td>
+                      <td className={pfTdRight}>{formatInr(row.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              No scheduled EMIs with a due date in this month (lend or borrow).
+            </p>
+          )}
+        </section>
+      ) : null}
 
       {dashStage >= 1 ? (
         <Suspense
@@ -893,6 +979,27 @@ export default function PersonalFinanceDashboardPage() {
                 subtitle="Payments in the current calendar month"
                 icon={CalendarDaysIcon}
                 gradientClass="md:bg-gradient-to-br md:from-rose-500 md:to-pink-600"
+              />
+              <KpiCard
+                title="EMI due this month"
+                value={formatInr(loanAnalytics?.emi_due_this_month)}
+                subtitle="Unpaid installments due in the current calendar month"
+                icon={CalendarDaysIcon}
+                gradientClass="md:bg-gradient-to-br md:from-cyan-500 md:to-sky-600"
+              />
+              <KpiCard
+                title="Principal collected (lifetime)"
+                value={formatInr(loanAnalytics?.principal_collected_lifetime)}
+                subtitle="Principal portion of all recorded repayments"
+                icon={BanknotesIcon}
+                gradientClass="md:bg-gradient-to-br md:from-slate-600 md:to-slate-800"
+              />
+              <KpiCard
+                title="Interest collected (lifetime)"
+                value={formatInr(loanAnalytics?.interest_collected_lifetime)}
+                subtitle="Interest portion of repayments (lending profit)"
+                icon={ReceiptPercentIcon}
+                gradientClass="md:bg-gradient-to-br md:from-amber-600 md:to-yellow-700"
               />
               <KpiCard
                 title="Overdue EMI (receivable)"

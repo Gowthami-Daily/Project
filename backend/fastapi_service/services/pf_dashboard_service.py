@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from fastapi_service.repositories import pf_finance_repo
-from fastapi_service.services import pf_loan_ui_service
+from fastapi_service.services import pf_accounting_policy, pf_loan_ui_service
 
 
 def _validate_finance_account(db: Session, profile_id: int, account_id: int | None) -> None:
@@ -43,10 +43,19 @@ def summary(
     total_investment = pf_finance_repo.sum_investments_invested(db, profile_id)
     total_assets = pf_finance_repo.sum_assets(db, profile_id)
     total_liabilities = pf_finance_repo.sum_liabilities(db, profile_id)
+    split = pf_finance_repo.sum_account_balances_cash_vs_bank(db, profile_id)
     if account_id is not None:
         cash_balance = float(acc.balance)
+        t = (acc.account_type or '').lower()
+        is_cash_slot = 'cash' in t or 'wallet' in t or t in ('petty', 'hand')
+        balance_cash = float(acc.balance) if is_cash_slot else 0.0
+        balance_bank = 0.0 if is_cash_slot else float(acc.balance)
+        balance_total = float(acc.balance)
     else:
         cash_balance = pf_finance_repo.sum_account_balances(db, profile_id)
+        balance_cash = split['cash']
+        balance_bank = split['bank']
+        balance_total = split['total']
     loan_receivable = pf_finance_repo.sum_loan_outstanding(db, profile_id)
     liability_overdue = pf_finance_repo.sum_liabilities_outstanding_overdue(db, profile_id, today=today)
     liability_due_week = pf_finance_repo.liabilities_due_between(db, profile_id, today, today + timedelta(days=7))
@@ -75,6 +84,9 @@ def summary(
         'liability_due_this_week': liability_due_week,
         'net_worth': net_worth,
         'cash_balance': cash_balance,
+        'balance_cash': balance_cash,
+        'balance_bank': balance_bank,
+        'balance_total': balance_total,
         'loan_outstanding': loan_receivable,
         'loan_receivable': loan_receivable,
         'period_start': start.isoformat(),
@@ -277,6 +289,9 @@ def dashboard_bundle(
     ]
     # One pass for pending EMIs (was queried twice: cashflow + loan analytics).
     pending_emi_total = pf_finance_repo.sum_pending_loan_schedule_emis(db, profile_id)
+    emis_due_month = pf_finance_repo.emis_due_in_calendar_month_detail(
+        db, profile_id, period_year, period_month
+    )
     ie_rows = income_vs_expense(db, profile_id, period_year, account_id)
     return {
         'summary': summ,
@@ -293,4 +308,9 @@ def dashboard_bundle(
         'upcoming_emis': upcoming_emis_preview(db, profile_id),
         'loans': _serialize_loans_for_dashboard(db, profile_id),
         'accounts': accounts,
+        'emis_due_selected_month': emis_due_month,
+        'accounting_policy': {
+            'version': pf_accounting_policy.POLICY_VERSION,
+            'one_liner': pf_accounting_policy.SHORT_SUMMARY,
+        },
     }

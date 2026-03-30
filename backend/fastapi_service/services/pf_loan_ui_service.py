@@ -21,6 +21,20 @@ def loan_kind_to_type(loan_kind: str) -> str:
     return m.get(str(loan_kind).strip(), 'EMI')
 
 
+def normalize_emi_interest_method(raw: str | None) -> str:
+    v = str(raw or 'flat').strip().lower()
+    if v == 'reducing_balance':
+        return 'REDUCING_BALANCE'
+    return 'FLAT'
+
+
+def normalize_emi_settlement(raw: str | None) -> str:
+    v = str(raw or 'receipt').strip().lower()
+    if v == 'payment':
+        return 'PAYMENT'
+    return 'RECEIPT'
+
+
 def _compute_display_status(db: Session, ln: Loan, balance: float) -> tuple[str, bool]:
     has_s = pf_finance_repo.loan_has_emi_schedule(db, ln.id)
     if has_s:

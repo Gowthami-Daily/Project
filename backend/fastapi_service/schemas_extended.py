@@ -1,8 +1,8 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from fastapi_service.models_extended import FinanceExpense, FinanceIncome
 
@@ -445,10 +445,17 @@ class FinanceLiabilityOut(BaseModel):
     lender_name: str | None = None
     notes: str | None = None
     status: str = 'ACTIVE'
+    emi_interest_method: str = 'FLAT'
+    interest_free_days: int | None = None
+    term_months: int | None = None
+    emi_schedule_start_date: date | None = None
     created_at: datetime
     updated_at: datetime
     display_status: str = 'ACTIVE'
     interest_paid_lifetime: Decimal = Decimal('0')
+    has_emi_schedule: bool = False
+    next_emi_due: date | None = None
+    next_emi_amount: Decimal | None = None
 
 
 class LiabilitiesPageSummaryOut(BaseModel):
@@ -488,7 +495,7 @@ class FinanceLiabilityCreate(BaseModel):
     outstanding_amount: float | None = Field(
         default=None,
         ge=0,
-        description='Defaults to total_amount when omitted',
+        description='Defaults to total_amount when omitted; used as principal when building EMI schedule',
     )
     interest_rate: float | None = None
     minimum_due: float | None = Field(default=None, ge=0)
@@ -498,6 +505,20 @@ class FinanceLiabilityCreate(BaseModel):
     lender_name: str | None = Field(default=None, max_length=200)
     notes: str | None = Field(default=None, max_length=4000)
     status: str = 'ACTIVE'
+    build_emi_schedule: bool = Field(
+        default=False,
+        description='If true, generates flat or reducing EMI rows from outstanding principal.',
+    )
+    emi_interest_method: Literal['flat', 'reducing_balance'] = Field(
+        default='flat',
+        description='Only used when build_emi_schedule is true.',
+    )
+    term_months: int | None = Field(default=None, ge=1)
+    emi_schedule_start_date: date | None = Field(
+        default=None,
+        description='First anchor date; EMI 1 due = one month after this (same as loans).',
+    )
+    interest_free_days: int | None = Field(default=None, ge=0, description='Flat EMI only; reduces interest-bearing term.')
 
     @field_validator('liability_type')
     @classmethod
@@ -513,6 +534,18 @@ class FinanceLiabilityCreate(BaseModel):
     def outstanding_default(self):
         if self.outstanding_amount is None:
             object.__setattr__(self, 'outstanding_amount', float(self.total_amount))
+        return self
+
+    @model_validator(mode='after')
+    def emi_schedule_requirements(self):
+        if not self.build_emi_schedule:
+            return self
+        if self.term_months is None or int(self.term_months) < 1:
+            raise ValueError('term_months is required when build_emi_schedule is true')
+        if self.emi_schedule_start_date is None:
+            raise ValueError('emi_schedule_start_date is required when build_emi_schedule is true')
+        if self.interest_rate is None or float(self.interest_rate) <= 0:
+            raise ValueError('interest_rate is required when build_emi_schedule is true')
         return self
 
 
@@ -559,6 +592,52 @@ class LiabilityPaymentOut(BaseModel):
     created_at: datetime
 
 
+class LiabilityScheduleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    liability_id: int
+    emi_number: int
+    due_date: date
+    emi_amount: Decimal
+    principal_amount: Decimal
+    interest_amount: Decimal
+    remaining_balance: Decimal
+    payment_status: str
+    payment_date: date | None
+    amount_paid: Decimal | None
+    finance_account_id: int | None = None
+    credit_as_cash: bool = False
+
+    @computed_field
+    def principal_component(self) -> Decimal:
+        return self.principal_amount
+
+    @computed_field
+    def interest_component(self) -> Decimal:
+        return self.interest_amount
+
+    @computed_field
+    def balance_principal(self) -> Decimal:
+        return self.remaining_balance
+
+
+class LiabilityPendingEmiOut(BaseModel):
+    schedule_id: int
+    liability_id: int
+    liability_name: str
+    emi_number: int
+    due_date: date
+    emi_amount: Decimal
+
+
+class LiabilityEmiPayBody(BaseModel):
+    liability_id: int = Field(..., ge=1)
+    emi_number: int = Field(..., ge=1)
+    payment_date: date | None = None
+    finance_account_id: int | None = Field(default=None, ge=1)
+
+
 class LiabilityPaymentCreate(BaseModel):
     payment_date: date
     amount_paid: float = Field(gt=0)
@@ -598,6 +677,8 @@ class LoanOut(BaseModel):
     is_overdue: bool = False
     balance_due: Decimal = Decimal('0')
     interest_collected_lifetime: Decimal = Decimal('0')
+    emi_interest_method: str = 'FLAT'
+    emi_settlement: str = 'RECEIPT'
 
 
 class LoanReminderItemOut(BaseModel):
@@ -664,7 +745,7 @@ class LoanCreate(BaseModel):
     term_months: int | None = Field(
         default=None,
         ge=1,
-        description='If set with interest_rate, builds flat-interest EMI schedule.',
+        description='If set with interest_rate, builds EMI schedule (flat or reducing per emi_interest_method).',
     )
     commission_percent: float | None = Field(default=None, ge=0)
     loan_kind: Literal['emi_schedule', 'interest_free', 'simple_accrual'] = Field(
@@ -673,6 +754,14 @@ class LoanCreate(BaseModel):
             'emi_schedule: term + rate builds EMI rows; interest_free: principal only, 0%% rate; '
             'simple_accrual: no EMI, principal + simple interest from start_date through today (365-day year).'
         ),
+    )
+    emi_interest_method: Literal['flat', 'reducing_balance'] = Field(
+        default='flat',
+        description='flat: interest = P×r×years, EMI constant; reducing_balance: monthly amortization (annual rate / 12).',
+    )
+    emi_settlement: Literal['receipt', 'payment'] = Field(
+        default='receipt',
+        description='receipt: incoming repayment (credits bank); payment: EMI paid (expense + bank debit).',
     )
 
     @model_validator(mode='after')
@@ -687,6 +776,17 @@ class LoanCreate(BaseModel):
             if self.interest_rate is None or float(self.interest_rate) <= 0:
                 raise ValueError('Simple accrual loans require interest % greater than 0')
             object.__setattr__(self, 'interest_free_days', None)
+        return self
+
+    @model_validator(mode='after')
+    def emi_method_rules(self):
+        if self.loan_kind != 'emi_schedule':
+            return self
+        if self.emi_interest_method == 'reducing_balance':
+            if self.term_months is None or int(self.term_months) < 1:
+                raise ValueError('term_months is required for reducing-balance EMI loans')
+            if self.interest_rate is None or float(self.interest_rate) <= 0:
+                raise ValueError('interest_rate is required for reducing-balance EMI loans')
         return self
 
 
@@ -706,6 +806,35 @@ class LoanScheduleOut(BaseModel):
     amount_paid: Decimal | None
     finance_account_id: int | None = None
     credit_as_cash: bool = False
+
+    @computed_field
+    def principal_component(self) -> Decimal:
+        return self.principal_amount
+
+    @computed_field
+    def interest_component(self) -> Decimal:
+        return self.interest_amount
+
+    @computed_field
+    def balance_principal(self) -> Decimal:
+        return self.remaining_balance
+
+
+class LoanPendingEmiOut(BaseModel):
+    schedule_id: int
+    loan_id: int
+    borrower_name: str
+    emi_number: int
+    due_date: date
+    emi_amount: Decimal
+    emi_settlement: str = 'RECEIPT'
+
+
+class LoanEmiPayBody(BaseModel):
+    loan_id: int = Field(..., ge=1)
+    emi_number: int = Field(..., ge=1)
+    payment_date: date | None = None
+    finance_account_id: int | None = Field(default=None, ge=1)
 
 
 class LoanScheduleCreditUpdate(BaseModel):
@@ -756,3 +885,53 @@ class FamilyCreate(BaseModel):
 class FamilyMemberAdd(BaseModel):
     user_id: int
     relation: str = 'member'
+
+
+class AccountTransferCreate(BaseModel):
+    from_account_id: int = Field(..., ge=1)
+    to_account_id: int = Field(..., ge=1)
+    amount: float = Field(..., gt=0)
+    transfer_date: date
+    transfer_method: str = Field(default='INTERNAL', max_length=40)
+    reference_number: str | None = Field(None, max_length=128)
+    notes: str | None = None
+
+
+class AccountTransferOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    profile_id: int
+    from_account_id: int
+    to_account_id: int
+    amount: Decimal
+    transfer_date: date
+    transfer_method: str
+    reference_number: str | None
+    notes: str | None
+    attachment_url: str | None
+    created_by: int | None
+    created_at: datetime
+
+
+class AccountTransactionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    profile_id: int
+    account_id: int
+    transaction_type: str
+    amount: Decimal
+    transfer_id: int | None
+    entry_date: date
+    reference_number: str | None
+    notes: str | None
+    created_by: int | None
+    created_at: datetime
+
+
+class AccountBalanceSummaryOut(BaseModel):
+    cash_balance: float
+    bank_balance: float
+    total_balance: float
+    accounts: list[dict[str, Any]]

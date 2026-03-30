@@ -226,6 +226,8 @@ export default function PfLoansPage() {
   const [commissionPct, setCommissionPct] = useState('')
   const [interestFreeDays, setInterestFreeDays] = useState('')
   const [loanKind, setLoanKind] = useState('emi_schedule')
+  const [emiInterestMethod, setEmiInterestMethod] = useState('flat')
+  const [emiSettlement, setEmiSettlement] = useState('receipt')
   const [showRecordPaymentForm, setShowRecordPaymentForm] = useState(false)
   const [showAddAmountForm, setShowAddAmountForm] = useState(false)
   const [loanExportBusy, setLoanExportBusy] = useState(false)
@@ -407,6 +409,8 @@ export default function PfLoansPage() {
     setStartDate(todayISODate())
     setStatus('ACTIVE')
     setLoanKind('emi_schedule')
+    setEmiInterestMethod('flat')
+    setEmiSettlement('receipt')
   }
 
   const accrualPreview = useMemo(() => {
@@ -506,6 +510,8 @@ export default function PfLoansPage() {
           interest_free_days: ifd != null && !Number.isNaN(ifd) && ifd > 0 ? ifd : null,
           term_months: tm && tm > 0 ? tm : null,
           commission_percent: cp != null && !Number.isNaN(cp) && cp > 0 ? cp : null,
+          emi_interest_method: emiInterestMethod,
+          emi_settlement: emiSettlement,
         }
       }
       await createFinanceLoan(payload)
@@ -1110,6 +1116,48 @@ export default function PfLoansPage() {
                   </p>
                 ) : null}
               </div>
+              {loanKind === 'emi_schedule' ? (
+                <div className="sm:col-span-2 grid gap-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-600 dark:bg-slate-900/40">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      EMI interest method
+                    </p>
+                    <PfSegmentedControl
+                      className="mt-2 w-full"
+                      options={[
+                        { id: 'flat', label: 'Flat interest' },
+                        { id: 'reducing_balance', label: 'Reducing balance' },
+                      ]}
+                      value={emiInterestMethod}
+                      onChange={setEmiInterestMethod}
+                    />
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      <strong className="font-medium text-slate-600 dark:text-slate-300">Flat:</strong> interest = P×r×years,
+                      EMI = (principal + interest) ÷ months.{' '}
+                      <strong className="font-medium text-slate-600 dark:text-slate-300">Reducing:</strong> standard
+                      amortization (monthly rate = annual % ÷ 12). Interest-free days apply only to flat interest.
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      When EMI is marked paid
+                    </p>
+                    <PfSegmentedControl
+                      className="mt-2 w-full"
+                      options={[
+                        { id: 'receipt', label: 'Receipt (money in)' },
+                        { id: 'payment', label: 'Payment (expense)' },
+                      ]}
+                      value={emiSettlement}
+                      onChange={setEmiSettlement}
+                    />
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      Receipt credits your bank when you assign an account. Payment logs an expense and debits the bank
+                      (use for EMIs you pay).
+                    </p>
+                  </div>
+                </div>
+              ) : null}
               <div className="sm:col-span-2">
                 <label htmlFor="ln-borrower" className={labelCls}>
                   Borrower / label
@@ -1206,7 +1254,8 @@ export default function PfLoansPage() {
                     placeholder="0"
                   />
                   <p className="mt-1 text-xs text-slate-500">
-                    With <strong className="font-medium text-slate-600">term + interest %</strong>, total interest is reduced as if accrual starts after this many days (no interest for that period).
+                    With <strong className="font-medium text-slate-600">flat EMI</strong> and term + rate, total interest is
+                    reduced as if accrual starts after this many days (ignored for reducing-balance EMI).
                   </p>
                 </div>
               ) : (
@@ -1358,6 +1407,23 @@ export default function PfLoansPage() {
                   </span>
                   {displayStatusBadge(viewLoan.display_status, viewLoan.is_overdue)}
                 </div>
+                {viewLoan.has_emi_schedule ? (
+                  <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    Method:{' '}
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      {String(viewLoan.emi_interest_method || 'FLAT')
+                        .toLowerCase()
+                        .replace(/_/g, ' ')}
+                    </span>
+                    {' · '}
+                    Settlement:{' '}
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      {String(viewLoan.emi_settlement || 'RECEIPT').toLowerCase() === 'payment'
+                        ? 'payment (expense)'
+                        : 'receipt'}
+                    </span>
+                  </p>
+                ) : null}
                 <div className="mt-2 grid gap-2 text-xs text-slate-600 dark:text-slate-400 sm:grid-cols-2 lg:grid-cols-3">
                   <p>
                     <span className="font-semibold text-slate-700 dark:text-slate-300">Given</span>{' '}
