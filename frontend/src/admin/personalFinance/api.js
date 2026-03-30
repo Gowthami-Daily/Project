@@ -298,12 +298,30 @@ export function postAccountTransfer(formData) {
   return fin('/accounts/transfer', { method: 'POST', body: formData })
 }
 
+/** @param {Record<string, unknown>} body — AccountMovementCreate JSON */
+export function postAccountMovement(body) {
+  return fin('/accounts/movements', { method: 'POST', body: JSON.stringify(body) })
+}
+
 export function listAccountTransferHistory(params = {}) {
   const q = new URLSearchParams({
     skip: String(params.skip ?? 0),
     limit: String(params.limit ?? 100),
   })
-  return fin(`/accounts/transfer-history?${q}`)
+  return fin(`/accounts/movements?${q}`)
+}
+
+/** @param {{ year?: number, month?: number, start_date?: string, end_date?: string }} params */
+export function getAccountMovementsSummary(params = {}) {
+  const q = new URLSearchParams()
+  if (params.year != null && params.month != null) {
+    q.set('year', String(params.year))
+    q.set('month', String(params.month))
+  }
+  if (params.start_date) q.set('start_date', String(params.start_date))
+  if (params.end_date) q.set('end_date', String(params.end_date))
+  const s = q.toString()
+  return fin(`/accounts/movements/summary${s ? `?${s}` : ''}`)
 }
 
 export function getAccountStatement(accountId, params = {}) {
@@ -375,6 +393,53 @@ export function patchFinanceExpense(expenseId, body) {
 
 export function deleteFinanceExpense(expenseId) {
   return fin(`/expenses/${expenseId}`, { method: 'DELETE' })
+}
+
+/** Registered credit cards (statement / liability flow). */
+export function listCreditCards(params = {}) {
+  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  return fin(`/credit-cards?${q}`)
+}
+
+export function createCreditCard(body) {
+  return fin('/credit-cards', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function getCreditCardDashboardSummary(periodYear, periodMonth) {
+  const q = new URLSearchParams({
+    period_year: String(periodYear),
+    period_month: String(periodMonth),
+  })
+  return fin(`/credit-cards/dashboard-summary?${q}`)
+}
+
+export function listCreditCardTransactions(params = {}) {
+  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  if (params.cardId != null && params.cardId !== '') q.set('card_id', String(params.cardId))
+  if (params.unbilledOnly) q.set('unbilled_only', 'true')
+  return fin(`/credit-cards/transactions?${q}`)
+}
+
+export function createCreditCardStandaloneTransaction(body) {
+  return fin('/credit-cards/transactions', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function listCreditCardBills(params = {}) {
+  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  if (params.cardId != null && params.cardId !== '') q.set('card_id', String(params.cardId))
+  return fin(`/credit-cards/bills?${q}`)
+}
+
+export function generateCreditCardBill(body) {
+  return fin('/credit-cards/generate-bill', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function payCreditCardBill(body) {
+  return fin('/credit-cards/pay-bill', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function getCreditCardOutstanding() {
+  return fin('/credit-cards/outstanding')
 }
 
 export function listFinanceInvestments(params = {}) {

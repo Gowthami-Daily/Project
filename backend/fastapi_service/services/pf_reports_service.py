@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from fastapi_service.repositories import pf_finance_repo
+from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
 from fastapi_service.schemas_extended import finance_expense_to_out, finance_income_to_out
 
 
@@ -48,8 +48,28 @@ def cashflow_summary(
     start: date | None,
     end: date | None,
 ) -> dict:
-    """Simple operating view: income minus expense (same window as P&L)."""
-    return profit_loss(db, profile_id, start, end)
+    """P&L-style income/expense plus ledger buckets for true bank cash in/out (external, transfers, CC pay, loans)."""
+    pl = profit_loss(db, profile_id, start, end)
+    if start is None or end is None:
+        return {
+            **pl,
+            'external_deposit': None,
+            'external_withdrawal': None,
+            'ledger_totals_by_transaction_type': None,
+            'note': 'Include start_date and end_date for account_ledger-based cash movement totals.',
+        }
+    ext = pf_finance_repo.sum_account_transaction_amounts_by_type(
+        db, profile_id, start, end, ('EXTERNAL_DEPOSIT', 'EXTERNAL_WITHDRAWAL')
+    )
+    ledger = pf_finance_repo.sum_account_transaction_amounts_by_type(
+        db, profile_id, start, end, pf_finance_repo.LEDGER_CASHFLOW_SUMMARY_TYPES
+    )
+    return {
+        **pl,
+        'external_deposit': round(float(ext.get('EXTERNAL_DEPOSIT', 0.0)), 2),
+        'external_withdrawal': round(float(ext.get('EXTERNAL_WITHDRAWAL', 0.0)), 2),
+        'ledger_totals_by_transaction_type': {k: round(v, 2) for k, v in sorted(ledger.items())},
+    }
 
 
 def expense_report(
@@ -76,6 +96,7 @@ def expense_analytics(
     dairy = pf_finance_repo.sum_expense_categories_exact(
         db, profile_id, start, end, ['Dairy Farm Expenses', 'Feed']
     )
+    cc_exp = pf_finance_repo.sum_expense_credit_card_statement(db, profile_id, start, end)
     return {
         'start': start.isoformat() if start else None,
         'end': end.isoformat() if end else None,
@@ -86,6 +107,7 @@ def expense_analytics(
         ],
         'emi_expenses_total': emi,
         'dairy_expenses_total': dairy,
+        'credit_card_expenses_total': round(cc_exp, 2),
     }
 
 

@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from fastapi_service.repositories import pf_finance_repo
+from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
 from fastapi_service.services import pf_accounting_policy, pf_loan_ui_service
 
 
@@ -248,10 +248,21 @@ def cashflow_month_summary(
         else pf_finance_repo.sum_pending_loan_schedule_emis(db, profile_id)
     )
     split = pf_finance_repo.sum_account_balances_cash_vs_bank(db, profile_id)
+    cc_pay = pf_credit_card_repo.sum_cc_payments_in_range(db, profile_id, start, end)
+    cc_exp = pf_finance_repo.sum_expense_credit_card_statement(db, profile_id, start, end)
+    ext_led = pf_finance_repo.sum_account_transaction_amounts_by_type(
+        db, profile_id, start, end, ('EXTERNAL_DEPOSIT', 'EXTERNAL_WITHDRAWAL')
+    )
+    ext_dep = float(ext_led.get('EXTERNAL_DEPOSIT', 0.0))
+    ext_wd = float(ext_led.get('EXTERNAL_WITHDRAWAL', 0.0))
     return {
         'period_start': start.isoformat(),
         'period_end': end.isoformat(),
         'total_expense_month': total_exp,
+        'credit_card_expense_month': cc_exp,
+        'credit_card_bill_payments_month': round(cc_pay, 2),
+        'external_deposit_month': round(ext_dep, 2),
+        'external_withdrawal_month': round(ext_wd, 2),
         'food_expense': food,
         'emi_expense_month': emi_exp,
         'dairy_expense': dairy,
@@ -293,12 +304,17 @@ def dashboard_bundle(
         db, profile_id, period_year, period_month
     )
     ie_rows = income_vs_expense(db, profile_id, period_year, account_id)
+    cc_summ = pf_credit_card_repo.dashboard_summary(
+        db, profile_id, period_year=period_year, period_month=period_month
+    )
+
     return {
         'summary': summ,
         'income_vs_expense': ie_rows,
         'expense_by_category': expense_category(db, profile_id, start, end, account_id),
         'networth_growth': _networth_growth_from_ie_series(db, profile_id, account_id, ie_rows),
         'investment_allocation': investment_allocation(db, profile_id),
+        'credit_cards_summary': cc_summ,
         'loans_analytics': loans_analytics(
             db, profile_id, period_year, pending_emi_installments_total=pending_emi_total
         ),

@@ -19,8 +19,8 @@ async def lifespan(app: FastAPI):
     import fastapi_service.models  # noqa: F401 — register ORM mappers
     import fastapi_service.models_extended  # noqa: F401 — roles, profiles, finance tables
 
-    Base.metadata.create_all(bind=engine)
     from fastapi_service.migrate_sqlite import (
+        ensure_account_movements_schema,
         ensure_loan_bank_account_columns,
         ensure_loan_credit_as_cash_columns,
         ensure_liability_emi_columns,
@@ -30,10 +30,15 @@ async def lifespan(app: FastAPI):
         ensure_loan_interest_free_days_column,
         ensure_pf_payment_instrument_column,
         ensure_pf_payment_instrument_finance_account_column,
+        ensure_finance_expense_credit_card_id_column,
+        ensure_credit_card_extra_columns,
+        ensure_credit_card_bill_extra_columns,
         ensure_users_last_login_column,
         ensure_users_role_id_column,
     )
 
+    ensure_account_movements_schema(engine)
+    Base.metadata.create_all(bind=engine)
     ensure_users_role_id_column(engine)
     ensure_users_last_login_column(engine)
     ensure_pf_loan_extension_columns(engine)
@@ -45,6 +50,9 @@ async def lifespan(app: FastAPI):
     ensure_pf_finance_expense_income_columns(engine)
     ensure_pf_payment_instrument_column(engine)
     ensure_pf_payment_instrument_finance_account_column(engine)
+    ensure_finance_expense_credit_card_id_column(engine)
+    ensure_credit_card_extra_columns(engine)
+    ensure_credit_card_bill_extra_columns(engine)
 
     import init_db as _init_db
 

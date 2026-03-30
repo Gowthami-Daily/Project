@@ -6,7 +6,8 @@ Implementations may not automate every branch; operators choose where manual ent
 
 Net worth (profile, dashboard)
     cash + investments + fixed_assets + loan_receivable − liabilities_outstanding
-    ``AccountTransfer`` and internal moves do **not** hit P&L; they only change balances.
+    ``AccountMovement`` internal transfers do **not** hit P&L; they only change balances.
+    External deposit / withdrawal may optionally create income / expense rows.
 
 Loans you lend (receivable / ``loans`` + ``loan_schedule``)
     Principal disbursed: debit bank (existing loan flows).

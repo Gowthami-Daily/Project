@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date as date_type
 from decimal import Decimal
 
@@ -17,9 +18,11 @@ from fastapi_service.models_extended import (
     PfIncomeCategory,
     PfPaymentInstrument,
 )
-from fastapi_service.repositories import pf_finance_repo
+from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
 from fastapi_service.schemas_extended import (
     AccountBalanceSummaryOut,
+    AccountMovementCreate,
+    AccountMovementOut,
     AccountTransactionOut,
     AccountTransferOut,
     AssetsPageSummaryOut,
@@ -169,6 +172,44 @@ def delete_account(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post('/accounts/movements', response_model=AccountMovementOut, status_code=201)
+def create_account_movement_route(
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    body: AccountMovementCreate,
+):
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    try:
+        return pf_finance_repo.create_account_movement(
+            db,
+            profile_id,
+            user.id,
+            movement_type=body.movement_type,
+            amount=body.amount,
+            movement_date=body.movement_date,
+            from_account_id=body.from_account_id,
+            to_account_id=body.to_account_id,
+            liability_id=body.liability_id,
+            loan_id=body.loan_id,
+            credit_card_id=body.credit_card_id,
+            credit_card_bill_id=body.credit_card_bill_id,
+            external_counterparty=body.external_counterparty,
+            reference_number=body.reference_number,
+            notes=body.notes,
+            attachment_url=None,
+            create_linked_income=body.create_linked_income,
+            create_linked_expense=body.create_linked_expense,
+            income_category=body.income_category,
+            expense_category=body.expense_category,
+            emi_number=body.emi_number,
+            liability_interest_paid=body.liability_interest_paid,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
 @router.post('/accounts/transfer', response_model=AccountTransferOut, status_code=201)
 def create_account_transfer(
     _: FinanceParticipant,
@@ -209,6 +250,7 @@ def create_account_transfer(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
+@router.get('/accounts/movements', response_model=list[AccountMovementOut])
 @router.get('/accounts/transfer-history', response_model=list[AccountTransferOut])
 def list_transfer_history(
     _: FinanceParticipant,
@@ -216,7 +258,39 @@ def list_transfer_history(
     profile_id: ActiveProfileId,
     page: Pagination,
 ) -> list:
-    return pf_finance_repo.list_account_transfers(db, profile_id, page.skip, page.limit)
+    return pf_finance_repo.list_account_movements(db, profile_id, page.skip, page.limit)
+
+
+@router.get('/accounts/movements/summary')
+def account_movements_summary(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    year: int | None = Query(None, ge=2000, le=2100, description='Calendar year (use with month)'),
+    month: int | None = Query(None, ge=1, le=12, description='Calendar month (use with year)'),
+    start_date: date_type | None = Query(None),
+    end_date: date_type | None = Query(None),
+) -> dict:
+    if start_date is not None and end_date is not None:
+        if start_date > end_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='start_date must be on or before end_date',
+            )
+        start, end = start_date, end_date
+    elif year is not None and month is not None:
+        start = date_type(year, month, 1)
+        end = date_type(year, month, monthrange(year, month)[1])
+    elif year is None and month is None and start_date is None and end_date is None:
+        today = date_type.today()
+        start = date_type(today.year, today.month, 1)
+        end = date_type(today.year, today.month, monthrange(today.year, today.month)[1])
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Provide both year and month, or both start_date and end_date, or neither for the current month.',
+        )
+    return pf_finance_repo.account_movements_period_summary(db, profile_id, start, end)
 
 
 @router.get('/accounts/{account_id}/statement', response_model=list[AccountTransactionOut])
@@ -445,12 +519,22 @@ def create_expense(
         if pc:
             cat = pc.name
     ps = (body.payment_status or 'PAID').strip().upper()
+    pm_low = (body.payment_method or '').strip().lower()
+    if pm_low == 'credit_card':
+        if body.credit_card_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='credit_card_id is required when payment_method is credit_card',
+            )
+        if pf_credit_card_repo.get_card_for_profile(db, int(body.credit_card_id), profile_id) is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Credit card not found')
     try:
         acc_id, inst_id = pf_finance_repo.resolve_expense_payment_fields(
             db, profile_id, ps, body.payment_method, body.account_id, body.payment_instrument_id
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    cc_id = int(body.credit_card_id) if pm_low == 'credit_card' and body.credit_card_id is not None else None
     row = FinanceExpense(
         profile_id=profile_id,
         account_id=acc_id,
@@ -462,12 +546,16 @@ def create_expense(
         paid_by=body.paid_by,
         payment_method=body.payment_method,
         payment_instrument_id=inst_id,
+        credit_card_id=cc_id,
         is_recurring=body.is_recurring,
         recurring_type=body.recurring_type,
         payment_status=ps,
     )
     try:
         saved = pf_finance_repo.create_expense(db, row)
+        if pm_low == 'credit_card':
+            pf_credit_card_repo.create_transaction_from_expense(db, saved, int(body.credit_card_id))
+            saved = pf_finance_repo.get_expense_for_profile(db, saved.id, profile_id) or saved
         return finance_expense_to_out(saved)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -492,7 +580,14 @@ def patch_expense(
     if not patch:
         return finance_expense_to_out(row)
     if any(
-        k in patch for k in ('payment_method', 'payment_instrument_id', 'account_id', 'payment_status')
+        k in patch
+        for k in (
+            'payment_method',
+            'payment_instrument_id',
+            'account_id',
+            'payment_status',
+            'credit_card_id',
+        )
     ):
         merged_ps = patch.get('payment_status', row.payment_status)
         merged_pm = patch.get('payment_method', row.payment_method)
@@ -512,6 +607,20 @@ def patch_expense(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     try:
         updated = pf_finance_repo.update_expense(db, profile_id, row, patch)
+        pm_after = (updated.payment_method or '').strip().lower()
+        if pm_after == 'credit_card':
+            if updated.credit_card_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='credit_card_id is required when payment_method is credit_card',
+                )
+            pf_credit_card_repo.sync_expense_cc_transaction(
+                db, profile_id, updated, int(updated.credit_card_id)
+            )
+            updated = pf_finance_repo.get_expense_for_profile(db, updated.id, profile_id) or updated
+        else:
+            pf_credit_card_repo.sync_expense_cc_transaction(db, profile_id, updated, None)
+            updated = pf_finance_repo.get_expense_for_profile(db, updated.id, profile_id) or updated
         return finance_expense_to_out(updated)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -529,7 +638,10 @@ def delete_expense(
     row = pf_finance_repo.get_expense_for_profile(db, expense_id, profile_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Expense entry not found')
-    pf_finance_repo.delete_expense(db, profile_id, row)
+    try:
+        pf_finance_repo.delete_expense(db, profile_id, row)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

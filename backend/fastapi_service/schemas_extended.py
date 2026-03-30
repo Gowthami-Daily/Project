@@ -74,6 +74,92 @@ class PfPaymentInstrumentCreate(BaseModel):
         return k
 
 
+class CreditCardCreate(BaseModel):
+    card_name: str = Field(..., min_length=1, max_length=100)
+    bank_name: str | None = Field(None, max_length=100)
+    card_limit: float = Field(0.0, ge=0)
+    billing_cycle_start: int = Field(1, ge=1, le=31)
+    billing_cycle_end: int | None = Field(None, ge=1, le=31)
+    due_days: int = Field(15, ge=0, le=120)
+    closing_day: int | None = Field(None, ge=1, le=31)
+    due_day: int | None = Field(None, ge=1, le=31)
+
+
+class CreditCardOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    profile_id: int
+    card_name: str
+    bank_name: str | None
+    card_limit: Decimal
+    billing_cycle_start: int
+    billing_cycle_end: int | None
+    due_days: int
+    closing_day: int | None = None
+    due_day: int | None = None
+    created_at: object
+
+
+class CreditCardTransactionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    card_id: int
+    amount: Decimal
+    transaction_date: date
+    category_id: int | None
+    description: str | None
+    expense_id: int | None
+    bill_id: int | None
+    created_at: object
+
+
+class CreditCardBillOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    card_id: int
+    bill_start_date: date
+    bill_end_date: date
+    total_amount: Decimal
+    due_date: date
+    status: str
+    liability_id: int | None
+    amount_paid: Decimal
+    minimum_due: Decimal | None = None
+    interest: Decimal | None = None
+    late_fee: Decimal | None = None
+    created_at: object
+    remaining: Decimal | None = None
+
+
+class CreditCardBillGenerate(BaseModel):
+    card_id: int
+    bill_start_date: date
+    bill_end_date: date
+
+
+class CreditCardBillPay(BaseModel):
+    bill_id: int
+    amount: float = Field(..., gt=0)
+    payment_date: date
+    from_account_id: int
+    reference_number: str | None = Field(None, max_length=100)
+
+
+class CreditCardStandaloneTx(BaseModel):
+    """Swipe + expense in one step (optional API)."""
+
+    card_id: int
+    amount: float = Field(..., gt=0)
+    transaction_date: date
+    expense_category_id: int | None = None
+    category: str = 'general'
+    description: str | None = None
+    paid_by: str | None = None
+
+
 class FinanceIncomeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -147,6 +233,8 @@ class FinanceExpenseOut(BaseModel):
     payment_method: str | None = None
     payment_instrument_id: int | None = None
     payment_instrument_label: str | None = None
+    credit_card_id: int | None = None
+    credit_card_label: str | None = None
     is_recurring: bool = False
     recurring_type: str | None = None
     payment_status: str = 'PAID'
@@ -164,6 +252,7 @@ class FinanceExpenseCreate(BaseModel):
     paid_by: str | None = Field(None, max_length=120)
     payment_method: str | None = Field(None, max_length=24)
     payment_instrument_id: int | None = None
+    credit_card_id: int | None = None
     is_recurring: bool = False
     recurring_type: str | None = Field(None, max_length=20)
     payment_status: str = Field(default='PAID', max_length=20)
@@ -179,6 +268,7 @@ class FinanceExpenseUpdate(BaseModel):
     paid_by: str | None = Field(None, max_length=120)
     payment_method: str | None = Field(None, max_length=24)
     payment_instrument_id: int | None = None
+    credit_card_id: int | None = None
     is_recurring: bool | None = None
     recurring_type: str | None = Field(None, max_length=20)
     payment_status: str | None = Field(None, max_length=20)
@@ -194,6 +284,7 @@ class FinanceExpenseUpdate(BaseModel):
 def finance_expense_to_out(e: FinanceExpense) -> FinanceExpenseOut:
     rel = e.expense_category_rel
     pinst = getattr(e, 'payment_instrument_rel', None)
+    cc = getattr(e, 'credit_card_rel', None)
     return FinanceExpenseOut(
         id=e.id,
         profile_id=e.profile_id,
@@ -207,6 +298,8 @@ def finance_expense_to_out(e: FinanceExpense) -> FinanceExpenseOut:
         payment_method=e.payment_method,
         payment_instrument_id=e.payment_instrument_id,
         payment_instrument_label=pinst.label if pinst else None,
+        credit_card_id=getattr(e, 'credit_card_id', None),
+        credit_card_label=(f'{cc.card_name}' + (f' · {cc.bank_name}' if cc.bank_name else '')) if cc else None,
         is_recurring=bool(e.is_recurring),
         recurring_type=e.recurring_type,
         payment_status=(e.payment_status or 'PAID').upper(),
@@ -897,21 +990,58 @@ class AccountTransferCreate(BaseModel):
     notes: str | None = None
 
 
-class AccountTransferOut(BaseModel):
+class AccountMovementCreate(BaseModel):
+    """Money movement (internal or external)."""
+
+    movement_type: str = Field(
+        ...,
+        description=(
+            'internal_transfer | external_deposit | external_withdrawal | '
+            'credit_card_payment | loan_disbursement | loan_emi_payment'
+        ),
+    )
+    amount: float = Field(..., gt=0)
+    movement_date: date
+    from_account_id: int | None = None
+    to_account_id: int | None = None
+    liability_id: int | None = None
+    loan_id: int | None = None
+    credit_card_id: int | None = None
+    credit_card_bill_id: int | None = None
+    external_counterparty: str | None = Field(None, max_length=120)
+    reference_number: str | None = Field(None, max_length=128)
+    notes: str | None = None
+    create_linked_income: bool = False
+    create_linked_expense: bool = False
+    income_category: str | None = Field(None, max_length=120)
+    expense_category: str | None = Field(None, max_length=120)
+    emi_number: int | None = Field(None, ge=1)
+    liability_interest_paid: float = Field(0.0, ge=0)
+
+
+class AccountMovementOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     profile_id: int
-    from_account_id: int
-    to_account_id: int
+    movement_type: str
+    from_account_id: int | None = None
+    to_account_id: int | None = None
+    liability_id: int | None = None
+    loan_id: int | None = None
+    credit_card_id: int | None = None
+    credit_card_bill_id: int | None = None
     amount: Decimal
-    transfer_date: date
-    transfer_method: str
+    movement_date: date
     reference_number: str | None
     notes: str | None
-    attachment_url: str | None
-    created_by: int | None
+    external_counterparty: str | None = None
+    attachment_url: str | None = None
+    created_by: int | None = None
     created_at: datetime
+
+
+AccountTransferOut = AccountMovementOut
 
 
 class AccountTransactionOut(BaseModel):
@@ -922,7 +1052,7 @@ class AccountTransactionOut(BaseModel):
     account_id: int
     transaction_type: str
     amount: Decimal
-    transfer_id: int | None
+    movement_id: int | None = None
     entry_date: date
     reference_number: str | None
     notes: str | None

@@ -5,8 +5,8 @@ from sqlalchemy import and_, delete, extract, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from fastapi_service.models_extended import (
+    AccountMovement,
     AccountTransaction,
-    AccountTransfer,
     FinanceAccount,
     FinanceAsset,
     FinanceExpense,
@@ -22,6 +22,13 @@ from fastapi_service.models_extended import (
     PfIncomeCategory,
     PfPaymentInstrument,
 )
+
+MOVEMENT_INTERNAL = 'internal_transfer'
+MOVEMENT_EXTERNAL_DEPOSIT = 'external_deposit'
+MOVEMENT_EXTERNAL_WITHDRAWAL = 'external_withdrawal'
+MOVEMENT_CREDIT_CARD_PAYMENT = 'credit_card_payment'
+MOVEMENT_LOAN_DISBURSEMENT = 'loan_disbursement'
+MOVEMENT_LOAN_EMI_PAYMENT = 'loan_emi_payment'
 
 
 def add_months(d: date, months: int) -> date:
@@ -493,6 +500,7 @@ def mark_liability_emi_paid(
     emi_number: int,
     payment_date: date | None = None,
     finance_account_id: int | None = None,
+    movement_id: int | None = None,
 ) -> LiabilitySchedule:
     """Pay an EMI: expense + bank debit (or cash expense only), update outstanding and schedule."""
     ln = get_liability_for_profile(db, liability_id, profile_id)
@@ -533,6 +541,19 @@ def mark_liability_emi_paid(
         if acc_id is None:
             raise ValueError('Select a bank account for this EMI (or mark installment as cash)')
         _bump_account_balance(db, profile_id, acc_id, -float(row.emi_amount))
+        db.add(
+            AccountTransaction(
+                profile_id=profile_id,
+                account_id=acc_id,
+                transaction_type='LOAN_EMI_PAYMENT',
+                amount=float(row.emi_amount),
+                movement_id=movement_id,
+                entry_date=pay_date,
+                reference_number=None,
+                notes=f'Liability EMI #{emi_number} — {ln.liability_name}',
+                created_by=None,
+            )
+        )
     mode = 'CASH' if as_cash else 'BANK'
     row.payment_status = 'Paid'
     row.payment_date = pay_date
@@ -603,6 +624,7 @@ def record_liability_payment(
     payment_mode: str,
     finance_account_id: int | None,
     notes: str | None,
+    movement_id: int | None = None,
 ) -> LiabilityPayment:
     ln = get_liability_for_profile(db, liability_id, profile_id)
     if ln is None:
@@ -629,6 +651,19 @@ def record_liability_payment(
             raise ValueError('Account not found')
         acc_id = finance_account_id
         _bump_account_balance(db, profile_id, acc_id, -ap)
+        db.add(
+            AccountTransaction(
+                profile_id=profile_id,
+                account_id=acc_id,
+                transaction_type='LOAN_LIABILITY_PAYMENT',
+                amount=ap,
+                movement_id=movement_id,
+                entry_date=payment_date,
+                reference_number=None,
+                notes=(notes.strip() or None) if notes else None,
+                created_by=None,
+            )
+        )
     elif mode != 'CASH':
         raise ValueError('payment_mode must be CASH or BANK')
     elif finance_account_id is not None:
@@ -813,12 +848,12 @@ def delete_account(db: Session, profile_id: int, account_id: int) -> None:
         raise ValueError('Account not found')
     xfer_cnt = db.scalar(
         select(func.count())
-        .select_from(AccountTransfer)
-        .where(AccountTransfer.profile_id == profile_id)
+        .select_from(AccountMovement)
+        .where(AccountMovement.profile_id == profile_id)
         .where(
             or_(
-                AccountTransfer.from_account_id == account_id,
-                AccountTransfer.to_account_id == account_id,
+                AccountMovement.from_account_id == account_id,
+                AccountMovement.to_account_id == account_id,
             )
         )
     )
@@ -866,8 +901,21 @@ def _expense_balance_applies(row: FinanceExpense) -> bool:
     return str(st).upper() == 'PAID'
 
 
+def _expense_adjusts_account_balance(row: FinanceExpense) -> bool:
+    """PAID card/UPI/bank expenses debit an account; credit_card (statement) does not."""
+    if not _expense_balance_applies(row):
+        return False
+    m = (row.payment_method or '').strip().lower()
+    if m == 'credit_card':
+        return False
+    return True
+
+
 def delete_expense(db: Session, profile_id: int, row: FinanceExpense) -> None:
-    if _expense_balance_applies(row) and row.account_id is not None:
+    from fastapi_service.repositories import pf_credit_card_repo
+
+    pf_credit_card_repo.delete_transactions_for_expense(db, row.id)
+    if _expense_adjusts_account_balance(row) and row.account_id is not None:
         _bump_account_balance(db, profile_id, row.account_id, float(row.amount))
     db.delete(row)
     db.commit()
@@ -927,7 +975,7 @@ def update_income(
 def update_expense(
     db: Session, profile_id: int, row: FinanceExpense, patch: dict
 ) -> FinanceExpense:
-    old_applies = _expense_balance_applies(row)
+    old_applies = _expense_adjusts_account_balance(row)
     old_acc = row.account_id
     old_amt = float(row.amount)
     if old_applies and old_acc is not None:
@@ -961,6 +1009,9 @@ def update_expense(
         row.bill_image_url = patch['bill_image_url']
     if 'payment_instrument_id' in patch:
         row.payment_instrument_id = patch['payment_instrument_id']
+    if 'credit_card_id' in patch:
+        cid = patch['credit_card_id']
+        row.credit_card_id = int(cid) if cid is not None else None
     if 'is_recurring' in patch:
         row.is_recurring = bool(patch['is_recurring'])
     if 'recurring_type' in patch:
@@ -969,7 +1020,7 @@ def update_expense(
         ps = patch['payment_status']
         row.payment_status = str(ps or 'PAID').strip().upper() or 'PAID'
 
-    new_applies = _expense_balance_applies(row)
+    new_applies = _expense_adjusts_account_balance(row)
     new_acc = row.account_id
     new_amt = float(row.amount)
     if new_applies and new_acc is not None:
@@ -1054,6 +1105,7 @@ def list_expenses(
         .options(
             selectinload(FinanceExpense.expense_category_rel),
             selectinload(FinanceExpense.payment_instrument_rel),
+            selectinload(FinanceExpense.credit_card_rel),
         )
     )
     if account_id is not None:
@@ -1067,7 +1119,7 @@ def list_expenses(
 
 
 def create_expense(db: Session, row: FinanceExpense, *, adjust_account_balance: bool = True) -> FinanceExpense:
-    if adjust_account_balance and _expense_balance_applies(row):
+    if adjust_account_balance and _expense_adjusts_account_balance(row):
         eff = _effective_account_id_for_cash(db, row.profile_id, row.account_id)
         if eff is not None:
             _bump_account_balance(db, row.profile_id, eff, -float(row.amount))
@@ -1105,6 +1157,22 @@ def sum_expense(
     stmt = select(func.coalesce(func.sum(FinanceExpense.amount), 0)).where(FinanceExpense.profile_id == profile_id)
     if account_id is not None:
         stmt = stmt.where(FinanceExpense.account_id == account_id)
+    if start:
+        stmt = stmt.where(FinanceExpense.entry_date >= start)
+    if end:
+        stmt = stmt.where(FinanceExpense.entry_date <= end)
+    return float(db.scalar(stmt) or 0)
+
+
+def sum_expense_credit_card_statement(
+    db: Session, profile_id: int, start: date | None, end: date | None
+) -> float:
+    """Expenses with ``payment_method = credit_card`` (recognized on swipe / entry date for P&L)."""
+    stmt = select(func.coalesce(func.sum(FinanceExpense.amount), 0)).where(
+        FinanceExpense.profile_id == profile_id,
+        FinanceExpense.payment_method.is_not(None),
+        func.lower(FinanceExpense.payment_method) == 'credit_card',
+    )
     if start:
         stmt = stmt.where(FinanceExpense.entry_date >= start)
     if end:
@@ -1277,8 +1345,10 @@ def delete_pf_payment_instrument(db: Session, profile_id: int, instrument_id: in
 def normalize_expense_payment_instrument(
     db: Session, profile_id: int, payment_method: str | None, instrument_id: int | None
 ) -> int | None:
-    """Return instrument id for card/upi; clear for cash/bank_transfer."""
+    """Return instrument id for card/upi; clear for cash/bank_transfer / credit_card."""
     m = (payment_method or '').strip().lower()
+    if m == 'credit_card':
+        return None
     if m in ('card', 'upi'):
         if instrument_id is None:
             raise ValueError('Select which card or UPI was used')
@@ -1305,6 +1375,8 @@ def resolve_expense_payment_fields(
     """
     ps = (payment_status or 'PAID').upper()
     m = (payment_method or '').strip().lower()
+    if m == 'credit_card':
+        return None, None
     if m in ('card', 'upi'):
         nid = normalize_expense_payment_instrument(db, profile_id, payment_method, instrument_id)
         inst = get_pf_payment_instrument(db, nid, profile_id)
@@ -2788,79 +2860,519 @@ def create_account_transfer(
     reference_number: str | None,
     notes: str | None,
     attachment_url: str | None,
-) -> AccountTransfer:
-    if from_account_id == to_account_id:
-        raise ValueError('From and to accounts must be different')
+) -> AccountMovement:
+    chan = (transfer_method or 'INTERNAL').strip()
+    extra = (
+        f'[{chan}] '
+        if chan.upper() not in ('INTERNAL', 'INTERNAL_TRANSFER', '')
+        else ''
+    )
+    base = (notes or '').strip()
+    notes2 = f'{extra}{base}'.strip() or None
+    return create_account_movement(
+        db,
+        profile_id,
+        user_id,
+        movement_type=MOVEMENT_INTERNAL,
+        amount=amount,
+        movement_date=transfer_date,
+        from_account_id=from_account_id,
+        to_account_id=to_account_id,
+        reference_number=reference_number,
+        notes=notes2,
+        attachment_url=attachment_url,
+    )
+
+
+def create_account_movement(
+    db: Session,
+    profile_id: int,
+    user_id: int | None,
+    *,
+    movement_type: str,
+    amount: float,
+    movement_date: date,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
+    liability_id: int | None = None,
+    loan_id: int | None = None,
+    credit_card_id: int | None = None,
+    credit_card_bill_id: int | None = None,
+    external_counterparty: str | None = None,
+    reference_number: str | None = None,
+    notes: str | None = None,
+    attachment_url: str | None = None,
+    create_linked_income: bool = False,
+    create_linked_expense: bool = False,
+    income_category: str | None = None,
+    expense_category: str | None = None,
+    emi_number: int | None = None,
+    liability_interest_paid: float = 0.0,
+) -> AccountMovement:
+    """Create one movement row, update balances / liabilities, ledger lines as needed."""
+    mtype = (movement_type or '').strip().lower().replace('-', '_')
+    if mtype in ('internal', 'internal transfer'):
+        mtype = MOVEMENT_INTERNAL
+    if mtype in ('emi', 'loan_emi'):
+        mtype = MOVEMENT_LOAN_EMI_PAYMENT
     amt = float(amount)
     if amt <= 0:
         raise ValueError('Amount must be positive')
-    from_acc = get_account_for_profile(db, from_account_id, profile_id)
-    to_acc = get_account_for_profile(db, to_account_id, profile_id)
-    if from_acc is None or to_acc is None:
-        raise ValueError('Account not found or not in this profile')
-    if float(from_acc.balance) + 0.005 < amt:
-        raise ValueError('Insufficient balance in the source account')
+    ref = (reference_number or '').strip()[:128] or None
+    note = (notes or '').strip() or None
+    ext = (external_counterparty or '').strip()[:120] or None
 
-    xfer = AccountTransfer(
-        profile_id=profile_id,
-        from_account_id=from_account_id,
-        to_account_id=to_account_id,
-        amount=amt,
-        transfer_date=transfer_date,
-        transfer_method=(transfer_method or 'INTERNAL').strip()[:40] or 'INTERNAL',
-        reference_number=(reference_number or '').strip()[:128] or None,
-        notes=(notes or '').strip() or None,
-        attachment_url=attachment_url,
-        created_by=user_id,
-    )
-    db.add(xfer)
-    db.flush()
-
-    _bump_account_balance(db, profile_id, from_account_id, -amt)
-    _bump_account_balance(db, profile_id, to_account_id, amt)
-
-    db.add(
-        AccountTransaction(
+    if mtype == MOVEMENT_INTERNAL:
+        if not from_account_id or not to_account_id:
+            raise ValueError('Internal transfer requires from and to accounts')
+        if from_account_id == to_account_id:
+            raise ValueError('From and to accounts must be different')
+        from_acc = get_account_for_profile(db, from_account_id, profile_id)
+        to_acc = get_account_for_profile(db, to_account_id, profile_id)
+        if from_acc is None or to_acc is None:
+            raise ValueError('Account not found or not in this profile')
+        if float(from_acc.balance) + 0.005 < amt:
+            raise ValueError('Insufficient balance in the source account')
+        mv = AccountMovement(
             profile_id=profile_id,
-            account_id=from_account_id,
-            transaction_type='TRANSFER_OUT',
+            movement_type=mtype,
+            from_account_id=from_account_id,
+            to_account_id=to_account_id,
+            liability_id=None,
+            loan_id=None,
+            credit_card_id=None,
+            credit_card_bill_id=None,
             amount=amt,
-            transfer_id=xfer.id,
-            entry_date=transfer_date,
-            reference_number=xfer.reference_number,
-            notes=xfer.notes,
+            movement_date=movement_date,
+            reference_number=ref,
+            notes=note,
+            external_counterparty=ext,
+            attachment_url=attachment_url,
             created_by=user_id,
         )
-    )
-    db.add(
-        AccountTransaction(
+        db.add(mv)
+        db.flush()
+        _bump_account_balance(db, profile_id, from_account_id, -amt)
+        _bump_account_balance(db, profile_id, to_account_id, amt)
+        db.add(
+            AccountTransaction(
+                profile_id=profile_id,
+                account_id=from_account_id,
+                transaction_type='TRANSFER_OUT',
+                amount=amt,
+                movement_id=mv.id,
+                entry_date=movement_date,
+                reference_number=ref,
+                notes=note,
+                created_by=user_id,
+            )
+        )
+        db.add(
+            AccountTransaction(
+                profile_id=profile_id,
+                account_id=to_account_id,
+                transaction_type='TRANSFER_IN',
+                amount=amt,
+                movement_id=mv.id,
+                entry_date=movement_date,
+                reference_number=ref,
+                notes=note,
+                created_by=user_id,
+            )
+        )
+        db.commit()
+        db.refresh(mv)
+        return mv
+
+    if mtype == MOVEMENT_EXTERNAL_DEPOSIT:
+        if not to_account_id:
+            raise ValueError('Select account to deposit into')
+        if get_account_for_profile(db, to_account_id, profile_id) is None:
+            raise ValueError('Account not found')
+        mv = AccountMovement(
             profile_id=profile_id,
-            account_id=to_account_id,
-            transaction_type='TRANSFER_IN',
+            movement_type=mtype,
+            from_account_id=None,
+            to_account_id=to_account_id,
+            liability_id=None,
+            loan_id=loan_id,
+            credit_card_id=None,
+            credit_card_bill_id=None,
             amount=amt,
-            transfer_id=xfer.id,
-            entry_date=transfer_date,
-            reference_number=xfer.reference_number,
-            notes=xfer.notes,
+            movement_date=movement_date,
+            reference_number=ref,
+            notes=note,
+            external_counterparty=ext,
+            attachment_url=attachment_url,
             created_by=user_id,
         )
-    )
-    db.commit()
-    db.refresh(xfer)
-    return xfer
+        db.add(mv)
+        db.flush()
+        _bump_account_balance(db, profile_id, to_account_id, amt)
+        db.add(
+            AccountTransaction(
+                profile_id=profile_id,
+                account_id=to_account_id,
+                transaction_type='EXTERNAL_DEPOSIT',
+                amount=amt,
+                movement_id=mv.id,
+                entry_date=movement_date,
+                reference_number=ref,
+                notes=note or ext,
+                created_by=user_id,
+            )
+        )
+        if create_linked_income:
+            icat = (income_category or 'external_deposit').strip()[:120] or 'external_deposit'
+            db.add(
+                FinanceIncome(
+                    profile_id=profile_id,
+                    account_id=to_account_id,
+                    amount=amt,
+                    category=icat,
+                    income_type='other',
+                    entry_date=movement_date,
+                    description=note,
+                    received_from=ext,
+                    payment_method='BANK',
+                )
+            )
+        db.commit()
+        db.refresh(mv)
+        return mv
+
+    if mtype == MOVEMENT_EXTERNAL_WITHDRAWAL:
+        if not from_account_id:
+            raise ValueError('Select account to withdraw from')
+        acc = get_account_for_profile(db, from_account_id, profile_id)
+        if acc is None:
+            raise ValueError('Account not found')
+        if float(acc.balance) + 0.005 < amt:
+            raise ValueError('Insufficient balance in the source account')
+        mv = AccountMovement(
+            profile_id=profile_id,
+            movement_type=mtype,
+            from_account_id=from_account_id,
+            to_account_id=None,
+            liability_id=None,
+            loan_id=loan_id,
+            credit_card_id=None,
+            credit_card_bill_id=None,
+            amount=amt,
+            movement_date=movement_date,
+            reference_number=ref,
+            notes=note,
+            external_counterparty=ext,
+            attachment_url=attachment_url,
+            created_by=user_id,
+        )
+        db.add(mv)
+        db.flush()
+        _bump_account_balance(db, profile_id, from_account_id, -amt)
+        db.add(
+            AccountTransaction(
+                profile_id=profile_id,
+                account_id=from_account_id,
+                transaction_type='EXTERNAL_WITHDRAWAL',
+                amount=amt,
+                movement_id=mv.id,
+                entry_date=movement_date,
+                reference_number=ref,
+                notes=note or ext,
+                created_by=user_id,
+            )
+        )
+        if create_linked_expense:
+            xcat = (expense_category or 'external_withdrawal').strip()[:120] or 'external_withdrawal'
+            db.add(
+                FinanceExpense(
+                    profile_id=profile_id,
+                    account_id=from_account_id,
+                    amount=amt,
+                    category=xcat,
+                    entry_date=movement_date,
+                    description=note,
+                    paid_by=ext,
+                    payment_method='BANK',
+                )
+            )
+        db.commit()
+        db.refresh(mv)
+        return mv
+
+    if mtype == MOVEMENT_CREDIT_CARD_PAYMENT:
+        if not from_account_id or not credit_card_bill_id:
+            raise ValueError('Credit card payment requires bank account and bill')
+        from fastapi_service.repositories import pf_credit_card_repo
+
+        bill_row = pf_credit_card_repo.get_bill_for_profile(db, credit_card_bill_id, profile_id)
+        if bill_row is None:
+            raise ValueError('Bill not found')
+        card_rid = credit_card_id if credit_card_id is not None else bill_row.card_id
+
+        mv = AccountMovement(
+            profile_id=profile_id,
+            movement_type=mtype,
+            from_account_id=from_account_id,
+            to_account_id=None,
+            liability_id=None,
+            loan_id=None,
+            credit_card_id=card_rid,
+            credit_card_bill_id=credit_card_bill_id,
+            amount=amt,
+            movement_date=movement_date,
+            reference_number=ref,
+            notes=note,
+            external_counterparty=ext,
+            attachment_url=attachment_url,
+            created_by=user_id,
+        )
+        db.add(mv)
+        db.flush()
+        pf_credit_card_repo.pay_bill(
+            db,
+            profile_id,
+            user_id,
+            bill_id=credit_card_bill_id,
+            amount=amt,
+            payment_date=movement_date,
+            from_account_id=from_account_id,
+            reference_number=ref,
+            movement_id=mv.id,
+        )
+        db.refresh(mv)
+        return mv
+
+    if mtype == MOVEMENT_LOAN_DISBURSEMENT:
+        if not liability_id or not to_account_id:
+            raise ValueError('Loan disbursement requires liability and deposit account')
+        ln = get_liability_for_profile(db, liability_id, profile_id)
+        if ln is None:
+            raise ValueError('Liability not found')
+        lt = (ln.liability_type or '').upper()
+        if lt == 'CREDIT_CARD_STATEMENT':
+            raise ValueError('Use credit card bill payment for card statements')
+        if get_account_for_profile(db, to_account_id, profile_id) is None:
+            raise ValueError('Account not found')
+        mv = AccountMovement(
+            profile_id=profile_id,
+            movement_type=mtype,
+            from_account_id=None,
+            to_account_id=to_account_id,
+            liability_id=liability_id,
+            loan_id=None,
+            credit_card_id=None,
+            credit_card_bill_id=None,
+            amount=amt,
+            movement_date=movement_date,
+            reference_number=ref,
+            notes=note,
+            external_counterparty=ext,
+            attachment_url=attachment_url,
+            created_by=user_id,
+        )
+        db.add(mv)
+        db.flush()
+        _bump_account_balance(db, profile_id, to_account_id, amt)
+        ln.total_amount = float(ln.total_amount or 0) + amt
+        ln.outstanding_amount = float(ln.outstanding_amount or 0) + amt
+        if str(ln.status).upper() == 'CLOSED':
+            ln.status = 'ACTIVE'
+        db.add(
+            AccountTransaction(
+                profile_id=profile_id,
+                account_id=to_account_id,
+                transaction_type='LOAN_DISBURSEMENT',
+                amount=amt,
+                movement_id=mv.id,
+                entry_date=movement_date,
+                reference_number=ref,
+                notes=note or f'Loan proceeds — {ln.liability_name}',
+                created_by=user_id,
+            )
+        )
+        db.commit()
+        db.refresh(mv)
+        return mv
+
+    if mtype == MOVEMENT_LOAN_EMI_PAYMENT:
+        if not liability_id or not from_account_id:
+            raise ValueError('Loan EMI payment requires liability and bank account')
+        ln = get_liability_for_profile(db, liability_id, profile_id)
+        if ln is None:
+            raise ValueError('Liability not found')
+        if liability_has_emi_schedule(db, liability_id):
+            if emi_number is None:
+                raise ValueError('Select EMI installment to pay')
+            row = db.scalars(
+                select(LiabilitySchedule).where(
+                    LiabilitySchedule.liability_id == liability_id,
+                    LiabilitySchedule.emi_number == emi_number,
+                )
+            ).first()
+            if row is None:
+                raise ValueError('EMI not found')
+            if str(row.payment_status).lower() == 'paid':
+                raise ValueError('This EMI is already marked paid')
+            due_amt = float(row.emi_amount)
+            if abs(due_amt - amt) > 0.02:
+                raise ValueError('Amount must match the scheduled EMI for this installment')
+            mv = AccountMovement(
+                profile_id=profile_id,
+                movement_type=mtype,
+                from_account_id=from_account_id,
+                to_account_id=None,
+                liability_id=liability_id,
+                loan_id=None,
+                credit_card_id=None,
+                credit_card_bill_id=None,
+                amount=due_amt,
+                movement_date=movement_date,
+                reference_number=ref,
+                notes=note,
+                external_counterparty=ext,
+                attachment_url=attachment_url,
+                created_by=user_id,
+            )
+            db.add(mv)
+            db.flush()
+            mark_liability_emi_paid(
+                db,
+                profile_id,
+                liability_id,
+                emi_number,
+                movement_date,
+                from_account_id,
+                movement_id=mv.id,
+            )
+            db.refresh(mv)
+            return mv
+        mv = AccountMovement(
+            profile_id=profile_id,
+            movement_type=mtype,
+            from_account_id=from_account_id,
+            to_account_id=None,
+            liability_id=liability_id,
+            loan_id=None,
+            credit_card_id=None,
+            credit_card_bill_id=None,
+            amount=amt,
+            movement_date=movement_date,
+            reference_number=ref,
+            notes=note,
+            external_counterparty=ext,
+            attachment_url=attachment_url,
+            created_by=user_id,
+        )
+        db.add(mv)
+        db.flush()
+        record_liability_payment(
+            db,
+            profile_id,
+            liability_id,
+            payment_date=movement_date,
+            amount_paid=amt,
+            interest_paid=float(liability_interest_paid),
+            payment_mode='BANK',
+            finance_account_id=from_account_id,
+            notes=note,
+            movement_id=mv.id,
+        )
+        db.refresh(mv)
+        return mv
+
+    raise ValueError('Unknown movement_type')
 
 
-def list_account_transfers(
+def list_account_movements(
     db: Session, profile_id: int, skip: int, limit: int
-) -> list[AccountTransfer]:
+) -> list[AccountMovement]:
     stmt = (
-        select(AccountTransfer)
-        .where(AccountTransfer.profile_id == profile_id)
-        .order_by(AccountTransfer.transfer_date.desc(), AccountTransfer.id.desc())
+        select(AccountMovement)
+        .where(AccountMovement.profile_id == profile_id)
+        .order_by(AccountMovement.movement_date.desc(), AccountMovement.id.desc())
         .offset(skip)
         .limit(limit)
     )
     return list(db.scalars(stmt).all())
+
+
+# Ledger lines commonly used for cash-movement KPIs (amount is magnitude; type = economic meaning).
+LEDGER_CASHFLOW_SUMMARY_TYPES: tuple[str, ...] = (
+    'EXTERNAL_DEPOSIT',
+    'EXTERNAL_WITHDRAWAL',
+    'TRANSFER_IN',
+    'TRANSFER_OUT',
+    'CC_BILL_PAYMENT',
+    'LOAN_DISBURSEMENT',
+    'LOAN_LIABILITY_PAYMENT',
+    'LOAN_EMI_PAYMENT',
+)
+
+
+def sum_account_transaction_amounts_by_type(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    transaction_types: tuple[str, ...] | None = None,
+) -> dict[str, float]:
+    types = transaction_types or LEDGER_CASHFLOW_SUMMARY_TYPES
+    stmt = (
+        select(AccountTransaction.transaction_type, func.coalesce(func.sum(AccountTransaction.amount), 0))
+        .where(
+            AccountTransaction.profile_id == profile_id,
+            AccountTransaction.entry_date >= start,
+            AccountTransaction.entry_date <= end,
+            AccountTransaction.transaction_type.in_(types),
+        )
+        .group_by(AccountTransaction.transaction_type)
+    )
+    return {str(t): float(a) for t, a in db.execute(stmt).all()}
+
+
+def account_movements_period_summary(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+) -> dict:
+    """Counts and amounts from ``account_movements`` plus ledger-type tallies (same date window)."""
+    stmt = (
+        select(
+            AccountMovement.movement_type,
+            func.count(AccountMovement.id),
+            func.coalesce(func.sum(AccountMovement.amount), 0),
+        )
+        .where(
+            AccountMovement.profile_id == profile_id,
+            AccountMovement.movement_date >= start,
+            AccountMovement.movement_date <= end,
+        )
+        .group_by(AccountMovement.movement_type)
+    )
+    by_movement: dict[str, dict[str, float | int]] = {}
+    for mt, cnt, total in db.execute(stmt).all():
+        by_movement[str(mt)] = {
+            'count': int(cnt),
+            'total_amount': round(float(total), 2),
+        }
+    ledger = sum_account_transaction_amounts_by_type(
+        db, profile_id, start, end, LEDGER_CASHFLOW_SUMMARY_TYPES
+    )
+    ledger_out = {k: round(v, 2) for k, v in sorted(ledger.items())}
+    return {
+        'period_start': start.isoformat(),
+        'period_end': end.isoformat(),
+        'by_movement_type': dict(sorted(by_movement.items())),
+        'ledger_totals_by_transaction_type': ledger_out,
+    }
+
+
+def list_account_transfers(
+    db: Session, profile_id: int, skip: int, limit: int
+) -> list[AccountMovement]:
+    return list_account_movements(db, profile_id, skip, limit)
 
 
 def list_account_statement_lines(

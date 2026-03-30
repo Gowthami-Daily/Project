@@ -1,29 +1,35 @@
--- Account transfers + ledger (Postgres). SQLAlchemy create_all also creates these; use for manual DBA review.
-CREATE TABLE IF NOT EXISTS account_transfers (
+-- Money movements (internal + external) + per-account ledger (Postgres reference).
+CREATE TABLE IF NOT EXISTS account_movements (
   id SERIAL PRIMARY KEY,
   profile_id INTEGER NOT NULL REFERENCES profiles (id),
-  from_account_id INTEGER NOT NULL REFERENCES finance_accounts (id),
-  to_account_id INTEGER NOT NULL REFERENCES finance_accounts (id),
+  movement_type VARCHAR(32) NOT NULL,
+  from_account_id INTEGER REFERENCES finance_accounts (id),
+  to_account_id INTEGER REFERENCES finance_accounts (id),
+  liability_id INTEGER REFERENCES finance_liabilities (id),
+  loan_id INTEGER REFERENCES loans (id),
+  credit_card_id INTEGER REFERENCES credit_cards (id),
+  credit_card_bill_id INTEGER REFERENCES credit_card_bills (id),
   amount NUMERIC(14, 2) NOT NULL,
-  transfer_date DATE NOT NULL,
-  transfer_method VARCHAR(40) NOT NULL DEFAULT 'INTERNAL',
+  movement_date DATE NOT NULL,
   reference_number VARCHAR(128),
   notes TEXT,
+  external_counterparty VARCHAR(120),
   attachment_url TEXT,
   created_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS ix_account_transfers_profile ON account_transfers (profile_id);
-CREATE INDEX IF NOT EXISTS ix_account_transfers_date ON account_transfers (transfer_date DESC);
+CREATE INDEX IF NOT EXISTS ix_account_movements_profile ON account_movements (profile_id);
+CREATE INDEX IF NOT EXISTS ix_account_movements_date ON account_movements (movement_date DESC);
+CREATE INDEX IF NOT EXISTS ix_account_movements_type ON account_movements (movement_type);
 
 CREATE TABLE IF NOT EXISTS account_transactions (
   id SERIAL PRIMARY KEY,
   profile_id INTEGER NOT NULL REFERENCES profiles (id),
   account_id INTEGER NOT NULL REFERENCES finance_accounts (id),
-  transaction_type VARCHAR(24) NOT NULL,
+  transaction_type VARCHAR(40) NOT NULL,
   amount NUMERIC(14, 2) NOT NULL,
-  transfer_id INTEGER REFERENCES account_transfers (id) ON DELETE SET NULL,
+  movement_id INTEGER REFERENCES account_movements (id) ON DELETE SET NULL,
   entry_date DATE NOT NULL,
   reference_number VARCHAR(128),
   notes TEXT,

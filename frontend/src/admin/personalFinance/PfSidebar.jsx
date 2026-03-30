@@ -182,7 +182,7 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
             <NavItem
               to="/personal-finance/transfer"
               icon={ArrowsRightLeftIcon}
-              label="Transfer"
+              label="Money movement"
               collapsed={collapsed}
               onNavigate={closeIfMobile}
             />
@@ -191,6 +191,13 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
               to="/personal-finance/expenses"
               icon={CreditCardIcon}
               label="Expenses"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
+            <NavItem
+              to="/personal-finance/credit-cards"
+              icon={CreditCardIcon}
+              label="Credit cards"
               collapsed={collapsed}
               onNavigate={closeIfMobile}
             />
@@ -218,7 +225,7 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
             <NavItem
               to="/personal-finance/liabilities"
               icon={ReceiptPercentIcon}
-              label="Liabilities"
+              label="Loans & liabilities"
               collapsed={collapsed}
               onNavigate={closeIfMobile}
             />

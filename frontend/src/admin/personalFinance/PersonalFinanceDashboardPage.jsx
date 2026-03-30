@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
+  ArrowTrendingDownIcon,
   ArrowTrendingUpIcon,
   BanknotesIcon,
   BuildingLibraryIcon,
@@ -115,6 +116,7 @@ export default function PersonalFinanceDashboardPage() {
   const [upcomingEmis, setUpcomingEmis] = useState([])
   const [emisDueMonth, setEmisDueMonth] = useState(null)
   const [accountingPolicy, setAccountingPolicy] = useState(null)
+  const [creditCardsSummary, setCreditCardsSummary] = useState(null)
 
   const monthOptions = useMemo(() => buildDashboardMonthOptions(48), [])
   const accountQuery = bankFilter === '' ? undefined : bankFilter
@@ -146,6 +148,9 @@ export default function PersonalFinanceDashboardPage() {
     setUpcomingEmis(Array.isArray(b.upcoming_emis) ? b.upcoming_emis : [])
     setEmisDueMonth(b.emis_due_selected_month && typeof b.emis_due_selected_month === 'object' ? b.emis_due_selected_month : null)
     setAccountingPolicy(b.accounting_policy && typeof b.accounting_policy === 'object' ? b.accounting_policy : null)
+    setCreditCardsSummary(
+      b.credit_cards_summary && typeof b.credit_cards_summary === 'object' ? b.credit_cards_summary : null,
+    )
     if (Array.isArray(b.accounts) && b.accounts.length > 0) {
       setAccounts(b.accounts)
     }
@@ -290,6 +295,10 @@ export default function PersonalFinanceDashboardPage() {
     if (!cashflowMonth) return []
     return [
       { name: 'Expense', value: Number(cashflowMonth.total_expense_month) || 0 },
+      { name: 'CC swipe (expense)', value: Number(cashflowMonth.credit_card_expense_month) || 0 },
+      { name: 'CC bill paid (cash)', value: Number(cashflowMonth.credit_card_bill_payments_month) || 0 },
+      { name: 'External deposit (bank)', value: Number(cashflowMonth.external_deposit_month) || 0 },
+      { name: 'External withdrawal (bank)', value: Number(cashflowMonth.external_withdrawal_month) || 0 },
       { name: 'Food', value: Number(cashflowMonth.food_expense) || 0 },
       { name: 'EMI', value: Number(cashflowMonth.emi_expense_month) || 0 },
       { name: 'Dairy', value: Number(cashflowMonth.dairy_expense) || 0 },
@@ -302,6 +311,10 @@ export default function PersonalFinanceDashboardPage() {
   const cashflowTableRows = useMemo(
     () => [
       { label: `Expense (${dashMonthLabel})`, value: cashflowMonth?.total_expense_month },
+      { label: 'Credit card expenses (swipe date)', value: cashflowMonth?.credit_card_expense_month },
+      { label: 'Credit card bill payments (cash out)', value: cashflowMonth?.credit_card_bill_payments_month },
+      { label: 'External deposits (ledger — bank in)', value: cashflowMonth?.external_deposit_month },
+      { label: 'External withdrawals (ledger — bank out)', value: cashflowMonth?.external_withdrawal_month },
       { label: 'Food & groceries', value: cashflowMonth?.food_expense },
       { label: 'EMI expenses', value: cashflowMonth?.emi_expense_month },
       { label: 'Dairy (farm + feed)', value: cashflowMonth?.dairy_expense },
@@ -537,6 +550,32 @@ export default function PersonalFinanceDashboardPage() {
           />
           <KpiCard
             wrapperClassName="hidden md:block"
+            title="Credit cards (used limit)"
+            value={formatInr(creditCardsSummary?.used_limit)}
+            subtitle={
+              creditCardsSummary
+                ? `Unbilled ${formatInr(creditCardsSummary.unbilled_charges)} · Due ${dashMonthLabel}: ${formatInr(creditCardsSummary.due_this_month)}`
+                : 'Register cards under Credit cards'
+            }
+            icon={CreditCardIcon}
+            iconTintClass="bg-fuchsia-100 text-fuchsia-800 md:bg-white/20 md:text-white"
+            gradientClass="md:bg-gradient-to-br md:from-fuchsia-600 md:to-purple-700"
+          />
+          <KpiCard
+            wrapperClassName="hidden md:block"
+            title="CC overdue"
+            value={formatInr(creditCardsSummary?.overdue_amount)}
+            subtitle={
+              creditCardsSummary?.card_count != null
+                ? `${creditCardsSummary.card_count} card(s) · Available limit ${formatInr(creditCardsSummary.available_limit)}`
+                : 'Statement due amounts'
+            }
+            icon={ExclamationTriangleIcon}
+            iconTintClass="bg-rose-100 text-rose-800 md:bg-white/20 md:text-white"
+            gradientClass="md:bg-gradient-to-br md:from-rose-600 md:to-red-700"
+          />
+          <KpiCard
+            wrapperClassName="hidden md:block"
             title="Loan receivable"
             value={formatInr(summary?.loan_outstanding)}
             subtitle="Still to collect"
@@ -608,6 +647,41 @@ export default function PersonalFinanceDashboardPage() {
               No scheduled EMIs with a due date in this month (lend or borrow).
             </p>
           )}
+        </section>
+      ) : null}
+
+      {Array.isArray(creditCardsSummary?.alerts) && creditCardsSummary.alerts.length > 0 ? (
+        <section
+          className={`${pfChartCard} border-fuchsia-200/80 dark:border-fuchsia-900/40`}
+          aria-label="Credit card alerts"
+        >
+          <h2 className={chartTitle}>Credit card alerts</h2>
+          <p className={chartSub}>Due dates, overdue statements, and high limit usage</p>
+          <ul className="mt-3 space-y-2">
+            {creditCardsSummary.alerts.map((a, idx) => (
+              <li
+                key={`${a.type}-${a.card_id}-${a.bill_id ?? idx}`}
+                className={`rounded-xl border px-3 py-2.5 text-sm ${
+                  a.severity === 'high'
+                    ? 'border-rose-200 bg-rose-50/90 text-rose-950 dark:border-rose-900 dark:bg-rose-950/35 dark:text-rose-100'
+                    : 'border-amber-200 bg-amber-50/90 text-amber-950 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-100'
+                }`}
+              >
+                {a.message}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {creditCardsSummary?.current_bill ? (
+        <section className={pfChartCard} aria-label="Next credit card statement">
+          <h2 className={chartTitle}>Next statement (earliest due)</h2>
+          <p className={chartSub}>
+            {creditCardsSummary.current_bill.card_name} · period {creditCardsSummary.current_bill.bill_period} · due{' '}
+            {creditCardsSummary.current_bill.due_date} · remaining {formatInr(creditCardsSummary.current_bill.remaining)}{' '}
+            of {formatInr(creditCardsSummary.current_bill.total_amount)}
+          </p>
         </section>
       ) : null}
 
@@ -816,6 +890,34 @@ export default function PersonalFinanceDashboardPage() {
                 subtitle="All recorded expenses in this period"
                 icon={CreditCardIcon}
                 gradientClass="md:bg-gradient-to-br md:from-[#dc2626] md:to-[#ef4444]"
+              />
+              <KpiCard
+                title="CC expenses (swipes)"
+                value={formatInr(cashflowMonth?.credit_card_expense_month)}
+                subtitle={'P&L on swipe date — bank not debited yet'}
+                icon={CreditCardIcon}
+                gradientClass="md:bg-gradient-to-br md:from-fuchsia-600 md:to-purple-700"
+              />
+              <KpiCard
+                title="CC bill payments"
+                value={formatInr(cashflowMonth?.credit_card_bill_payments_month)}
+                subtitle="Cash paid to card issuer this month"
+                icon={BanknotesIcon}
+                gradientClass="md:bg-gradient-to-br md:from-violet-600 md:to-indigo-800"
+              />
+              <KpiCard
+                title="External deposits"
+                value={formatInr(cashflowMonth?.external_deposit_month)}
+                subtitle="Money into accounts from outside (ledger: EXTERNAL_DEPOSIT)"
+                icon={ArrowTrendingUpIcon}
+                gradientClass="md:bg-gradient-to-br md:from-teal-500 md:to-cyan-600"
+              />
+              <KpiCard
+                title="External withdrawals"
+                value={formatInr(cashflowMonth?.external_withdrawal_month)}
+                subtitle="Money out to outside world (ledger: EXTERNAL_WITHDRAWAL)"
+                icon={ArrowTrendingDownIcon}
+                gradientClass="md:bg-gradient-to-br md:from-orange-500 md:to-red-600"
               />
               <KpiCard
                 title="Food & groceries"

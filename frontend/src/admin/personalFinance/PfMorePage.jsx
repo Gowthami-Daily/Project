@@ -138,7 +138,7 @@ export default function PfMorePage() {
         </Link>
         <Link to="/personal-finance/liabilities" className={rowCls}>
           <ReceiptPercentIcon className="h-[22px] w-[22px] shrink-0 text-[#1E3A8A]" />
-          <span className="flex-1 font-semibold text-slate-900 dark:text-slate-100">Liabilities</span>
+          <span className="flex-1 font-semibold text-slate-900 dark:text-slate-100">Loans &amp; liabilities</span>
         </Link>
         <Link to="/personal-finance/settings" className={rowCls}>
           <Cog6ToothIcon className="h-[22px] w-[22px] shrink-0 text-[#1E3A8A] dark:text-blue-400" />

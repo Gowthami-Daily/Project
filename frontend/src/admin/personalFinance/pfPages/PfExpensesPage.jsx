@@ -3,12 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
   createFinanceExpense,
-  createPfPaymentInstrument,
   deleteFinanceExpense,
-  deletePfPaymentInstrument,
   listFinanceAccounts,
   listFinanceExpenses,
   listPfExpenseCategories,
+  listCreditCards,
   listPfPaymentInstruments,
   patchFinanceExpense,
   pfFetchBlob,
@@ -45,13 +44,25 @@ function todayISODate() {
 
 const PAY_METHODS = [
   { value: 'cash', label: 'Cash' },
-  { value: 'card', label: 'Credit card' },
+  { value: 'card', label: 'Card (debit from linked account)' },
+  { value: 'credit_card', label: 'Credit card (statement)' },
   { value: 'upi', label: 'UPI / Bank UPI' },
   { value: 'bank_transfer', label: 'Bank transfer' },
 ]
 
 function methodDisplayLabel(value) {
   return PAY_METHODS.find((m) => m.value === value)?.label ?? value ?? '—'
+}
+
+function payLineForRow(r) {
+  const pm = (r.payment_method || '').toLowerCase()
+  if (pm === 'credit_card' && r.credit_card_label) {
+    return `${methodDisplayLabel(r.payment_method)} · ${r.credit_card_label}`
+  }
+  if (r.payment_instrument_label) {
+    return `${methodDisplayLabel(r.payment_method)} · ${r.payment_instrument_label}`
+  }
+  return methodDisplayLabel(r.payment_method)
 }
 
 function paymentMethodForAccount(account) {
@@ -62,20 +73,53 @@ function paymentMethodForAccount(account) {
 }
 
 /** Map unified "Pay with" value to API fields. */
-function parsePayWith(value, accounts, instruments) {
+function parsePayWith(value, accounts, instruments, creditCards = []) {
   if (!value || typeof value !== 'string') {
-    return { accountId: null, paymentMethod: null, paymentInstrumentId: null, kind: 'none' }
+    return {
+      accountId: null,
+      paymentMethod: null,
+      paymentInstrumentId: null,
+      creditCardId: null,
+      kind: 'none',
+    }
+  }
+  if (value.startsWith('cc:')) {
+    const id = Number(value.slice(3))
+    const ok = creditCards.some((c) => c.id === id)
+    if (!ok || Number.isNaN(id)) {
+      return {
+        accountId: null,
+        paymentMethod: 'credit_card',
+        paymentInstrumentId: null,
+        creditCardId: null,
+        kind: 'invalid',
+      }
+    }
+    return {
+      accountId: null,
+      paymentMethod: 'credit_card',
+      paymentInstrumentId: null,
+      creditCardId: id,
+      kind: 'cc',
+    }
   }
   if (value.startsWith('pi:')) {
     const id = Number(value.slice(3))
     const inst = instruments.find((i) => i.id === id)
     if (!inst || inst.finance_account_id == null) {
-      return { accountId: null, paymentMethod: 'card', paymentInstrumentId: null, kind: 'invalid' }
+      return {
+        accountId: null,
+        paymentMethod: 'card',
+        paymentInstrumentId: null,
+        creditCardId: null,
+        kind: 'invalid',
+      }
     }
     return {
       accountId: inst.finance_account_id,
       paymentMethod: inst.kind,
       paymentInstrumentId: id,
+      creditCardId: null,
       kind: 'pi',
     }
   }
@@ -83,20 +127,36 @@ function parsePayWith(value, accounts, instruments) {
     const id = Number(value.slice(4))
     const acc = accounts.find((a) => a.id === id)
     if (!acc) {
-      return { accountId: null, paymentMethod: null, paymentInstrumentId: null, kind: 'invalid' }
+      return {
+        accountId: null,
+        paymentMethod: null,
+        paymentInstrumentId: null,
+        creditCardId: null,
+        kind: 'invalid',
+      }
     }
     return {
       accountId: id,
       paymentMethod: paymentMethodForAccount(acc),
       paymentInstrumentId: null,
+      creditCardId: null,
       kind: 'acc',
     }
   }
-  return { accountId: null, paymentMethod: null, paymentInstrumentId: null, kind: 'invalid' }
+  return {
+    accountId: null,
+    paymentMethod: null,
+    paymentInstrumentId: null,
+    creditCardId: null,
+    kind: 'invalid',
+  }
 }
 
 function expenseRowToPayWithValue(r, instruments) {
   const pm = (r.payment_method || '').toLowerCase()
+  if (pm === 'credit_card' && r.credit_card_id != null) {
+    return `cc:${r.credit_card_id}`
+  }
   if (r.payment_instrument_id != null && (pm === 'card' || pm === 'upi')) {
     const inst = instruments.find((i) => i.id === r.payment_instrument_id)
     if (inst?.finance_account_id != null) return `pi:${r.payment_instrument_id}`
@@ -112,14 +172,11 @@ export default function PfExpensesPage() {
   const [categories, setCategories] = useState([])
   const [accounts, setAccounts] = useState([])
   const [instruments, setInstruments] = useState([])
+  const [creditCards, setCreditCards] = useState([])
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [addingInstrument, setAddingInstrument] = useState(false)
-  const [newInstrumentKind, setNewInstrumentKind] = useState('card')
-  const [newInstrumentLabel, setNewInstrumentLabel] = useState('')
-  const [newInstrumentAccountId, setNewInstrumentAccountId] = useState('')
   const [amount, setAmount] = useState('')
   const [expenseCategoryId, setExpenseCategoryId] = useState('')
   const [entryDate, setEntryDate] = useState(todayISODate)
@@ -159,11 +216,6 @@ export default function PfExpensesPage() {
     return m
   }, [accounts])
 
-  const instrumentsMissingAccount = useMemo(
-    () => instruments.filter((i) => i.finance_account_id == null),
-    [instruments],
-  )
-
   const filteredExpenseRows = useMemo(() => {
     if (expenseDateFilter === 'all') return rows
     const t = todayISODate()
@@ -195,27 +247,25 @@ export default function PfExpensesPage() {
     setLoading(true)
     setError('')
     try {
-      const [cats, accs, inst, exp] = await Promise.all([
+      const [cats, accs, inst, exp, ccList] = await Promise.all([
         listPfExpenseCategories(),
         listFinanceAccounts(),
         listPfPaymentInstruments(),
         listFinanceExpenses(),
+        listCreditCards(),
       ])
       const catList = Array.isArray(cats) ? cats : []
       setCategories(catList)
       const accList = Array.isArray(accs) ? accs : []
       const instList = Array.isArray(inst) ? inst : []
+      const ccards = Array.isArray(ccList) ? ccList : []
       setAccounts(accList)
       setInstruments(instList)
+      setCreditCards(ccards)
       setRows(Array.isArray(exp) ? exp : [])
       setExpenseCategoryId((prev) => {
         if (prev && catList.some((c) => String(c.id) === prev)) return prev
         if (catList[0]?.id) return String(catList[0].id)
-        return ''
-      })
-      setNewInstrumentAccountId((prev) => {
-        if (prev && accList.some((a) => String(a.id) === prev)) return prev
-        if (accList[0]?.id) return String(accList[0].id)
         return ''
       })
       setPayWith((prev) => {
@@ -223,11 +273,12 @@ export default function PfExpensesPage() {
           prev &&
           ((prev.startsWith('acc:') && accList.some((a) => String(a.id) === prev.slice(4))) ||
             (prev.startsWith('pi:') &&
-              instList.some((i) => String(i.id) === prev.slice(3) && i.finance_account_id != null)))
+              instList.some((i) => String(i.id) === prev.slice(3) && i.finance_account_id != null)) ||
+            (prev.startsWith('cc:') && ccards.some((c) => String(c.id) === prev.slice(3))))
         if (validPrev) return prev
         if (accList[0]?.id) return `acc:${accList[0].id}`
-        const firstPi = instList.find((i) => i.finance_account_id != null)
-        return firstPi ? `pi:${firstPi.id}` : ''
+        if (ccards[0]?.id) return `cc:${ccards[0].id}`
+        return ''
       })
     } catch (e) {
       if (e.status === 401) {
@@ -245,59 +296,12 @@ export default function PfExpensesPage() {
     load()
   }, [load, tick])
 
-  async function handleAddSavedInstrument(e) {
-    e?.preventDefault?.()
-    const label = newInstrumentLabel.trim()
-    if (!label) {
-      setError('Enter a name for this card or UPI.')
-      return
-    }
-    if (!newInstrumentAccountId) {
-      setError('Select which bank or cash account this card or UPI draws from.')
-      return
-    }
-    setAddingInstrument(true)
-    setError('')
-    try {
-      await createPfPaymentInstrument({
-        kind: newInstrumentKind,
-        label,
-        finance_account_id: Number(newInstrumentAccountId),
-      })
-      setNewInstrumentLabel('')
-      const list = await listPfPaymentInstruments()
-      setInstruments(Array.isArray(list) ? list : [])
-      refresh()
-    } catch (err) {
-      if (err.status === 401) {
-        setPfToken(null)
-        onSessionInvalid?.()
-      } else {
-        setError(err.message || 'Could not save payment method')
-      }
-    } finally {
-      setAddingInstrument(false)
-    }
-  }
-
-  async function handleDeleteInstrument(id, e) {
-    e?.stopPropagation?.()
-    if (!window.confirm('Remove this saved card/UPI? Past expenses stay; new entries won’t list it.')) return
-    try {
-      await deletePfPaymentInstrument(id)
-      setPayWith((prev) => (prev === `pi:${id}` ? (accounts[0]?.id ? `acc:${accounts[0].id}` : '') : prev))
-      const list = await listPfPaymentInstruments()
-      setInstruments(Array.isArray(list) ? list : [])
-      refresh()
-    } catch (err) {
-      if (err.status === 401) {
-        setPfToken(null)
-        onSessionInvalid?.()
-      } else {
-        setError(err.message || 'Could not delete')
-      }
-    }
-  }
+  const payWithSelectedCard = useMemo(() => {
+    if (!payWith || !payWith.startsWith('cc:')) return null
+    const id = Number(payWith.slice(3))
+    if (Number.isNaN(id)) return null
+    return creditCards.find((c) => c.id === id) ?? null
+  }, [payWith, creditCards])
 
   function startEdit(r) {
     setEditingId(r.id)
@@ -322,8 +326,8 @@ export default function PfExpensesPage() {
     setError('')
     const parsed =
       editPaymentStatus === 'PENDING' && !editPayWith
-        ? { accountId: null, paymentMethod: null, paymentInstrumentId: null, kind: 'none' }
-        : parsePayWith(editPayWith, accounts, instruments)
+        ? { accountId: null, paymentMethod: null, paymentInstrumentId: null, creditCardId: null, kind: 'none' }
+        : parsePayWith(editPayWith, accounts, instruments, creditCards)
     const body = {
       amount: Number(editAmount),
       entry_date: editEntryDate,
@@ -333,6 +337,7 @@ export default function PfExpensesPage() {
       paid_by: editPaidBy.trim() ? editPaidBy.trim() : null,
       payment_method: parsed.paymentMethod,
       payment_instrument_id: parsed.paymentInstrumentId,
+      credit_card_id: parsed.creditCardId ?? null,
       payment_status: editPaymentStatus,
       is_recurring: editIsRecurring,
       recurring_type: editIsRecurring ? editRecurringType : null,
@@ -344,7 +349,7 @@ export default function PfExpensesPage() {
     }
     if (editPaymentStatus === 'PAID') {
       if (!editPayWith || parsed.kind === 'invalid') {
-        setError('Select how you paid (account, card, or UPI).')
+        setError('Select a bank/cash account or a registered credit card.')
         setSavingId(null)
         return
       }
@@ -403,11 +408,11 @@ export default function PfExpensesPage() {
     }
     const parsed =
       paymentStatus === 'PENDING' && !payWith
-        ? { accountId: null, paymentMethod: null, paymentInstrumentId: null, kind: 'none' }
-        : parsePayWith(payWith, accounts, instruments)
+        ? { accountId: null, paymentMethod: null, paymentInstrumentId: null, creditCardId: null, kind: 'none' }
+        : parsePayWith(payWith, accounts, instruments, creditCards)
     if (paymentStatus === 'PAID') {
       if (!payWith || parsed.kind === 'invalid') {
-        setError('Select how you paid (account, card, or UPI), or set status to Pending.')
+        setError('Select a bank/cash account or a registered credit card, or set status to Pending.')
         return
       }
     }
@@ -424,6 +429,7 @@ export default function PfExpensesPage() {
         paid_by: paidBy.trim() || null,
         payment_method: parsed.paymentMethod,
         payment_instrument_id: parsed.paymentInstrumentId,
+        credit_card_id: parsed.creditCardId ?? null,
         is_recurring: isRecurring,
         recurring_type: isRecurring ? recurringType : null,
         payment_status: paymentStatus,
@@ -492,9 +498,12 @@ export default function PfExpensesPage() {
       {showAddForm ? (
       <div className={`${cardCls} overflow-hidden p-0`}>
         <div className={formCardHeader}>
-          <h2 className="text-base font-bold text-slate-900">Add expense</h2>
-          <p className="mt-0.5 text-xs text-slate-500">
-            <strong className="font-medium text-slate-700">Pay with</strong> combines account and method (cards/UPIs must be saved with a linked account below).
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add expense</h2>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            <strong className="font-medium text-slate-700 dark:text-slate-300">Pay with</strong> — only{' '}
+            <span className="font-medium">accounts you already added</span> or <span className="font-medium">credit cards you registered</span> under
+            Credit cards. Bank/cash: balance drops now. Credit card: adds to unbilled usage (limit available goes down); bank is debited when you pay the
+            statement.
           </p>
         </div>
         <form onSubmit={handleSubmit}>
@@ -574,30 +583,37 @@ export default function PfExpensesPage() {
                     })}
                   </optgroup>
                 ) : null}
-                {instruments.some((i) => i.finance_account_id != null) ? (
-                  <optgroup label="Saved cards & UPI">
-                    {instruments
-                      .filter((i) => i.finance_account_id != null)
-                      .map((i) => {
-                        const kindLabel = i.kind === 'card' ? 'Credit card' : 'UPI'
-                        const accNm =
-                          accountNameById.get(i.finance_account_id) ?? `#${i.finance_account_id}`
-                        return (
-                          <option key={`pi-${i.id}`} value={`pi:${i.id}`}>
-                            {kindLabel}: {i.label} · {accNm}
-                          </option>
-                        )
-                      })}
+                {creditCards.length ? (
+                  <optgroup label="Registered credit cards (statement — bank not debited until bill payment)">
+                    {creditCards.map((c) => (
+                      <option key={`cc-${c.id}`} value={`cc:${c.id}`}>
+                        {c.card_name}
+                        {c.bank_name ? ` · ${c.bank_name}` : ''}
+                      </option>
+                    ))}
                   </optgroup>
                 ) : null}
               </select>
-              {paymentStatus === 'PAID' && accounts.length === 0 && !instruments.some((i) => i.finance_account_id != null) ? (
-                <p className="mt-1 text-xs text-amber-800">Add a finance account or a saved card/UPI first.</p>
+              {paymentStatus === 'PAID' && accounts.length === 0 && creditCards.length === 0 ? (
+                <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+                  Add at least one finance account (Accounts) or register a credit card (Credit cards) first.
+                </p>
               ) : null}
-              {instrumentsMissingAccount.length > 0 ? (
-                <p className="mt-1 text-xs text-amber-800">
-                  {instrumentsMissingAccount.length} saved card/UPI
-                  {instrumentsMissingAccount.length > 1 ? 's' : ''} missing a linked account — delete and save again with an account below.
+              {paymentStatus === 'PAID' && payWith.startsWith('acc:') ? (
+                <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
+                  This amount will be <strong>debited</strong> from the selected bank or cash account balance.
+                </p>
+              ) : null}
+              {paymentStatus === 'PAID' && payWithSelectedCard ? (
+                <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
+                  Credit card: this amount is added to <strong>unbilled charges</strong> on this card (your used limit / available limit updates on the
+                  Credit cards page). The bank account is <strong>not</strong> debited until you record a statement payment.
+                  {payWithSelectedCard.card_limit != null && Number(payWithSelectedCard.card_limit) > 0 ? (
+                    <>
+                      {' '}
+                      Registered limit: <strong>{formatInr(payWithSelectedCard.card_limit)}</strong>.
+                    </>
+                  ) : null}
                 </p>
               ) : null}
             </div>
@@ -613,84 +629,6 @@ export default function PfExpensesPage() {
                 placeholder="e.g. Satya, Brother"
               />
             </div>
-          </div>
-          <div className={`${formSection} space-y-3`}>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Save cards & UPIs for reuse</p>
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-              <div className="min-w-[8rem]">
-                <label htmlFor="exp-new-kind" className={labelCls}>
-                  Type
-                </label>
-                <select
-                  id="exp-new-kind"
-                  className={inputCls}
-                  value={newInstrumentKind}
-                  onChange={(e) => setNewInstrumentKind(e.target.value)}
-                >
-                  <option value="card">Credit card</option>
-                  <option value="upi">UPI</option>
-                </select>
-              </div>
-              <div className="min-w-[10rem]">
-                <label htmlFor="exp-new-acc" className={labelCls}>
-                  Draws from account
-                </label>
-                <select
-                  id="exp-new-acc"
-                  className={inputCls}
-                  value={newInstrumentAccountId}
-                  onChange={(e) => setNewInstrumentAccountId(e.target.value)}
-                >
-                  <option value="">— Select —</option>
-                  {accounts.map((a) => (
-                    <option key={`ni-${a.id}`} value={String(a.id)}>
-                      {a.account_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="min-w-[12rem] flex-1">
-                <label htmlFor="exp-new-label" className={labelCls}>
-                  Name (e.g. HDFC Regalia, GPay personal)
-                </label>
-                <input
-                  id="exp-new-label"
-                  className={inputCls}
-                  value={newInstrumentLabel}
-                  onChange={(e) => setNewInstrumentLabel(e.target.value)}
-                  placeholder="Short label"
-                />
-              </div>
-              <button
-                type="button"
-                disabled={addingInstrument}
-                onClick={handleAddSavedInstrument}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
-              >
-                {addingInstrument ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-            {instruments.length > 0 ? (
-              <ul className="flex flex-wrap gap-2 text-xs">
-                {instruments.map((i) => (
-                  <li
-                    key={i.id}
-                    className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-slate-700"
-                  >
-                    <span className="font-medium capitalize text-slate-500">{i.kind}:</span>
-                    {i.label}
-                    <button
-                      type="button"
-                      className="ml-0.5 rounded p-0.5 text-red-600 hover:bg-red-50"
-                      title="Remove"
-                      onClick={(e) => handleDeleteInstrument(i.id, e)}
-                    >
-                      ×
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
           </div>
           <div className={formSection}>
             <label htmlFor="exp-desc" className={labelCls}>
@@ -813,9 +751,7 @@ export default function PfExpensesPage() {
         {!loading && filteredExpenseRows.length > 0 && editingId == null ? (
           <div className="mt-4 space-y-3 md:hidden">
             {filteredExpenseRows.map((r) => {
-              const payLine = r.payment_instrument_label
-                ? `${methodDisplayLabel(r.payment_method)} · ${r.payment_instrument_label}`
-                : methodDisplayLabel(r.payment_method)
+              const payLine = payLineForRow(r)
               return (
                 <div
                   key={r.id}
@@ -948,11 +884,11 @@ export default function PfExpensesPage() {
                               </optgroup>
                             ) : null}
                             {instruments.some((i) => i.finance_account_id != null) ? (
-                              <optgroup label="Cards & UPI">
+                              <optgroup label="Saved card/UPI (legacy — old expenses only)">
                                 {instruments
                                   .filter((i) => i.finance_account_id != null)
                                   .map((i) => {
-                                    const kindLabel = i.kind === 'card' ? 'Credit card' : 'UPI'
+                                    const kindLabel = i.kind === 'card' ? 'Card' : 'UPI'
                                     const accNm =
                                       accountNameById.get(i.finance_account_id) ?? `#${i.finance_account_id}`
                                     return (
@@ -961,6 +897,16 @@ export default function PfExpensesPage() {
                                       </option>
                                     )
                                   })}
+                              </optgroup>
+                            ) : null}
+                            {creditCards.length ? (
+                              <optgroup label="Registered credit cards (statement)">
+                                {creditCards.map((c) => (
+                                  <option key={`e-cc-${c.id}`} value={`cc:${c.id}`}>
+                                    {c.card_name}
+                                    {c.bank_name ? ` · ${c.bank_name}` : ''}
+                                  </option>
+                                ))}
                               </optgroup>
                             ) : null}
                           </select>
@@ -1042,6 +988,11 @@ export default function PfExpensesPage() {
                       <td className={`${pfTd} text-slate-700`}>{r.paid_by || '—'}</td>
                       <td className={`${pfTd} text-slate-600`}>
                         <span>{methodDisplayLabel(r.payment_method)}</span>
+                        {r.credit_card_label ? (
+                          <span className="mt-0.5 block text-xs font-medium text-slate-500">
+                            → {r.credit_card_label}
+                          </span>
+                        ) : null}
                         {r.payment_instrument_label ? (
                           <span className="mt-0.5 block text-xs font-medium text-slate-500">
                             → {r.payment_instrument_label}

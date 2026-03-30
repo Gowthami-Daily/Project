@@ -52,6 +52,89 @@ class PfPaymentInstrument(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class CreditCard(Base):
+    """Registered credit card for a profile (swipes → expense + ledger row; statement → liability)."""
+
+    __tablename__ = 'credit_cards'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    card_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    bank_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    card_limit: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    billing_cycle_start: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    billing_cycle_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    due_days: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    closing_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    due_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CreditCardBill(Base):
+    __tablename__ = 'credit_card_bills'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    card_id: Mapped[int] = mapped_column(Integer, ForeignKey('credit_cards.id', ondelete='CASCADE'), nullable=False, index=True)
+    bill_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    bill_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    total_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default='PENDING')
+    liability_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_liabilities.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    amount_paid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    minimum_due: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    interest: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    late_fee: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    card: Mapped['CreditCard'] = relationship(back_populates='bills')
+    transactions: Mapped[list['CreditCardTransaction']] = relationship(back_populates='bill')
+
+
+class CreditCardTransaction(Base):
+    """Per-swipe line (linked to ``FinanceExpense`` when posted via expenses UI)."""
+
+    __tablename__ = 'credit_card_transactions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    card_id: Mapped[int] = mapped_column(Integer, ForeignKey('credit_cards.id', ondelete='CASCADE'), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    category_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('pf_expense_categories.id'), nullable=True, index=True
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expense_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_expenses.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    bill_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('credit_card_bills.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    card: Mapped['CreditCard'] = relationship(back_populates='transactions')
+    bill: Mapped['CreditCardBill | None'] = relationship(back_populates='transactions')
+
+
+class CreditCardPayment(Base):
+    __tablename__ = 'credit_card_payments'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    card_id: Mapped[int] = mapped_column(Integer, ForeignKey('credit_cards.id', ondelete='CASCADE'), nullable=False, index=True)
+    bill_id: Mapped[int] = mapped_column(Integer, ForeignKey('credit_card_bills.id', ondelete='CASCADE'), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    payment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    from_account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
+    reference_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+CreditCard.bills = relationship('CreditCardBill', back_populates='card')
+CreditCard.transactions = relationship('CreditCardTransaction', back_populates='card')
+
+
 class Role(Base):
     """Application roles for RBAC (separate from legacy ``User.role`` string)."""
 
@@ -168,6 +251,9 @@ class FinanceExpense(Base):
         nullable=True,
         index=True,
     )
+    credit_card_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('credit_cards.id', ondelete='SET NULL'), nullable=True, index=True
+    )
     is_recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     recurring_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     payment_status: Mapped[str] = mapped_column(String(20), nullable=False, default='PAID')
@@ -175,6 +261,7 @@ class FinanceExpense(Base):
 
     expense_category_rel: Mapped['PfExpenseCategory | None'] = relationship()
     payment_instrument_rel: Mapped['PfPaymentInstrument | None'] = relationship()
+    credit_card_rel: Mapped['CreditCard | None'] = relationship()
 
 
 class FinanceInvestment(Base):
@@ -375,20 +462,35 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
-class AccountTransfer(Base):
-    """Internal transfer of funds between two finance accounts for the same profile."""
+class AccountMovement(Base):
+    """Money movements: internal transfers, external in/out, card pay, loan proceeds / EMI."""
 
-    __tablename__ = 'account_transfers'
+    __tablename__ = 'account_movements'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
-    from_account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
-    to_account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
+    movement_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    from_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
+    )
+    to_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id'), nullable=True, index=True
+    )
+    liability_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_liabilities.id'), nullable=True, index=True
+    )
+    loan_id: Mapped[int | None] = mapped_column(Integer, ForeignKey('loans.id'), nullable=True, index=True)
+    credit_card_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('credit_cards.id'), nullable=True, index=True
+    )
+    credit_card_bill_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('credit_card_bills.id'), nullable=True, index=True
+    )
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
-    transfer_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    transfer_method: Mapped[str] = mapped_column(String(40), nullable=False, default='INTERNAL')
+    movement_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     reference_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_counterparty: Mapped[str | None] = mapped_column(String(120), nullable=True)
     attachment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -407,8 +509,8 @@ class AccountTransaction(Base):
     account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
     transaction_type: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
-    transfer_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey('account_transfers.id', ondelete='SET NULL'), nullable=True, index=True
+    movement_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('account_movements.id', ondelete='SET NULL'), nullable=True, index=True
     )
     entry_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     reference_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
