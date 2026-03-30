@@ -319,20 +319,16 @@ def ensure_account_movements_schema(engine: Engine) -> None:
 
     has_old = insp.has_table('account_transfers')
     has_new = insp.has_table('account_movements')
-    if has_old and has_new:
-        # Rare; prefer new table — leave as-is if both exist (manual fix).
-        return
-
     if dialect == 'sqlite':
         if has_old and not has_new:
             _sqlite_migrate_transfers_to_movements(engine)
-        elif has_new:
+        if has_new:
             _sqlite_patch_movement_columns(engine)
         _sqlite_migrate_account_tx_movement_id(engine)
     else:
         if has_old and not has_new:
             _pg_migrate_transfers_to_movements(engine)
-        elif has_new:
+        if has_new:
             _pg_patch_movement_columns(engine)
         _pg_migrate_account_tx_movement_id(engine)
 

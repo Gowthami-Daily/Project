@@ -230,6 +230,7 @@ export default function PfLoansPage() {
   const [emiSettlement, setEmiSettlement] = useState('receipt')
   const [showRecordPaymentForm, setShowRecordPaymentForm] = useState(false)
   const [showAddAmountForm, setShowAddAmountForm] = useState(false)
+  const [showBorrowerProfileForm, setShowBorrowerProfileForm] = useState(false)
   const [loanExportBusy, setLoanExportBusy] = useState(false)
   const [loanSummary, setLoanSummary] = useState(null)
   const [filterLoanType, setFilterLoanType] = useState('ALL')
@@ -339,6 +340,7 @@ export default function PfLoansPage() {
     setDetailPhone(viewLoan.borrower_phone ?? '')
     setDetailAddress(viewLoan.borrower_address ?? '')
     setDetailNotes(viewLoan.notes ?? '')
+    setShowBorrowerProfileForm(false)
   }, [
     viewLoan?.id,
     viewLoan?.borrower_phone,
@@ -1462,6 +1464,7 @@ export default function PfLoansPage() {
                   onClick={() => {
                     setShowRecordPaymentForm(false)
                     setShowAddAmountForm(false)
+                    setShowBorrowerProfileForm(false)
                     setViewLoan(null)
                   }}
                   className={pfModalCloseBtn}
@@ -1472,50 +1475,15 @@ export default function PfLoansPage() {
               </div>
             </div>
 
-            <form
-              onSubmit={handleSaveBorrowerMeta}
-              className="mt-4 rounded-xl border border-sky-100 bg-sky-50/40 p-4 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]/80"
-            >
-              <p className="text-xs font-bold uppercase tracking-wide text-sky-900 dark:text-sky-200">Borrower profile</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className={labelCls} htmlFor="pf-d-phone">
-                    Phone
-                  </label>
-                  <input
-                    id="pf-d-phone"
-                    className={inputCls}
-                    value={detailPhone}
-                    onChange={(e) => setDetailPhone(e.target.value)}
-                    inputMode="tel"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-d-addr">
-                    Address
-                  </label>
-                  <input id="pf-d-addr" className={inputCls} value={detailAddress} onChange={(e) => setDetailAddress(e.target.value)} />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-d-notes">
-                    Notes
-                  </label>
-                  <textarea
-                    id="pf-d-notes"
-                    rows={2}
-                    className={`${inputCls} resize-y`}
-                    value={detailNotes}
-                    onChange={(e) => setDetailNotes(e.target.value)}
-                  />
-                </div>
-              </div>
-              <button type="submit" disabled={savingBorrowerMeta} className={`${btnSecondary} mt-3 text-xs`}>
-                {savingBorrowerMeta ? 'Saving…' : 'Save borrower details'}
-              </button>
-            </form>
-
             {!detailLoading ? (
               <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`${btnSecondary} text-xs`}
+                  onClick={() => setShowBorrowerProfileForm((v) => !v)}
+                >
+                  {showBorrowerProfileForm ? 'Hide borrower profile' : 'Edit borrower profile'}
+                </button>
                 {hasEmiSchedule && String(viewLoan.status || '').toUpperCase() !== 'CLOSED' ? (
                   <button
                     type="button"
@@ -1557,6 +1525,50 @@ export default function PfLoansPage() {
                   </button>
                 ) : null}
               </div>
+            ) : null}
+
+            {showBorrowerProfileForm ? (
+              <form
+                onSubmit={handleSaveBorrowerMeta}
+                className="mt-4 rounded-xl border border-sky-100 bg-sky-50/40 p-4 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]/80"
+              >
+                <p className="text-xs font-bold uppercase tracking-wide text-sky-900 dark:text-sky-200">Borrower profile</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={labelCls} htmlFor="pf-d-phone">
+                      Phone
+                    </label>
+                    <input
+                      id="pf-d-phone"
+                      className={inputCls}
+                      value={detailPhone}
+                      onChange={(e) => setDetailPhone(e.target.value)}
+                      inputMode="tel"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={labelCls} htmlFor="pf-d-addr">
+                      Address
+                    </label>
+                    <input id="pf-d-addr" className={inputCls} value={detailAddress} onChange={(e) => setDetailAddress(e.target.value)} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={labelCls} htmlFor="pf-d-notes">
+                      Notes
+                    </label>
+                    <textarea
+                      id="pf-d-notes"
+                      rows={2}
+                      className={`${inputCls} resize-y`}
+                      value={detailNotes}
+                      onChange={(e) => setDetailNotes(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <button type="submit" disabled={savingBorrowerMeta} className={`${btnSecondary} mt-3 text-xs`}>
+                  {savingBorrowerMeta ? 'Saving…' : 'Save borrower details'}
+                </button>
+              </form>
             ) : null}
 
             <div ref={scheduleSectionRef} className="mt-2">

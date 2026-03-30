@@ -101,13 +101,13 @@ function rowDetail(r) {
 /** Sticky row label + month columns (financial tables) */
 const tableShell = `mt-4 ${pfTableWrap}`
 const thCorner =
-  'sticky left-0 z-20 min-w-[8.5rem] bg-sky-100 px-3 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-sky-950 border-b border-sky-200/90 border-r border-sky-200/60'
+  'sticky left-0 z-20 min-w-[8.5rem] bg-sky-100 px-3 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-sky-950 border-b border-sky-200/90 border-r border-sky-200/60 dark:border-[var(--pf-border)] dark:bg-[var(--pf-th-bg)] dark:text-[var(--pf-text-muted)]'
 const thMonth =
-  'bg-sky-100 px-3 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-sky-950 border-b border-sky-200/90 whitespace-nowrap min-w-[5.5rem]'
+  'bg-sky-100 px-3 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-sky-950 border-b border-sky-200/90 whitespace-nowrap min-w-[5.5rem] dark:border-[var(--pf-border)] dark:bg-[var(--pf-th-bg)] dark:text-[var(--pf-text-muted)]'
 const tdLabel =
-  'sticky left-0 z-10 bg-sky-50/90 px-3 py-2.5 text-sm font-semibold text-slate-800 border-b border-sky-100 border-r border-sky-100/80 shadow-[2px_0_8px_-2px_rgba(14,165,233,0.08)]'
+  'sticky left-0 z-10 bg-sky-50/90 px-3 py-2.5 text-sm font-semibold text-slate-800 border-b border-sky-100 border-r border-sky-100/80 shadow-[2px_0_8px_-2px_rgba(14,165,233,0.08)] dark:border-[var(--pf-border)] dark:bg-[var(--pf-card-hover)] dark:text-[var(--pf-text)] dark:shadow-none'
 const tdVal =
-  'border-b border-sky-100/90 px-3 py-2.5 text-right text-sm font-mono tabular-nums text-slate-800'
+  'border-b border-sky-100/90 px-3 py-2.5 text-right text-sm font-mono tabular-nums text-slate-800 dark:border-[var(--pf-border)] dark:text-[var(--pf-text)]'
 
 export default function PfMonthlyStatementsPage() {
   const { onSessionInvalid } = useOutletContext() || {}
