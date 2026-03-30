@@ -188,6 +188,8 @@ export default function PfTransferPage() {
   const [ccBillId, setCcBillId] = useState('')
 
   const [stmtOpen, setStmtOpen] = useState(false)
+  /** When false, the page opens on the movements list; user expands the form from the top bar. */
+  const [showAddForm, setShowAddForm] = useState(false)
 
   const borrowLiabilities = useMemo(
     () =>
@@ -253,6 +255,12 @@ export default function PfTransferPage() {
   useEffect(() => {
     loadHistory()
   }, [loadHistory, tick])
+
+  useEffect(() => {
+    if (!showAddForm) return
+    const el = document.getElementById('pf-add-movement-panel')
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [showAddForm])
 
   useEffect(() => {
     const lid = Number(liabilityId)
@@ -334,6 +342,7 @@ export default function PfTransferPage() {
           })
         }
         resetFormPartial()
+        setShowAddForm(false)
         await loadCore()
         await loadHistory()
         refresh()
@@ -428,6 +437,7 @@ export default function PfTransferPage() {
     try {
       await postAccountMovement(body)
       resetFormPartial()
+      setShowAddForm(false)
       await loadCore()
       await loadHistory()
       refresh()
@@ -462,7 +472,7 @@ export default function PfTransferPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--pf-primary)]/15 text-[var(--pf-primary)]">
             <ArrowsRightLeftIcon className="h-6 w-6" />
@@ -474,11 +484,22 @@ export default function PfTransferPage() {
             </p>
           </div>
         </div>
-        {accounts.length > 0 ? (
-          <button type="button" className={btnSecondary} onClick={() => setStmtOpen(true)}>
-            View account statement
+        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          <button
+            type="button"
+            className={showAddForm ? btnSecondary : btnPrimary}
+            onClick={() => setShowAddForm((v) => !v)}
+            aria-expanded={showAddForm}
+            aria-controls="pf-add-movement-panel"
+          >
+            {showAddForm ? 'Hide form' : 'Add movement'}
           </button>
-        ) : null}
+          {accounts.length > 0 ? (
+            <button type="button" className={btnSecondary} onClick={() => setStmtOpen(true)}>
+              View account statement
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {error ? (
@@ -487,13 +508,64 @@ export default function PfTransferPage() {
         </div>
       ) : null}
 
-      <div className={`${cardCls} max-w-3xl`}>
-        {loading ? (
+      <section className={cardCls} aria-label="Recent movements">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--pf-text)]">Recent movements</h2>
+            {!showAddForm ? (
+              <p className="mt-0.5 text-xs text-[var(--pf-text-muted)]">Click &quot;Add movement&quot; above when you want to record a new one.</p>
+            ) : null}
+          </div>
+          <button type="button" className={btnSecondary} onClick={() => loadHistory()} disabled={histLoading}>
+            Refresh
+          </button>
+        </div>
+        {histLoading ? (
           <p className="text-sm text-[var(--pf-text-muted)]">Loading…</p>
-        ) : needTwoAccounts && !internalOk ? (
-          <p className="text-sm text-[var(--pf-text-muted)]">You need at least two accounts for internal transfers. Add accounts first.</p>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-[var(--pf-text-muted)]">No movements yet.</p>
         ) : (
-          <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
+          <div className={pfTableWrap}>
+            <table className={pfTable}>
+              <thead>
+                <tr>
+                  <th className={pfTh}>Date</th>
+                  <th className={pfTh}>Type</th>
+                  <th className={pfTh}>From</th>
+                  <th className={pfTh}>To</th>
+                  <th className={pfThRight}>Amount</th>
+                  <th className={pfTh}>Reference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((r) => (
+                  <tr key={r.id} className={pfTrHover}>
+                    <td className={pfTd}>{r.movement_date}</td>
+                    <td className={pfTd}>{humanizeMovementType(r.movement_type)}</td>
+                    <td className={pfTd}>{accountLabel(r.from_account_id)}</td>
+                    <td className={pfTd}>{accountLabel(r.to_account_id)}</td>
+                    <td className={pfTdRight}>{formatInr(r.amount)}</td>
+                    <td className={pfTd}>{r.reference_number || r.external_counterparty || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {showAddForm ? (
+        <div id="pf-add-movement-panel" className={`${cardCls} max-w-3xl scroll-mt-4`}>
+          <div className="mb-4 border-b border-[var(--pf-border)] pb-3">
+            <h2 className="text-base font-bold text-[var(--pf-text)]">New movement</h2>
+            <p className="mt-1 text-xs text-[var(--pf-text-muted)]">Fill the form below, then save. Balances and ledger lines update immediately.</p>
+          </div>
+          {loading ? (
+            <p className="text-sm text-[var(--pf-text-muted)]">Loading…</p>
+          ) : needTwoAccounts && !internalOk ? (
+            <p className="text-sm text-[var(--pf-text-muted)]">You need at least two accounts for internal transfers. Add accounts first.</p>
+          ) : (
+            <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <label className={labelCls} htmlFor="pf-mov-type">
                 Transfer type
@@ -883,47 +955,7 @@ export default function PfTransferPage() {
           </form>
         )}
       </div>
-
-      <section className={cardCls}>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-[var(--pf-text)]">Recent movements</h2>
-          <button type="button" className={btnSecondary} onClick={() => loadHistory()} disabled={histLoading}>
-            Refresh
-          </button>
-        </div>
-        {histLoading ? (
-          <p className="text-sm text-[var(--pf-text-muted)]">Loading…</p>
-        ) : history.length === 0 ? (
-          <p className="text-sm text-[var(--pf-text-muted)]">No movements yet.</p>
-        ) : (
-          <div className={pfTableWrap}>
-            <table className={pfTable}>
-              <thead>
-                <tr>
-                  <th className={pfTh}>Date</th>
-                  <th className={pfTh}>Type</th>
-                  <th className={pfTh}>From</th>
-                  <th className={pfTh}>To</th>
-                  <th className={pfThRight}>Amount</th>
-                  <th className={pfTh}>Reference</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((r) => (
-                  <tr key={r.id} className={pfTrHover}>
-                    <td className={pfTd}>{r.movement_date}</td>
-                    <td className={pfTd}>{humanizeMovementType(r.movement_type)}</td>
-                    <td className={pfTd}>{accountLabel(r.from_account_id)}</td>
-                    <td className={pfTd}>{accountLabel(r.to_account_id)}</td>
-                    <td className={pfTdRight}>{formatInr(r.amount)}</td>
-                    <td className={pfTd}>{r.reference_number || r.external_counterparty || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      ) : null}
 
       {stmtOpen ? <StatementModal accounts={accounts} onClose={() => setStmtOpen(false)} onSessionInvalid={onSessionInvalid} /> : null}
     </div>
