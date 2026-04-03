@@ -96,11 +96,11 @@
 @keyframes pf-modal-open {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.98);
+    transform: scale(0.96);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: scale(1);
   }
 }
 
@@ -199,8 +199,8 @@
   justify-content: center;
   padding: 0;
   background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .pf-app .pf-modal-overlay.pf-modal-overlay--60 {
@@ -249,8 +249,27 @@
   }
 
   .pf-app .pf-modal-surface.pf-modal-surface--animate {
-    animation: pf-modal-open 0.2s ease forwards;
+    animation: pf-modal-open 0.18s ease forwards;
   }
+}
+
+/* Design-system glass modal panel (AppModal) */
+.pf-app:not(.dark) .pf-ds-modal-glass {
+  background: rgba(255, 255, 255, 0.96) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18) !important;
+}
+
+.pf-app.dark .pf-ds-modal-glass {
+  background: rgba(20, 20, 20, 0.92) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5) !important;
 }
 
 /* Inputs inside modal panels — ensure darkest well in dark mode */

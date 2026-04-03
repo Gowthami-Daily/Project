@@ -19,6 +19,10 @@ def reports_summary(
     account_id: int | None = Query(None),
     expense_category_id: int | None = Query(None, description='Pf expense category id'),
     person: str | None = Query(None, description='Matches expense paid_by / income received_from'),
+    expense_account_type: str | None = Query(
+        None,
+        description='Filter expenses by linked account canonical type (e.g. BANK, UNLINKED)',
+    ),
 ) -> dict:
     try:
         return pf_reports_service.reports_summary(
@@ -29,6 +33,7 @@ def reports_summary(
             account_id=account_id,
             expense_category_id=expense_category_id,
             person_filter=person,
+            expense_account_type=expense_account_type,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

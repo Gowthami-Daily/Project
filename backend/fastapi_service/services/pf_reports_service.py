@@ -215,6 +215,7 @@ def _expense_category_stacked_months(
     account_id: int | None,
     expense_category_id: int | None,
     pf_exp: str | None,
+    expense_type_filter: dict | None = None,
     max_cats: int = 7,
 ) -> tuple[list[dict], list[str]]:
     month_chunks = list(_month_slices(start, end))
@@ -229,6 +230,7 @@ def _expense_category_stacked_months(
             account_id=account_id,
             expense_category_id=expense_category_id,
             paid_by_contains=pf_exp,
+            expense_type_filter=expense_type_filter,
         )
         d = {str(c): float(a) for c, a in cats}
         per_month.append(d)
@@ -260,6 +262,7 @@ def _cumulative_daily_net_scoped(
     account_id: int | None,
     expense_category_id: int | None,
     pf_exp: str | None,
+    expense_type_filter: dict | None = None,
 ) -> list[dict]:
     inc_rows = pf_finance_repo.income_by_day_scoped(
         db, profile_id, start, end, account_id=account_id, income_category_id=None, person_contains=pf_exp
@@ -272,6 +275,7 @@ def _cumulative_daily_net_scoped(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=expense_type_filter,
     )
     by_day: dict[date, float] = defaultdict(float)
     for d0, a in inc_rows:
@@ -325,6 +329,7 @@ def reports_summary(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     person_filter: str | None = None,
+    expense_account_type: str | None = None,
 ) -> dict:
     """
     Analytics bundle for the reports dashboard: KPIs, trends vs prior window, breakdowns, monthly series, insights.
@@ -336,6 +341,9 @@ def reports_summary(
         raise ValueError('Date range cannot exceed 400 days')
     p_start, p_end = _prior_period(start, end)
     pf_exp = (person_filter or '').strip() or None
+    ex_type_f = pf_finance_repo.resolve_expense_account_type_sql_filter(
+        db, profile_id, expense_account_type
+    )
 
     inc = pf_finance_repo.sum_income_scoped(
         db, profile_id, start, end, account_id=account_id, person_contains=pf_exp
@@ -348,6 +356,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
     )
     inc_p = pf_finance_repo.sum_income_scoped(
         db, profile_id, p_start, p_end, account_id=account_id, person_contains=pf_exp
@@ -360,6 +369,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
     )
 
     net = inc - exp
@@ -373,6 +383,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
     )
     emi_exp_p = pf_finance_repo.sum_expense_emi_scoped(
         db,
@@ -382,6 +393,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
     )
 
     liab_pay = pf_finance_repo.sum_liability_cash_paid_in_range(db, profile_id, start, end)
@@ -409,6 +421,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
     )
     by_person_raw = pf_finance_repo.expense_by_paid_by_scoped(
         db,
@@ -418,6 +431,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
     )
     by_acc_raw = pf_finance_repo.expense_by_account_scoped(
         db,
@@ -427,6 +441,17 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
+    )
+    by_acc_type_raw = pf_finance_repo.expense_totals_by_account_type_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+        expense_type_filter=ex_type_f,
     )
 
     expense_total_for_pct = exp if exp > 0.01 else 0.0
@@ -446,6 +471,14 @@ def reports_summary(
         }
         for i, n, a in by_acc_raw
     ]
+    expense_by_account_type = [
+        {
+            'account_type': r['account_type'],
+            'amount': round(float(r['amount']), 2),
+            'pct': _pct_share(float(r['amount']), expense_total_for_pct),
+        }
+        for r in by_acc_type_raw
+    ]
 
     income_vs_expense_monthly = []
     monthly_summary = []
@@ -461,6 +494,7 @@ def reports_summary(
             account_id=account_id,
             expense_category_id=expense_category_id,
             paid_by_contains=pf_exp,
+            expense_type_filter=ex_type_f,
         )
         em = pf_finance_repo.sum_expense_emi_scoped(
             db,
@@ -470,6 +504,7 @@ def reports_summary(
             account_id=account_id,
             expense_category_id=expense_category_id,
             paid_by_contains=pf_exp,
+            expense_type_filter=ex_type_f,
         )
         income_vs_expense_monthly.append(
             {'month': key, 'label': label, 'income': round(mi, 2), 'expense': round(mx, 2)}
@@ -510,6 +545,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         pf_exp=pf_exp,
+        expense_type_filter=ex_type_f,
     )
 
     cumulative_daily = _cumulative_daily_net_scoped(
@@ -520,6 +556,7 @@ def reports_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         pf_exp=pf_exp,
+        expense_type_filter=ex_type_f,
     )
 
     balance_trend = _balance_sheet_trend_for_range(db, profile_id, start, end, account_id)
@@ -634,6 +671,7 @@ def reports_summary(
         {
             'account_id': a.id,
             'account_name': a.account_name,
+            'account_type': pf_finance_repo.canonical_account_type(a),
             'balance': round(float(a.balance), 2),
         }
         for a in pf_finance_repo.list_accounts(db, profile_id, 0, 200)
@@ -739,6 +777,7 @@ def reports_summary(
             'account_id': account_id,
             'expense_category_id': expense_category_id,
             'person': pf_exp,
+            'expense_account_type': expense_account_type,
         },
         'kpis': {
             'total_income': _trend_block(inc, inc_p),
@@ -763,6 +802,7 @@ def reports_summary(
         'expense_by_category': expense_by_category,
         'expense_by_person': expense_by_person,
         'expense_by_account': expense_by_account,
+        'expense_by_account_type': expense_by_account_type,
         'income_vs_expense_monthly': income_vs_expense_monthly,
         'monthly_summary': monthly_summary,
         'emi_breakdown': emi_breakdown,

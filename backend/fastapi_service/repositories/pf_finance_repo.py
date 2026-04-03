@@ -2,6 +2,7 @@ import calendar
 from datetime import date, timedelta
 
 from sqlalchemy import and_, delete, extract, func, or_, select, update
+from sqlalchemy.sql.expression import false
 from sqlalchemy.orm import Session, selectinload
 
 from fastapi_service.models_extended import (
@@ -40,8 +41,10 @@ def add_months(d: date, months: int) -> date:
 
 
 def investment_allocation_by_type(db: Session, profile_id: int) -> list[dict]:
+    """By **market / book** value: COALESCE(current_value, invested_amount) per type."""
+    cv = func.coalesce(FinanceInvestment.current_value, FinanceInvestment.invested_amount)
     stmt = (
-        select(FinanceInvestment.investment_type, func.sum(FinanceInvestment.invested_amount))
+        select(FinanceInvestment.investment_type, func.sum(cv))
         .where(FinanceInvestment.profile_id == profile_id)
         .group_by(FinanceInvestment.investment_type)
     )
@@ -822,6 +825,9 @@ def list_accounts(db: Session, profile_id: int, skip: int, limit: int) -> list[F
 
 
 def create_account(db: Session, row: FinanceAccount) -> FinanceAccount:
+    from fastapi_service.constants.finance_account_types import normalize_finance_account_type
+
+    row.account_type = normalize_finance_account_type(row.account_type)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -837,6 +843,33 @@ def get_account_for_profile(db: Session, account_id: int, profile_id: int) -> Fi
 
 def update_account_balance(db: Session, row: FinanceAccount, balance: float) -> FinanceAccount:
     row.balance = balance
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def patch_finance_account(
+    db: Session,
+    row: FinanceAccount,
+    *,
+    balance: float | None = None,
+    account_type: str | None = None,
+    account_name: str | None = None,
+    include_in_networth: bool | None = None,
+    include_in_liquid: bool | None = None,
+) -> FinanceAccount:
+    from fastapi_service.constants.finance_account_types import normalize_finance_account_type
+
+    if balance is not None:
+        row.balance = balance
+    if account_type is not None:
+        row.account_type = normalize_finance_account_type(account_type)
+    if account_name is not None:
+        row.account_name = account_name.strip()[:200]
+    if include_in_networth is not None:
+        row.include_in_networth = include_in_networth
+    if include_in_liquid is not None:
+        row.include_in_liquid = include_in_liquid
     db.commit()
     db.refresh(row)
     return row
@@ -1460,16 +1493,71 @@ def sum_pending_loan_schedule_emis(db: Session, profile_id: int) -> float:
 
 
 def sum_account_balances_cash_vs_bank(db: Session, profile_id: int) -> dict[str, float]:
+    """Backward-compatible buckets: bank = BANK; cash bucket = CASH + WALLET (historical UX)."""
+    liq = sum_liquid_balances_detailed(db, profile_id)
+    bank = liq['BANK']
+    cash_bucket = liq['CASH'] + liq['WALLET']
+    return {'cash': cash_bucket, 'bank': bank, 'total': cash_bucket + bank}
+
+
+def canonical_account_type(a: FinanceAccount) -> str:
+    from fastapi_service.constants.finance_account_types import normalize_finance_account_type
+
+    return normalize_finance_account_type(a.account_type)
+
+
+def _canon_type_row(a: FinanceAccount) -> str:
+    return canonical_account_type(a)
+
+
+def sum_liquid_balances_detailed(db: Session, profile_id: int) -> dict[str, float]:
+    """BANK / CASH / WALLET sums (only rows with include_in_liquid=True when column exists)."""
     rows = list_accounts(db, profile_id, 0, 500)
-    cash = 0.0
-    bank = 0.0
+    out = {'BANK': 0.0, 'CASH': 0.0, 'WALLET': 0.0}
     for a in rows:
-        t = (a.account_type or '').lower()
-        if 'cash' in t or 'wallet' in t or t in ('petty', 'hand'):
-            cash += float(a.balance)
-        else:
-            bank += float(a.balance)
-    return {'cash': cash, 'bank': bank, 'total': cash + bank}
+        liq = getattr(a, 'include_in_liquid', True)
+        if liq is False:
+            continue
+        ct = _canon_type_row(a)
+        if ct == 'BANK':
+            out['BANK'] += float(a.balance)
+        elif ct == 'CASH':
+            out['CASH'] += float(a.balance)
+        elif ct == 'WALLET':
+            out['WALLET'] += float(a.balance)
+    return out
+
+
+def sum_balances_by_account_type(db: Session, profile_id: int) -> dict[str, float]:
+    """Totals per canonical account_type (include_in_networth only for asset-side display; include all for completeness)."""
+    rows = list_accounts(db, profile_id, 0, 500)
+    buckets: dict[str, float] = {}
+    for a in rows:
+        ct = _canon_type_row(a)
+        buckets[ct] = buckets.get(ct, 0.0) + float(a.balance)
+    return buckets
+
+
+def net_worth_from_finance_accounts_only(db: Session, profile_id: int) -> float | None:
+    """
+    NW = asset-type account balances − liability-type account balances (include_in_networth only).
+    Excludes investments/assets/loans outside finance_accounts; use dashboard net_worth for full picture.
+    """
+    rows = list_accounts(db, profile_id, 0, 500)
+    asset_types = frozenset({'BANK', 'CASH', 'WALLET', 'INVESTMENT', 'LOAN_GIVEN', 'ASSET'})
+    liab_types = frozenset({'CREDIT_CARD', 'LOAN_TAKEN'})
+    assets = 0.0
+    liabs = 0.0
+    for a in rows:
+        if getattr(a, 'include_in_networth', True) is False:
+            continue
+        ct = _canon_type_row(a)
+        b = float(a.balance)
+        if ct in asset_types:
+            assets += b
+        elif ct in liab_types:
+            liabs += b
+    return assets - liabs
 
 
 def sum_expense_categories_exact(
@@ -1557,6 +1645,24 @@ def expense_by_account_breakdown(
     return [(r[0], str(r[1]), float(r[2])) for r in db.execute(stmt).all()]
 
 
+def resolve_expense_account_type_sql_filter(
+    db: Session, profile_id: int, raw: str | None
+) -> dict | None:
+    """Narrow expenses by linked account's canonical type, or UNLINKED (no account). None = no filter."""
+    if raw is None or not str(raw).strip():
+        return None
+    s = str(raw).strip()
+    if s.upper() == 'UNLINKED':
+        return {'unlinked': True}
+    from fastapi_service.constants.finance_account_types import normalize_finance_account_type
+
+    t = normalize_finance_account_type(s)
+    ids = [
+        a.id for a in list_accounts(db, profile_id, 0, 500) if canonical_account_type(a) == t
+    ]
+    return {'ids': ids}
+
+
 def _expense_scope(
     profile_id: int,
     start: date | None,
@@ -1564,6 +1670,8 @@ def _expense_scope(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     paid_by_contains: str | None = None,
+    *,
+    expense_type_filter: dict | None = None,
 ):
     conds = [FinanceExpense.profile_id == profile_id]
     if start is not None:
@@ -1577,6 +1685,15 @@ def _expense_scope(
     pb = (paid_by_contains or '').strip()
     if pb:
         conds.append(FinanceExpense.paid_by.ilike(f'%{pb}%'))
+    if expense_type_filter:
+        if expense_type_filter.get('unlinked'):
+            conds.append(FinanceExpense.account_id.is_(None))
+        elif 'ids' in expense_type_filter:
+            ids = expense_type_filter['ids']
+            if not ids:
+                conds.append(false())
+            else:
+                conds.append(FinanceExpense.account_id.in_(ids))
     return and_(*conds)
 
 
@@ -1617,9 +1734,18 @@ def sum_expense_scoped(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     paid_by_contains: str | None = None,
+    expense_type_filter: dict | None = None,
 ) -> float:
     stmt = select(func.coalesce(func.sum(FinanceExpense.amount), 0)).where(
-        _expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains)
+        _expense_scope(
+            profile_id,
+            start,
+            end,
+            account_id,
+            expense_category_id,
+            paid_by_contains,
+            expense_type_filter=expense_type_filter,
+        )
     )
     return float(db.scalar(stmt) or 0)
 
@@ -1649,10 +1775,21 @@ def expense_by_category_scoped(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     paid_by_contains: str | None = None,
+    expense_type_filter: dict | None = None,
 ) -> list[tuple[str, float]]:
     stmt = (
         select(FinanceExpense.category, func.sum(FinanceExpense.amount))
-        .where(_expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains))
+        .where(
+            _expense_scope(
+                profile_id,
+                start,
+                end,
+                account_id,
+                expense_category_id,
+                paid_by_contains,
+                expense_type_filter=expense_type_filter,
+            )
+        )
         .group_by(FinanceExpense.category)
         .order_by(func.sum(FinanceExpense.amount).desc())
     )
@@ -1668,9 +1805,18 @@ def expense_by_paid_by_scoped(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     paid_by_contains: str | None = None,
+    expense_type_filter: dict | None = None,
 ) -> list[tuple[str, float]]:
     stmt = select(FinanceExpense.paid_by, func.sum(FinanceExpense.amount)).where(
-        _expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains)
+        _expense_scope(
+            profile_id,
+            start,
+            end,
+            account_id,
+            expense_category_id,
+            paid_by_contains,
+            expense_type_filter=expense_type_filter,
+        )
     )
     stmt = stmt.group_by(FinanceExpense.paid_by)
     merged: dict[str, float] = {}
@@ -1689,16 +1835,68 @@ def expense_by_account_scoped(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     paid_by_contains: str | None = None,
+    expense_type_filter: dict | None = None,
 ) -> list[tuple[int | None, str, float]]:
     an = func.coalesce(FinanceAccount.account_name, '(No account)')
     stmt = (
         select(FinanceExpense.account_id, an, func.sum(FinanceExpense.amount))
         .outerjoin(FinanceAccount, FinanceExpense.account_id == FinanceAccount.id)
-        .where(_expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains))
+        .where(
+            _expense_scope(
+                profile_id,
+                start,
+                end,
+                account_id,
+                expense_category_id,
+                paid_by_contains,
+                expense_type_filter=expense_type_filter,
+            )
+        )
         .group_by(FinanceExpense.account_id, an)
         .order_by(func.sum(FinanceExpense.amount).desc())
     )
     return [(r[0], str(r[1]), float(r[2])) for r in db.execute(stmt).all()]
+
+
+def expense_totals_by_account_type_scoped(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+    expense_type_filter: dict | None = None,
+) -> list[dict]:
+    """Expense sums grouped by canonical finance account type (UNLINKED when no account)."""
+    from fastapi_service.constants.finance_account_types import normalize_finance_account_type
+
+    stmt = (
+        select(FinanceAccount.account_type, func.sum(FinanceExpense.amount))
+        .select_from(FinanceExpense)
+        .outerjoin(FinanceAccount, FinanceExpense.account_id == FinanceAccount.id)
+        .where(
+            _expense_scope(
+                profile_id,
+                start,
+                end,
+                account_id,
+                expense_category_id,
+                paid_by_contains,
+                expense_type_filter=expense_type_filter,
+            )
+        )
+        .group_by(FinanceAccount.account_type)
+    )
+    merged: dict[str, float] = {}
+    for raw_type, total in db.execute(stmt).all():
+        key = 'UNLINKED' if raw_type is None else normalize_finance_account_type(str(raw_type))
+        merged[key] = merged.get(key, 0.0) + float(total)
+    return [
+        {'account_type': k, 'amount': round(v, 2)}
+        for k, v in sorted(merged.items(), key=lambda x: -x[1])
+    ]
 
 
 def income_by_day_scoped(
@@ -1729,10 +1927,21 @@ def expense_by_day_scoped(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     paid_by_contains: str | None = None,
+    expense_type_filter: dict | None = None,
 ) -> list[tuple[date, float]]:
     stmt = (
         select(FinanceExpense.entry_date, func.sum(FinanceExpense.amount))
-        .where(_expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains))
+        .where(
+            _expense_scope(
+                profile_id,
+                start,
+                end,
+                account_id,
+                expense_category_id,
+                paid_by_contains,
+                expense_type_filter=expense_type_filter,
+            )
+        )
         .group_by(FinanceExpense.entry_date)
         .order_by(FinanceExpense.entry_date)
     )
@@ -1748,10 +1957,19 @@ def sum_expense_emi_scoped(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     paid_by_contains: str | None = None,
+    expense_type_filter: dict | None = None,
 ) -> float:
     emi_exact = ('EMI – Loans', 'EMI – Credit Card')
     stmt = select(func.coalesce(func.sum(FinanceExpense.amount), 0)).where(
-        _expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains),
+        _expense_scope(
+            profile_id,
+            start,
+            end,
+            account_id,
+            expense_category_id,
+            paid_by_contains,
+            expense_type_filter=expense_type_filter,
+        ),
         or_(
             FinanceExpense.category.in_(emi_exact),
             FinanceExpense.category.ilike('%EMI%'),
@@ -3361,6 +3579,11 @@ def create_account_movement(
         return mv
 
     raise ValueError('Unknown movement_type')
+
+
+def count_account_movements(db: Session, profile_id: int) -> int:
+    stmt = select(func.count()).select_from(AccountMovement).where(AccountMovement.profile_id == profile_id)
+    return int(db.scalar(stmt) or 0)
 
 
 def list_account_movements(

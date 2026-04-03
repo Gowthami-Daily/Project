@@ -51,11 +51,29 @@ def summary(
         balance_cash = float(acc.balance) if is_cash_slot else 0.0
         balance_bank = 0.0 if is_cash_slot else float(acc.balance)
         balance_total = float(acc.balance)
+        liq = {'BANK': 0.0, 'CASH': 0.0, 'WALLET': 0.0}
+        ct = pf_finance_repo.canonical_account_type(acc)
+        if ct in liq and getattr(acc, 'include_in_liquid', True):
+            liq[ct] = float(acc.balance)
+        liquid_bank = liq['BANK']
+        liquid_cash = liq['CASH']
+        liquid_wallet = liq['WALLET']
+        liquid_total = liquid_bank + liquid_cash + liquid_wallet
+        account_balances_by_type = {ct: float(acc.balance)}
     else:
         cash_balance = pf_finance_repo.sum_account_balances(db, profile_id)
         balance_cash = split['cash']
         balance_bank = split['bank']
         balance_total = split['total']
+        liq = pf_finance_repo.sum_liquid_balances_detailed(db, profile_id)
+        liquid_bank = liq['BANK']
+        liquid_cash = liq['CASH']
+        liquid_wallet = liq['WALLET']
+        liquid_total = liquid_bank + liquid_cash + liquid_wallet
+        account_balances_by_type = pf_finance_repo.sum_balances_by_account_type(db, profile_id)
+    abt = account_balances_by_type
+    finance_loans_given_balance = float(abt.get('LOAN_GIVEN', 0.0))
+    finance_loans_taken_balance = float(abt.get('LOAN_TAKEN', 0.0))
     loan_receivable = pf_finance_repo.sum_loan_outstanding(db, profile_id)
     liability_overdue = pf_finance_repo.sum_liabilities_outstanding_overdue(db, profile_id, today=today)
     liability_due_week = pf_finance_repo.liabilities_due_between(db, profile_id, today, today + timedelta(days=7))
@@ -69,6 +87,7 @@ def summary(
         + loan_receivable
         - total_liabilities
     )
+    net_worth_finance_accounts_only = pf_finance_repo.net_worth_from_finance_accounts_only(db, profile_id)
     uni = 0.0
     une = 0.0
     if account_id is None:
@@ -87,6 +106,14 @@ def summary(
         'balance_cash': balance_cash,
         'balance_bank': balance_bank,
         'balance_total': balance_total,
+        'liquid_bank': liquid_bank,
+        'liquid_cash': liquid_cash,
+        'liquid_wallet': liquid_wallet,
+        'liquid_total': liquid_total,
+        'account_balances_by_type': account_balances_by_type,
+        'finance_loans_given_balance': finance_loans_given_balance,
+        'finance_loans_taken_balance': finance_loans_taken_balance,
+        'net_worth_finance_accounts_only': net_worth_finance_accounts_only,
         'loan_outstanding': loan_receivable,
         'loan_receivable': loan_receivable,
         'period_start': start.isoformat(),

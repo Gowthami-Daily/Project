@@ -1,6 +1,6 @@
 import { PencilSquareIcon, PlusCircleIcon, TrashIcon } from '@heroicons/react/24/solid'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   createFinanceIncome,
   deleteFinanceIncome,
@@ -15,6 +15,7 @@ import {
 import PfExportMenu from '../PfExportMenu.jsx'
 import { buildIncomeExpenseExportQuery } from '../pfExportRange.js'
 import { PfCategoryIcon, categoryBadgeClass } from '../pfCategoryIcons.jsx'
+import { AppButton, AppDropdown, AppInput, AppModal, AppTextarea } from '../pfDesignSystem/index.js'
 import {
   btnPrimary,
   cardCls,
@@ -50,7 +51,9 @@ const PAY_METHODS = [
 export default function PfIncomePage() {
   const { onSessionInvalid } = useOutletContext() || {}
   const { tick, refresh } = usePfRefresh()
-  const [showAddForm, setShowAddForm] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const accountDeepLinkApplied = useRef(false)
+  const [addModalOpen, setAddModalOpen] = useState(false)
   const [categories, setCategories] = useState([])
   const [accounts, setAccounts] = useState([])
   const [rows, setRows] = useState([])
@@ -170,6 +173,18 @@ export default function PfIncomePage() {
     load()
   }, [load, tick])
 
+  useEffect(() => {
+    if (accountDeepLinkApplied.current || accounts.length === 0) return
+    const aid = searchParams.get('account_id')
+    if (!aid || !accounts.some((a) => String(a.id) === aid)) return
+    setAccountId(aid)
+    setAddModalOpen(true)
+    accountDeepLinkApplied.current = true
+    const next = new URLSearchParams(searchParams)
+    next.delete('account_id')
+    setSearchParams(next, { replace: true })
+  }, [accounts, searchParams, setSearchParams])
+
   function startEdit(r) {
     setEditingId(r.id)
     setEditAmount(String(r.amount ?? ''))
@@ -279,6 +294,7 @@ export default function PfIncomePage() {
       })
       setAmount('')
       setDescription('')
+      setAddModalOpen(false)
       await load()
       refresh()
     } catch (err) {
@@ -293,10 +309,32 @@ export default function PfIncomePage() {
     }
   }
 
-  const formCardHeader =
-    'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]'
-  const formSection =
-    'border-b border-slate-100 px-4 py-4 sm:px-5 dark:border-[var(--pf-border)]'
+  const incomeCategoryOptions = useMemo(
+    () => categories.map((c) => ({ value: String(c.id), label: c.name })),
+    [categories],
+  )
+  const incomeAccountOptions = useMemo(
+    () => [
+      { value: '', label: 'Unallocated', description: 'No balance change' },
+      ...accounts.map((a) => ({
+        value: String(a.id),
+        label: a.account_name,
+        description: a.account_type === 'CASH' ? 'Cash' : 'Bank / wallet',
+      })),
+    ],
+    [accounts],
+  )
+  const incomePayMethodOptions = useMemo(
+    () => PAY_METHODS.map((m) => ({ value: m.value, label: m.label })),
+    [],
+  )
+  const recurringTypeOptions = useMemo(
+    () => [
+      { value: 'monthly', label: 'Monthly' },
+      { value: 'weekly', label: 'Weekly' },
+    ],
+    [],
+  )
 
   async function handleIncomeExport() {
     setIncomeExportBusy(true)
@@ -327,11 +365,11 @@ export default function PfIncomePage() {
           />
           <button
             type="button"
-            onClick={() => setShowAddForm((v) => !v)}
-            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-[12px] bg-[#1E3A8A] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#172554] active:scale-[0.98] md:self-start"
+            onClick={() => setAddModalOpen(true)}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-[12px] bg-[#1E3A8A] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#172554] active:scale-[0.98] md:self-start dark:bg-[var(--pf-primary)] dark:hover:bg-[var(--pf-primary-hover)]"
           >
             <PlusCircleIcon className="h-5 w-5" />
-            {showAddForm ? 'Close add form' : 'Add income'}
+            Add income
           </button>
         </div>
       </div>
@@ -340,163 +378,132 @@ export default function PfIncomePage() {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{error}</div>
       ) : null}
 
-      {showAddForm ? (
-      <div className={`${cardCls} overflow-hidden p-0`}>
-        <div className={formCardHeader}>
-          <h2 className="text-base font-bold text-slate-900">Add income</h2>
-        </div>
-        <form onSubmit={handleSubmit}>
-          <div className={`${formSection} grid gap-4 sm:grid-cols-3`}>
+      <AppModal
+        open={addModalOpen}
+        onClose={() => !submitting && setAddModalOpen(false)}
+        title="Add income"
+        subtitle="Record money received — credits the selected account when provided."
+        footer={
+          <>
+            <AppButton type="button" variant="secondary" disabled={submitting} onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" variant="primary" disabled={submitting} form="pf-income-add-form">
+              {submitting ? 'Saving…' : 'Add income'}
+            </AppButton>
+          </>
+        }
+      >
+        <form id="pf-income-add-form" onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <AppInput
+              id="inc-amt"
+              label="Amount (₹)"
+              type="number"
+              step="0.01"
+              min="0"
+              amount
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
             <div>
-              <label htmlFor="inc-amt" className={labelCls}>
-                Amount (₹)
-              </label>
-              <input
-                id="inc-amt"
-                type="number"
-                step="0.01"
-                min="0"
-                className={inputCls}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="inc-cat" className={labelCls}>
+              <label htmlFor="inc-cat-dd" className={labelCls}>
                 Category
               </label>
-              <select
-                id="inc-cat"
-                className={inputCls}
+              <AppDropdown
+                id="inc-cat-dd"
                 value={incomeCategoryId}
-                onChange={(e) => setIncomeCategoryId(e.target.value)}
-                required
-              >
-                <option value="">— Select —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="inc-type" className={labelCls}>
-                Income type
-              </label>
-              <input
-                id="inc-type"
-                className={inputCls}
-                value={incomeType}
-                onChange={(e) => setIncomeType(e.target.value)}
-                placeholder="recurring, one-time…"
+                onChange={setIncomeCategoryId}
+                options={incomeCategoryOptions}
+                placeholder="— Select —"
+                aria-label="Income category"
               />
             </div>
-          </div>
-          <div className={`${formSection} grid gap-4 sm:grid-cols-3`}>
-            <div>
-              <label htmlFor="inc-date" className={labelCls}>
-                Received date
-              </label>
-              <input
-                id="inc-date"
-                type="date"
-                className={inputCls}
-                value={entryDate}
-                onChange={(e) => setEntryDate(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="inc-acc" className={labelCls}>
-                Account
-              </label>
-              <select
-                id="inc-acc"
-                className={inputCls}
-                value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-              >
-                <option value="">Unallocated (no balance change)</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={String(a.id)}>
-                    {a.account_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="inc-from" className={labelCls}>
-                Received from
-              </label>
-              <input
-                id="inc-from"
-                className={inputCls}
-                value={receivedFrom}
-                onChange={(e) => setReceivedFrom(e.target.value)}
-                placeholder="Company / person"
-              />
-            </div>
-          </div>
-          <div className={`${formSection} max-w-md`}>
-            <label htmlFor="inc-method" className={labelCls}>
-              Payment method
-            </label>
-            <select
-              id="inc-method"
-              className={inputCls}
-              value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
-            >
-              {PAY_METHODS.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className={formSection}>
-            <label htmlFor="inc-desc" className={labelCls}>
-              Description
-            </label>
-            <input
-              id="inc-desc"
-              className={inputCls}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+            <AppInput
+              id="inc-type"
+              label="Income type"
+              value={incomeType}
+              onChange={(e) => setIncomeType(e.target.value)}
+              placeholder="recurring, one-time…"
+              className="sm:col-span-2"
             />
           </div>
-          <div className={`${formSection} flex flex-wrap items-center gap-4`}>
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <AppInput
+              id="inc-date"
+              label="Received date"
+              type="date"
+              variant="boxed"
+              value={entryDate}
+              onChange={(e) => setEntryDate(e.target.value)}
+              required
+            />
+            <div>
+              <label htmlFor="inc-acc-dd" className={labelCls}>
+                Account
+              </label>
+              <AppDropdown
+                id="inc-acc-dd"
+                value={accountId}
+                onChange={setAccountId}
+                options={incomeAccountOptions}
+                placeholder="Select account"
+                aria-label="Credit to account"
+              />
+            </div>
+            <AppInput
+              id="inc-from"
+              label="Received from"
+              value={receivedFrom}
+              onChange={(e) => setReceivedFrom(e.target.value)}
+              placeholder="Company / person"
+              className="sm:col-span-2"
+            />
+          </div>
+          <div>
+            <label htmlFor="inc-method-dd" className={labelCls}>
+              Payment method
+            </label>
+            <AppDropdown
+              id="inc-method-dd"
+              value={paymentMethod}
+              onChange={setPaymentMethod}
+              options={incomePayMethodOptions}
+              aria-label="Payment method"
+            />
+          </div>
+          <AppTextarea
+            id="inc-desc"
+            label="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+          />
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-[var(--pf-text)]">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-slate-300"
+                className="h-4 w-4 rounded border-[var(--pf-border)] text-[var(--pf-primary)]"
                 checked={isRecurring}
                 onChange={(e) => setIsRecurring(e.target.checked)}
               />
               Recurring income
             </label>
             {isRecurring ? (
-              <select
-                className={`${inputCls} max-w-[12rem]`}
-                value={recurringType}
-                onChange={(e) => setRecurringType(e.target.value)}
-                aria-label="Recurring type"
-              >
-                <option value="monthly">Monthly</option>
-                <option value="weekly">Weekly</option>
-              </select>
+              <div className="min-w-[12rem] flex-1">
+                <span className={labelCls}>Cadence</span>
+                <AppDropdown
+                  value={recurringType}
+                  onChange={setRecurringType}
+                  options={recurringTypeOptions}
+                  aria-label="Recurring type"
+                />
+              </div>
             ) : null}
           </div>
-          <div className="px-4 py-4 sm:px-5">
-            <button type="submit" disabled={submitting} className={btnPrimary}>
-              {submitting ? 'Saving…' : 'Add income'}
-            </button>
-          </div>
         </form>
-      </div>
-      ) : null}
+      </AppModal>
 
       <div className={cardCls}>
         <h2 className="text-base font-bold text-slate-900">Transactions</h2>

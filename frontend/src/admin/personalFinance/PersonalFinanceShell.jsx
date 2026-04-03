@@ -11,6 +11,8 @@ import { PfPrivacyProvider, usePfPrivacy } from './PfPrivacyContext.jsx'
 import PfSidebar from './PfSidebar.jsx'
 import { readSidebarCollapsed, writeSidebarCollapsed } from './pfSidebarStorage.js'
 import PfToolbar from './PfToolbar.jsx'
+import PfGlobalAdd from './globalAdd/PfGlobalAdd.jsx'
+import { PfToastProvider } from './notifications/pfToastContext.jsx'
 import { PfRefreshProvider } from './pfRefreshContext.jsx'
 import { PfThemeProvider, usePfTheme } from './PfThemeContext.jsx'
 import './pfMobile.css'
@@ -105,6 +107,7 @@ function PersonalFinanceShellInner() {
   return (
     <PfOutletErrorBoundary>
       <PfRefreshProvider>
+        <PfToastProvider>
         <div className={`pf-app antialiased ${isDark ? 'dark' : ''}`}>
           <AppShell
             className="pf-app-layout"
@@ -142,7 +145,9 @@ function PersonalFinanceShellInner() {
               </Suspense>
             </main>
           </AppShell>
+          <PfGlobalAdd onSessionInvalid={invalidateSession} />
         </div>
+        </PfToastProvider>
       </PfRefreshProvider>
     </PfOutletErrorBoundary>
   )

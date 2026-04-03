@@ -1,6 +1,6 @@
 import { XMarkIcon } from '@heroicons/react/24/solid'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   getAccountStatement,
   listAccountTransferHistory,
@@ -14,6 +14,7 @@ import {
   setPfToken,
 } from '../api.js'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+import { AppButton, AppModal } from '../pfDesignSystem/index.js'
 import {
   btnPrimary,
   btnSecondary,
@@ -46,6 +47,8 @@ const MOVEMENT_TYPES = [
 
 const DEPOSIT_SOURCES = ['Friend / family', 'Milk / business income', 'Bank interest', 'Cash deposit', 'Other']
 const WITHDRAW_PURPOSES = ['ATM withdrawal', 'Given to someone', 'Bank charges / fees', 'Other']
+
+const MOVEMENTS_PAGE_SIZE = 10
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
@@ -156,12 +159,16 @@ function StatementModal({ accounts, onClose, onSessionInvalid }) {
 export default function PfTransferPage() {
   const { onSessionInvalid } = useOutletContext() || {}
   const { tick, refresh } = usePfRefresh()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const transferDeepLinkApplied = useRef(false)
   const [accounts, setAccounts] = useState([])
   const [liabilities, setLiabilities] = useState([])
   const [cards, setCards] = useState([])
   const [bills, setBills] = useState([])
   const [emiSchedule, setEmiSchedule] = useState([])
   const [history, setHistory] = useState([])
+  const [movementsPage, setMovementsPage] = useState(1)
+  const [movementsTotal, setMovementsTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [histLoading, setHistLoading] = useState(true)
   const [error, setError] = useState('')
@@ -189,8 +196,8 @@ export default function PfTransferPage() {
   const [ccBillId, setCcBillId] = useState('')
 
   const [stmtOpen, setStmtOpen] = useState(false)
-  /** When false, the page opens on the movements list; user expands the form from the top bar. */
-  const [showAddForm, setShowAddForm] = useState(false)
+  /** When false, the movements list is primary; Add opens a modal. */
+  const [movementModalOpen, setMovementModalOpen] = useState(false)
 
   const borrowLiabilities = useMemo(
     () =>
@@ -206,7 +213,34 @@ export default function PfTransferPage() {
         const s = String(b.status || '').toUpperCase()
         return s === 'PENDING' || s === 'PARTIAL'
       }),
+    [bills],
   )
+
+  useEffect(() => {
+    if (transferDeepLinkApplied.current || accounts.length === 0) return
+    const from = searchParams.get('from_account_id')
+    const to = searchParams.get('to_account_id')
+    let changed = false
+    if (from && accounts.some((a) => String(a.id) === from)) {
+      setFromId(from)
+      setMovementType('internal_transfer')
+      setMovementModalOpen(true)
+      changed = true
+    }
+    if (to && accounts.some((a) => String(a.id) === to)) {
+      setToId(to)
+      setMovementType('internal_transfer')
+      setMovementModalOpen(true)
+      changed = true
+    }
+    if (changed) {
+      transferDeepLinkApplied.current = true
+      const next = new URLSearchParams(searchParams)
+      next.delete('from_account_id')
+      next.delete('to_account_id')
+      setSearchParams(next, { replace: true })
+    }
+  }, [accounts, searchParams, setSearchParams])
 
   const loadCore = useCallback(async () => {
     setLoading(true)
@@ -234,20 +268,29 @@ export default function PfTransferPage() {
     }
   }, [onSessionInvalid])
 
-  const loadHistory = useCallback(async () => {
-    setHistLoading(true)
-    try {
-      const data = await listAccountTransferHistory({ limit: 100 })
-      setHistory(Array.isArray(data) ? data : [])
-    } catch (e) {
-      if (e.status === 401) {
-        setPfToken(null)
-        onSessionInvalid?.()
+  const loadHistory = useCallback(
+    async (overridePage) => {
+      const page = overridePage != null ? overridePage : movementsPage
+      setHistLoading(true)
+      try {
+        const skip = (page - 1) * MOVEMENTS_PAGE_SIZE
+        const { items, total } = await listAccountTransferHistory({
+          skip,
+          limit: MOVEMENTS_PAGE_SIZE,
+        })
+        setHistory(Array.isArray(items) ? items : [])
+        setMovementsTotal(typeof total === 'number' && !Number.isNaN(total) ? total : 0)
+      } catch (e) {
+        if (e.status === 401) {
+          setPfToken(null)
+          onSessionInvalid?.()
+        }
+      } finally {
+        setHistLoading(false)
       }
-    } finally {
-      setHistLoading(false)
-    }
-  }, [onSessionInvalid])
+    },
+    [onSessionInvalid, movementsPage],
+  )
 
   useEffect(() => {
     loadCore()
@@ -257,11 +300,13 @@ export default function PfTransferPage() {
     loadHistory()
   }, [loadHistory, tick])
 
+  const movementsTotalPages = Math.max(1, Math.ceil(movementsTotal / MOVEMENTS_PAGE_SIZE) || 1)
+
   useEffect(() => {
-    if (!showAddForm) return
-    const el = document.getElementById('pf-add-movement-panel')
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [showAddForm])
+    if (movementsPage > movementsTotalPages) {
+      setMovementsPage(movementsTotalPages)
+    }
+  }, [movementsPage, movementsTotalPages])
 
   useEffect(() => {
     const lid = Number(liabilityId)
@@ -343,7 +388,7 @@ export default function PfTransferPage() {
           })
         }
         resetFormPartial()
-        setShowAddForm(false)
+        setMovementModalOpen(false)
         await loadCore()
         await loadHistory()
         refresh()
@@ -438,9 +483,10 @@ export default function PfTransferPage() {
     try {
       await postAccountMovement(body)
       resetFormPartial()
-      setShowAddForm(false)
+      setMovementModalOpen(false)
+      setMovementsPage(1)
       await loadCore()
-      await loadHistory()
+      await loadHistory(1)
       refresh()
     } catch (err) {
       if (err.status === 401) {
@@ -478,14 +524,8 @@ export default function PfTransferPage() {
         description="Internal transfers, cash in/out of accounts, card bill pay from bank, and borrowed-loan flows — all update balances and the account ledger."
         action={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
-            <button
-              type="button"
-              className={showAddForm ? btnSecondary : btnPrimary}
-              onClick={() => setShowAddForm((v) => !v)}
-              aria-expanded={showAddForm}
-              aria-controls="pf-add-movement-panel"
-            >
-              {showAddForm ? 'Hide form' : 'Add movement'}
+            <button type="button" className={btnPrimary} onClick={() => setMovementModalOpen(true)} aria-haspopup="dialog">
+              Add movement
             </button>
             {accounts.length > 0 ? (
               <button type="button" className={btnSecondary} onClick={() => setStmtOpen(true)}>
@@ -502,64 +542,34 @@ export default function PfTransferPage() {
         </div>
       ) : null}
 
-      <section className={cardCls} aria-label="Recent movements">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-lg font-semibold text-[var(--pf-text)]">Recent movements</h2>
-            {!showAddForm ? (
-              <p className="mt-0.5 text-xs text-[var(--pf-text-muted)]">Click &quot;Add movement&quot; above when you want to record a new one.</p>
-            ) : null}
-          </div>
-          <button type="button" className={btnSecondary} onClick={() => loadHistory()} disabled={histLoading}>
-            Refresh
-          </button>
-        </div>
-        {histLoading ? (
+      <AppModal
+        open={movementModalOpen}
+        onClose={() => !submitting && setMovementModalOpen(false)}
+        title="New movement"
+        subtitle="Fill the form below, then save. Balances and ledger lines update immediately."
+        maxWidthClass="max-w-3xl"
+        footer={
+          <>
+            <AppButton type="button" variant="secondary" disabled={submitting} onClick={() => setMovementModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              type="submit"
+              variant="primary"
+              disabled={submitting || loading || (needTwoAccounts && !internalOk)}
+              form="pf-transfer-movement-form"
+            >
+              {submitting ? 'Saving…' : 'Save movement'}
+            </AppButton>
+          </>
+        }
+      >
+        {loading ? (
           <p className="text-sm text-[var(--pf-text-muted)]">Loading…</p>
-        ) : history.length === 0 ? (
-          <p className="text-sm text-[var(--pf-text-muted)]">No movements yet.</p>
+        ) : needTwoAccounts && !internalOk ? (
+          <p className="text-sm text-[var(--pf-text-muted)]">You need at least two accounts for internal transfers. Add accounts first.</p>
         ) : (
-          <div className={pfTableWrap}>
-            <table className={pfTable}>
-              <thead>
-                <tr>
-                  <th className={pfTh}>Date</th>
-                  <th className={pfTh}>Type</th>
-                  <th className={pfTh}>From</th>
-                  <th className={pfTh}>To</th>
-                  <th className={pfThRight}>Amount</th>
-                  <th className={pfTh}>Reference</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((r) => (
-                  <tr key={r.id} className={pfTrHover}>
-                    <td className={pfTd}>{r.movement_date}</td>
-                    <td className={pfTd}>{humanizeMovementType(r.movement_type)}</td>
-                    <td className={pfTd}>{accountLabel(r.from_account_id)}</td>
-                    <td className={pfTd}>{accountLabel(r.to_account_id)}</td>
-                    <td className={pfTdRight}>{formatInr(r.amount)}</td>
-                    <td className={pfTd}>{r.reference_number || r.external_counterparty || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {showAddForm ? (
-        <div id="pf-add-movement-panel" className={`${cardCls} max-w-3xl scroll-mt-4`}>
-          <div className="mb-4 border-b border-[var(--pf-border)] pb-3">
-            <h2 className="text-base font-bold text-[var(--pf-text)]">New movement</h2>
-            <p className="mt-1 text-xs text-[var(--pf-text-muted)]">Fill the form below, then save. Balances and ledger lines update immediately.</p>
-          </div>
-          {loading ? (
-            <p className="text-sm text-[var(--pf-text-muted)]">Loading…</p>
-          ) : needTwoAccounts && !internalOk ? (
-            <p className="text-sm text-[var(--pf-text-muted)]">You need at least two accounts for internal transfers. Add accounts first.</p>
-          ) : (
-            <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
+          <form id="pf-transfer-movement-form" onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <label className={labelCls} htmlFor="pf-mov-type">
                 Transfer type
@@ -941,15 +951,87 @@ export default function PfTransferPage() {
                 />
               </div>
             ) : null}
-            <div className="flex flex-wrap gap-2 sm:col-span-2">
-              <button type="submit" disabled={submitting} className={btnPrimary}>
-                {submitting ? 'Saving…' : 'Save movement'}
-              </button>
-            </div>
           </form>
         )}
-      </div>
-      ) : null}
+      </AppModal>
+
+      <section className={cardCls} aria-label="Recent movements">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--pf-text)]">Recent movements</h2>
+            {!movementModalOpen ? (
+              <p className="mt-0.5 text-xs text-[var(--pf-text-muted)]">Click &quot;Add movement&quot; above when you want to record a new one.</p>
+            ) : null}
+          </div>
+          <button type="button" className={btnSecondary} onClick={() => loadHistory()} disabled={histLoading}>
+            Refresh
+          </button>
+        </div>
+        <p className="mb-3 text-xs text-[var(--pf-text-muted)]">
+          {movementsTotal > 0
+            ? `Showing ${(movementsPage - 1) * MOVEMENTS_PAGE_SIZE + 1}–${Math.min(movementsPage * MOVEMENTS_PAGE_SIZE, movementsTotal)} of ${movementsTotal} · ${MOVEMENTS_PAGE_SIZE} per page`
+            : null}
+        </p>
+        {histLoading ? (
+          <p className="text-sm text-[var(--pf-text-muted)]">Loading…</p>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-[var(--pf-text-muted)]">No movements yet.</p>
+        ) : (
+          <>
+            <div className={pfTableWrap}>
+              <table className={pfTable}>
+                <thead>
+                  <tr>
+                    <th className={pfTh}>Date</th>
+                    <th className={pfTh}>Type</th>
+                    <th className={pfTh}>From</th>
+                    <th className={pfTh}>To</th>
+                    <th className={pfThRight}>Amount</th>
+                    <th className={pfTh}>Reference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((r) => (
+                    <tr key={r.id} className={pfTrHover}>
+                      <td className={pfTd}>{r.movement_date}</td>
+                      <td className={pfTd}>{humanizeMovementType(r.movement_type)}</td>
+                      <td className={pfTd}>{accountLabel(r.from_account_id)}</td>
+                      <td className={pfTd}>{accountLabel(r.to_account_id)}</td>
+                      <td className={pfTdRight}>{formatInr(r.amount)}</td>
+                      <td className={pfTd}>{r.reference_number || r.external_counterparty || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {movementsTotalPages > 1 ? (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--pf-border)] pt-3">
+                <p className="text-xs text-[var(--pf-text-muted)]">
+                  Page {movementsPage} of {movementsTotalPages}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={btnSecondary}
+                    disabled={histLoading || movementsPage <= 1}
+                    onClick={() => setMovementsPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    className={btnSecondary}
+                    disabled={histLoading || movementsPage >= movementsTotalPages}
+                    onClick={() => setMovementsPage((p) => Math.min(movementsTotalPages, p + 1))}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
 
       {stmtOpen ? <StatementModal accounts={accounts} onClose={() => setStmtOpen(false)} onSessionInvalid={onSessionInvalid} /> : null}
     </div>

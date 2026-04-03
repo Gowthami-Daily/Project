@@ -498,6 +498,7 @@ def reports_bundle_context(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     person: str | None = None,
+    expense_account_type: str | None = None,
 ) -> dict[str, Any]:
     if start > end:
         raise ValueError('from_date must be on or before to_date')
@@ -512,11 +513,17 @@ def reports_bundle_context(
         account_id=account_id,
         expense_category_id=expense_category_id,
         person_filter=person,
+        expense_account_type=expense_account_type,
     )
     return {
         'start': start,
         'end': end,
-        'filters': {'account_id': account_id, 'expense_category_id': expense_category_id, 'person': person},
+        'filters': {
+            'account_id': account_id,
+            'expense_category_id': expense_category_id,
+            'person': person,
+            'expense_account_type': expense_account_type,
+        },
         'summary': summary,
         'profit_loss': {
             'income': summary['total_income'],
@@ -700,6 +707,8 @@ def investments_excel_bytes(db: Session, profile_id: int) -> bytes:
                     'name': r.name,
                     'platform': r.platform,
                     'invested_amount': float(r.invested_amount),
+                    'current_value': float(r.current_value) if r.current_value is not None else None,
+                    'sip_monthly_amount': float(r.sip_monthly_amount) if r.sip_monthly_amount is not None else None,
                     'date': r.investment_date,
                     'notes': r.notes,
                 }

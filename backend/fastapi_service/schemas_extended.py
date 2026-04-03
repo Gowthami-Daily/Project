@@ -27,6 +27,8 @@ class FinanceAccountOut(BaseModel):
     account_name: str
     account_type: str
     balance: Decimal
+    include_in_networth: bool = True
+    include_in_liquid: bool = True
     created_at: object
 
 
@@ -34,9 +36,66 @@ class FinanceAccountCreate(BaseModel):
     account_name: str = Field(..., max_length=200)
     account_type: str = Field(..., max_length=40)
     balance: float = 0.0
+    include_in_networth: bool = True
+    include_in_liquid: bool = True
+
+    @field_validator('account_type')
+    @classmethod
+    def account_type_ok(cls, v: str) -> str:
+        from fastapi_service.constants.finance_account_types import (
+            ALLOWED_FINANCE_ACCOUNT_TYPES,
+            normalize_finance_account_type,
+        )
+
+        t = normalize_finance_account_type(v)
+        if t not in ALLOWED_FINANCE_ACCOUNT_TYPES:
+            raise ValueError('Invalid account_type')
+        return t
+
+
+class FinanceAccountPatch(BaseModel):
+    """Partial update — at least one field required."""
+
+    balance: float | None = None
+    account_type: str | None = Field(None, max_length=40)
+    account_name: str | None = Field(None, max_length=200)
+    include_in_networth: bool | None = None
+    include_in_liquid: bool | None = None
+
+    @model_validator(mode='after')
+    def at_least_one(self) -> Self:
+        if not any(
+            getattr(self, k) is not None
+            for k in (
+                'balance',
+                'account_type',
+                'account_name',
+                'include_in_networth',
+                'include_in_liquid',
+            )
+        ):
+            raise ValueError('At least one field must be set')
+        return self
+
+    @field_validator('account_type')
+    @classmethod
+    def account_type_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        from fastapi_service.constants.finance_account_types import (
+            ALLOWED_FINANCE_ACCOUNT_TYPES,
+            normalize_finance_account_type,
+        )
+
+        t = normalize_finance_account_type(v)
+        if t not in ALLOWED_FINANCE_ACCOUNT_TYPES:
+            raise ValueError('Invalid account_type')
+        return t
 
 
 class FinanceAccountBalanceUpdate(BaseModel):
+    """Deprecated: use FinanceAccountPatch with balance only."""
+
     balance: float = Field(..., description='New account balance')
 
 
@@ -494,6 +553,8 @@ class FinanceInvestmentOut(BaseModel):
     investment_type: str
     name: str
     invested_amount: Decimal
+    current_value: Decimal | None = None
+    sip_monthly_amount: Decimal | None = None
     investment_date: date
     platform: str | None
     notes: str | None
@@ -507,6 +568,8 @@ class FinanceInvestmentCreate(BaseModel):
     investment_type: str = Field(validation_alias=AliasChoices('type', 'investment_type'))
     name: str
     invested_amount: float
+    current_value: float | None = None
+    sip_monthly_amount: float | None = None
     investment_date: date = Field(validation_alias=AliasChoices('investment_date', 'as_of_date'))
     platform: str | None = None
     notes: str | None = None
@@ -536,6 +599,8 @@ class FinanceInvestmentUpdate(BaseModel):
     investment_type: str = Field(validation_alias=AliasChoices('type', 'investment_type'))
     name: str
     invested_amount: float
+    current_value: float | None = None
+    sip_monthly_amount: float | None = None
     investment_date: date = Field(validation_alias=AliasChoices('investment_date', 'as_of_date'))
     platform: str | None = None
     notes: str | None = None

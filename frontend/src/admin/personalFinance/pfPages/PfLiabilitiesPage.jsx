@@ -1,6 +1,7 @@
-import { BanknotesIcon, PlusIcon, XMarkIcon } from '@heroicons/react/24/solid'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { BanknotesIcon, CheckCircleIcon, ExclamationTriangleIcon, PlusIcon, XMarkIcon } from '@heroicons/react/24/solid'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useOutletContext } from 'react-router-dom'
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
   closeFinanceLiability,
   createFinanceLiability,
@@ -21,6 +22,7 @@ import {
 } from '../api.js'
 import PfExportMenu from '../PfExportMenu.jsx'
 import PfSegmentedControl from '../PfSegmentedControl.jsx'
+import { AppButton, AppModal } from '../pfDesignSystem/index.js'
 import {
   btnDanger,
   btnPrimary,
@@ -33,7 +35,6 @@ import {
   pfModalHeader,
   pfModalOverlay,
   pfModalSurface,
-  pfModalSurfaceFit,
   pfSelectCompact,
   pfTable,
   pfTableWrap,
@@ -50,6 +51,9 @@ import {
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
+import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+
+const PIE_COLORS = ['#3b82f6', '#8b5cf6', '#f97316', '#10b981', '#64748b']
 
 const LIABILITY_TYPES = [
   { value: 'CREDIT_CARD', label: 'Credit card' },
@@ -83,11 +87,254 @@ function liabilityEmiMethodFromApi(v) {
   return u === 'REDUCING_BALANCE' ? 'reducing_balance' : 'flat'
 }
 
-/** Pay-from: cash vs bank account (liability EMI row). */
-function payFromSelectValue(s) {
-  if (s?.credit_as_cash === true) return 'cash'
-  if (s?.finance_account_id != null && s.finance_account_id !== '') return String(s.finance_account_id)
-  return ''
+function schedulePayFromLabel(s, accountNameById) {
+  if (!s) return '—'
+  if (s.credit_as_cash) return 'Cash'
+  if (s.finance_account_id != null) {
+    return accountNameById.get(s.finance_account_id) ?? `Account #${s.finance_account_id}`
+  }
+  return 'Not set — choose in Pay flow'
+}
+
+function effectiveDueDateStr(r) {
+  const a = r.next_emi_due != null ? String(r.next_emi_due).slice(0, 10) : null
+  const b = r.due_date != null ? String(r.due_date).slice(0, 10) : null
+  if (!a) return b
+  if (!b) return a
+  return a <= b ? a : b
+}
+
+function daysFromToday(iso) {
+  if (!iso) return null
+  const t = new Date()
+  t.setHours(12, 0, 0, 0)
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return null
+  return Math.round((d.getTime() - t.getTime()) / 86400000)
+}
+
+function groupBucketForType(t) {
+  const u = String(t || '').toUpperCase()
+  if (u === 'CREDIT_CARD') return 'credit'
+  if (['HOME_LOAN', 'VEHICLE_LOAN', 'PERSONAL_LOAN_BORROWED', 'EMI_PURCHASE'].includes(u)) return 'loans'
+  return 'other'
+}
+
+function monthlyObligationEstimate(r) {
+  if (r.has_emi_schedule && r.next_emi_amount != null && Number(r.next_emi_amount) > 0) return Number(r.next_emi_amount)
+  if (r.installment_amount != null && Number(r.installment_amount) > 0) return Number(r.installment_amount)
+  if (r.minimum_due != null && Number(r.minimum_due) > 0) return Number(r.minimum_due)
+  return 0
+}
+
+function priorityTier(r) {
+  if (r.display_status === 'OVERDUE') return 'high'
+  const typ = String(r.liability_type || '').toUpperCase()
+  if (typ === 'CREDIT_CARD' || typ === 'BNPL') return 'high'
+  const rate = Number(r.interest_rate)
+  if (!Number.isNaN(rate) && rate >= 15) return 'high'
+  const dd = daysFromToday(effectiveDueDateStr(r))
+  if (dd != null && dd >= 0 && dd <= 7) return 'medium'
+  if (!Number.isNaN(rate) && rate >= 10) return 'medium'
+  return 'low'
+}
+
+function liabilitySort(a, b) {
+  const ao = a.display_status === 'OVERDUE' ? 0 : 1
+  const bo = b.display_status === 'OVERDUE' ? 0 : 1
+  if (ao !== bo) return ao - bo
+  const rank = { high: 0, medium: 1, low: 2 }
+  const pa = rank[priorityTier(a)] ?? 2
+  const pb = rank[priorityTier(b)] ?? 2
+  if (pa !== pb) return pa - pb
+  return String(a.liability_name || '').localeCompare(String(b.liability_name || ''))
+}
+
+function payoffPercentPaid(r) {
+  const total = Number(r.total_amount) || 0
+  const out = Number(r.outstanding_amount) || 0
+  if (total <= 0.01) return null
+  return Math.min(100, Math.max(0, Math.round(((total - out) / total) * 100)))
+}
+
+function liabilityCardRiskShell(r) {
+  if (r.display_status === 'OVERDUE') {
+    return 'border-red-500/45 bg-red-500/[0.07] ring-1 ring-red-500/25 shadow-[0_8px_30px_rgba(239,68,68,0.12)]'
+  }
+  const dd = daysFromToday(effectiveDueDateStr(r))
+  if (dd != null && dd >= 0 && dd <= 7) {
+    return 'border-amber-500/40 bg-amber-500/[0.07] ring-1 ring-amber-400/20 shadow-[0_8px_30px_rgba(245,158,11,0.1)]'
+  }
+  const rate = Number(r.interest_rate)
+  if (!Number.isNaN(rate) && rate >= 15) {
+    return 'border-rose-500/35 bg-rose-500/[0.06] ring-1 ring-rose-500/15'
+  }
+  if (!Number.isNaN(rate) && rate > 0 && rate < 8) {
+    return 'border-emerald-500/30 bg-emerald-500/[0.05] ring-1 ring-emerald-500/10'
+  }
+  return 'border-[var(--pf-border)] bg-white/[0.04] ring-1 ring-[var(--pf-border)]/40 shadow-[var(--pf-shadow)] dark:bg-white/[0.03]'
+}
+
+function PriorityRibbon({ tier }) {
+  if (tier === 'low') {
+    return (
+      <span className="rounded-md border border-slate-400/30 bg-slate-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-300">
+        Low priority
+      </span>
+    )
+  }
+  if (tier === 'medium') {
+    return (
+      <span className="rounded-md border border-amber-500/35 bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">
+        Medium
+      </span>
+    )
+  }
+  return (
+    <span className="rounded-md border border-red-500/40 bg-red-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-200">
+      High priority
+    </span>
+  )
+}
+
+function SectionHeaderPremium({ title, subtitle }) {
+  return (
+    <div className="mb-4">
+      <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--pf-text-muted)]">{title}</h2>
+      {subtitle ? <p className="mt-1 text-sm text-[var(--pf-text-muted)]">{subtitle}</p> : null}
+    </div>
+  )
+}
+
+function LiabilityPremiumCard({ r, onView, onEdit, onPay, onPayFull }) {
+  const due = effectiveDueDateStr(r)
+  const days = daysFromToday(due)
+  const tier = priorityTier(r)
+  const paidPct = payoffPercentPaid(r)
+  const emi =
+    r.has_emi_schedule && r.next_emi_amount != null
+      ? r.next_emi_amount
+      : r.installment_amount != null
+        ? r.installment_amount
+        : r.minimum_due
+
+  const dueCls =
+    days != null && days < 0
+      ? 'font-bold text-red-400'
+      : days != null && days <= 7
+        ? 'font-bold text-amber-300'
+        : 'font-semibold text-[var(--pf-text)]'
+
+  const shell = liabilityCardRiskShell(r)
+  const closed = String(r.status).toUpperCase() === 'CLOSED' || Number(r.outstanding_amount) <= 0.01
+  const emiScheduleBlocksFullPayoff = r.has_emi_schedule === true
+
+  return (
+    <div
+      className={`flex flex-col rounded-2xl border p-5 backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-lg ${shell}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-base font-bold text-[var(--pf-text)]">{r.liability_name}</h3>
+          <p className="mt-0.5 text-xs text-[var(--pf-text-muted)]">{typeLabel(r.liability_type)}</p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {statusBadge(r.display_status)}
+          <PriorityRibbon tier={tier} />
+        </div>
+      </div>
+
+      <p className="mt-4 font-mono text-2xl font-bold tabular-nums tracking-tight text-[var(--pf-text)]">
+        {formatInr(r.outstanding_amount)}
+        <span className="ml-2 text-xs font-normal text-[var(--pf-text-muted)]">outstanding</span>
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+        {emi != null && Number(emi) > 0 ? (
+          <p className="text-[var(--pf-text)]">
+            <span className="text-[var(--pf-text-muted)]">EMI / due line: </span>
+            <span className="font-mono font-semibold tabular-nums text-sky-300 dark:text-sky-200">{formatInr(emi)}</span>
+          </p>
+        ) : null}
+        <p className={dueCls}>
+          <span className="text-[var(--pf-text-muted)]">Due: </span>
+          {due ? formatShortDate(due) : '—'}
+          {days != null && days >= 0 ? <span className="ml-1 text-xs font-normal text-[var(--pf-text-muted)]">({days}d)</span> : null}
+          {days != null && days < 0 ? <span className="ml-1 text-xs">(overdue)</span> : null}
+        </p>
+        {r.interest_rate != null ? (
+          <p className="text-[var(--pf-text)]">
+            <span className="text-[var(--pf-text-muted)]">Interest: </span>
+            <span className="font-semibold">{r.interest_rate}%</span>
+          </p>
+        ) : null}
+      </div>
+
+      {paidPct != null ? (
+        <div className="mt-4">
+          <div className="mb-1 flex justify-between text-[10px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">
+            <span>Payoff progress</span>
+            <span>{paidPct}% paid</span>
+          </div>
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[var(--pf-primary)] to-sky-400 transition-all duration-500"
+              style={{ width: `${paidPct}%` }}
+            />
+          </div>
+          <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">{100 - paidPct}% of original principal remaining (book)</p>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-[var(--pf-text-muted)]">No principal baseline — add total amount to show payoff progress.</p>
+      )}
+
+      <div className="mt-5 flex flex-wrap gap-2 border-t border-[var(--pf-border)]/60 pt-4">
+        {r.has_emi_schedule ? (
+          <button
+            type="button"
+            className={`${btnSecondary} flex-1 min-w-[5.5rem] justify-center px-2 py-2 text-xs`}
+            onClick={() => onView(r)}
+          >
+            Pay EMI
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={closed}
+            className={`${btnSecondary} flex-1 min-w-[5.5rem] justify-center px-2 py-2 text-xs disabled:opacity-50`}
+            onClick={() => onPay(r)}
+          >
+            Pay
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={closed || emiScheduleBlocksFullPayoff}
+          className={`${btnSecondary} flex-1 min-w-[5.5rem] justify-center px-2 py-2 text-xs disabled:opacity-50`}
+          onClick={() => onPayFull(r)}
+          title={
+            emiScheduleBlocksFullPayoff
+              ? 'Loans with an EMI schedule: pay each installment from the schedule.'
+              : 'Open payoff flow with outstanding prefilled'
+          }
+        >
+          Pay full
+        </button>
+        <button type="button" className={`${btnSecondary} flex-1 min-w-[5.5rem] justify-center px-2 py-2 text-xs`} onClick={() => onView(r)}>
+          Schedule
+        </button>
+        <Link
+          to="/personal-finance/monthly-statements?tab=ledger"
+          className={`${btnSecondary} inline-flex flex-1 min-w-[5.5rem] items-center justify-center px-2 py-2 text-xs`}
+        >
+          Ledger
+        </Link>
+        <button type="button" className={`${btnSecondary} flex-1 min-w-[5.5rem] justify-center px-2 py-2 text-xs`} onClick={() => onEdit(r)}>
+          Edit
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function statusBadge(displayStatus) {
@@ -173,8 +420,13 @@ export default function PfLiabilitiesPage() {
   const [paySubmitting, setPaySubmitting] = useState(false)
   const [closingId, setClosingId] = useState(null)
   const [detailSchedule, setDetailSchedule] = useState([])
-  const [payingKey, setPayingKey] = useState('')
-  const [patchingKey, setPatchingKey] = useState('')
+  const [payIntent, setPayIntent] = useState('record')
+  const [emiPayScheduleRow, setEmiPayScheduleRow] = useState(null)
+  const [payEmiDate, setPayEmiDate] = useState('')
+  const [payEmiMode, setPayEmiMode] = useState('BANK')
+  const [payEmiAccountId, setPayEmiAccountId] = useState('')
+  const [emiPaySubmitting, setEmiPaySubmitting] = useState(false)
+  const payAmountInputRef = useRef(null)
 
   const accountNameById = useMemo(() => {
     const m = new Map()
@@ -230,6 +482,7 @@ export default function PfLiabilitiesPage() {
       setViewRow(null)
       setPayments([])
       setDetailSchedule([])
+      setEmiPayScheduleRow(null)
       return
     }
     let cancelled = false
@@ -383,19 +636,45 @@ export default function PfLiabilitiesPage() {
     }
   }
 
-  function openPay(r) {
+  function openPay(r, opts = {}) {
+    const payoff = Boolean(opts.prefillOutstanding)
+    setPayIntent(payoff ? 'payoff' : 'record')
     setPayId(r.id)
     setPayDate(todayISODate())
-    setPayAmount('')
+    const out = Number(r.outstanding_amount)
+    setPayAmount(payoff && out > 0 ? String(out) : '')
     setPayInterest('')
     setPayMode('CASH')
     setPayAccountId(accounts[0]?.id != null ? String(accounts[0].id) : '')
     setPayNotes('')
   }
 
+  function openEmiPaymentModal(s) {
+    if (!viewId) return
+    setPayEmiDate(s.due_date ? String(s.due_date).slice(0, 10) : todayISODate())
+    setPayEmiMode(s.credit_as_cash ? 'CASH' : 'BANK')
+    setPayEmiAccountId(
+      s.finance_account_id != null && s.finance_account_id !== ''
+        ? String(s.finance_account_id)
+        : accounts[0]?.id != null
+          ? String(accounts[0].id)
+          : '',
+    )
+    setEmiPayScheduleRow(s)
+  }
+
+  function closeEmiPaymentModal() {
+    if (emiPaySubmitting) return
+    setEmiPayScheduleRow(null)
+  }
+
   async function handlePaySubmit(e) {
     e.preventDefault()
-    if (!payId) return
+    if (!payId || !payRow) return
+    if (payRow.has_emi_schedule) {
+      setError('This liability has an EMI schedule — use Pay on the installment row (opens confirmation).')
+      return
+    }
     const amt = Number(payAmount)
     const intr = payInterest === '' ? 0 : Number(payInterest)
     if (!amt || amt <= 0) {
@@ -404,6 +683,12 @@ export default function PfLiabilitiesPage() {
     }
     if (intr < 0 || intr > amt) {
       setError('Interest paid must be between 0 and amount paid')
+      return
+    }
+    const out = Number(payRow.outstanding_amount) || 0
+    const principal = amt - intr
+    if (principal > out + 0.02) {
+      setError('Principal portion cannot exceed outstanding balance')
       return
     }
     const mode = payMode === 'BANK' ? 'BANK' : 'CASH'
@@ -444,53 +729,31 @@ export default function PfLiabilitiesPage() {
     }
   }
 
-  async function onLiabilityCreditChange(liabilityId, emiNumber, value) {
-    const pk = `${liabilityId}-${emiNumber}`
-    setPatchingKey(pk)
+  async function handleConfirmEmiPay(e) {
+    e?.preventDefault?.()
+    if (!viewId || !emiPayScheduleRow) return
+    const emiNum = emiPayScheduleRow.emi_number
+    setEmiPaySubmitting(true)
     setError('')
     try {
-      if (value === '' || value == null) {
-        await patchLiabilityScheduleCredit(liabilityId, emiNumber, {
-          creditAsCash: false,
-          financeAccountId: null,
-        })
-      } else if (value === 'cash') {
-        await patchLiabilityScheduleCredit(liabilityId, emiNumber, { creditAsCash: true, financeAccountId: null })
+      if (payEmiMode === 'BANK') {
+        const acc = Number(payEmiAccountId)
+        if (!acc || Number.isNaN(acc)) {
+          setError('Select a bank account to debit')
+          setEmiPaySubmitting(false)
+          return
+        }
+        await patchLiabilityScheduleCredit(viewId, emiNum, { creditAsCash: false, financeAccountId: acc })
+        await payLiabilityEmi(viewId, emiNum, { paymentDate: payEmiDate, financeAccountId: acc })
       } else {
-        await patchLiabilityScheduleCredit(liabilityId, emiNumber, {
-          creditAsCash: false,
-          financeAccountId: Number(value),
-        })
+        await patchLiabilityScheduleCredit(viewId, emiNum, { creditAsCash: true, financeAccountId: null })
+        await payLiabilityEmi(viewId, emiNum, { paymentDate: payEmiDate })
       }
-      const sch = await listLiabilitySchedule(liabilityId)
-      setDetailSchedule(Array.isArray(sch) ? sch : [])
-      await load()
-      refresh()
-      if (viewId === liabilityId) {
-        setViewRow(await getFinanceLiability(liabilityId))
-      }
-    } catch (err) {
-      if (err.status === 401) {
-        setPfToken(null)
-        onSessionInvalid?.()
-      } else {
-        setError(err.message || 'Could not update EMI')
-      }
-    } finally {
-      setPatchingKey('')
-    }
-  }
-
-  async function handlePayLiabilityEmi(liabilityId, emiNumber) {
-    const pk = `${liabilityId}-${emiNumber}`
-    setPayingKey(pk)
-    setError('')
-    try {
-      await payLiabilityEmi(liabilityId, emiNumber)
+      setEmiPayScheduleRow(null)
       const [sch, ln, pay] = await Promise.all([
-        listLiabilitySchedule(liabilityId),
-        getFinanceLiability(liabilityId),
-        listLiabilityPayments(liabilityId),
+        listLiabilitySchedule(viewId),
+        getFinanceLiability(viewId),
+        listLiabilityPayments(viewId),
       ])
       setDetailSchedule(Array.isArray(sch) ? sch : [])
       setViewRow(ln)
@@ -505,7 +768,7 @@ export default function PfLiabilitiesPage() {
         setError(err.message || 'EMI payment failed')
       }
     } finally {
-      setPayingKey('')
+      setEmiPaySubmitting(false)
     }
   }
 
@@ -565,20 +828,156 @@ export default function PfLiabilitiesPage() {
     }
   }
 
+  const rowsForKpi = useMemo(
+    () => rows.filter((r) => String(r.status).toUpperCase() === 'ACTIVE' && Number(r.outstanding_amount) > 0.01),
+    [rows],
+  )
+
+  const kpiEmiMonth = useMemo(() => rowsForKpi.reduce((s, r) => s + monthlyObligationEstimate(r), 0), [rowsForKpi])
+
+  const weightedAvgInterest = useMemo(() => {
+    let wSum = 0
+    let wTot = 0
+    for (const r of rowsForKpi) {
+      const o = Number(r.outstanding_amount)
+      if (r.interest_rate == null) continue
+      const rate = Number(r.interest_rate)
+      if (Number.isNaN(rate) || o <= 0.01) continue
+      wSum += o * rate
+      wTot += o
+    }
+    if (wTot <= 0) return null
+    return wSum / wTot
+  }, [rowsForKpi])
+
+  const groupedRows = useMemo(() => {
+    const g = { credit: [], loans: [], other: [] }
+    for (const r of rows) {
+      g[groupBucketForType(r.liability_type)].push(r)
+    }
+    g.credit.sort(liabilitySort)
+    g.loans.sort(liabilitySort)
+    g.other.sort(liabilitySort)
+    return g
+  }, [rows])
+
+  const alertItems = useMemo(() => {
+    const items = []
+    const pushUnique = (kind, title, detail, liabilityId) => {
+      items.push({ kind, title, detail, liabilityId })
+    }
+    if (summary && Number(summary.overdue_amount) > 0) {
+      pushUnique('danger', 'Overdue obligations', `${formatInr(summary.overdue_amount)} total outstanding past due`)
+    }
+    const warnedIds = new Set()
+    for (const r of rowsForKpi) {
+      if (r.display_status === 'OVERDUE') {
+        pushUnique('danger', r.liability_name, `Overdue · ${formatInr(r.outstanding_amount)}`, r.id)
+        warnedIds.add(r.id)
+      }
+    }
+    for (const r of rowsForKpi) {
+      if (r.display_status === 'OVERDUE') continue
+      const dd = daysFromToday(effectiveDueDateStr(r))
+      if (dd != null && dd >= 0 && dd <= 7) {
+        const em = monthlyObligationEstimate(r)
+        pushUnique(
+          'warn',
+          r.liability_name,
+          `Due in ${dd} day(s)${em > 0 ? ` · ~${formatInr(em)}` : ''}`,
+          r.id,
+        )
+        warnedIds.add(r.id)
+      }
+    }
+    if (Array.isArray(summary?.due_this_week)) {
+      for (const d of summary.due_this_week) {
+        if (warnedIds.has(d.liability_id)) continue
+        const due = d.due_date ? String(d.due_date).slice(0, 10) : ''
+        const daysLeft = daysFromToday(due)
+        if (daysLeft != null && daysLeft >= 0 && daysLeft <= 7) {
+          pushUnique(
+            'warn',
+            d.liability_name,
+            `Due ${formatShortDate(due)} · ${formatInr(d.minimum_due ?? d.outstanding_amount)}`,
+            d.liability_id,
+          )
+          warnedIds.add(d.liability_id)
+        }
+      }
+    }
+    const stressful = items.filter((i) => i.kind === 'danger' || i.kind === 'warn')
+    if (stressful.length === 0) {
+      items.push({ kind: 'ok', title: 'No overdue payments', detail: 'Nothing late is showing on your book. Check upcoming dues in the cards below.' })
+    }
+    return items
+  }, [rowsForKpi, summary])
+
+  const chartByGroup = useMemo(() => {
+    const g = { credit: 0, loans: 0, other: 0 }
+    for (const r of rowsForKpi) {
+      g[groupBucketForType(r.liability_type)] += Number(r.outstanding_amount) || 0
+    }
+    return [
+      { name: 'Credit cards', value: Math.round(g.credit * 100) / 100 },
+      { name: 'Loans', value: Math.round(g.loans * 100) / 100 },
+      { name: 'Other', value: Math.round(g.other * 100) / 100 },
+    ].filter((x) => x.value > 0)
+  }, [rowsForKpi])
+
+  const chartTopOutstanding = useMemo(
+    () =>
+      [...rowsForKpi]
+        .sort((a, b) => Number(b.outstanding_amount) - Number(a.outstanding_amount))
+        .slice(0, 10)
+        .map((r) => ({
+          name: r.liability_name.length > 14 ? `${r.liability_name.slice(0, 12)}…` : r.liability_name,
+          fullName: r.liability_name,
+          outstanding: Math.round(Number(r.outstanding_amount) * 100) / 100,
+        })),
+    [rowsForKpi],
+  )
+
+  const payRow = useMemo(() => (payId ? rows.find((r) => r.id === payId) ?? null : null), [rows, payId])
+
+  const paymentPreview = useMemo(() => {
+    if (!payId || !payRow) return null
+    const amt = Number(payAmount)
+    const intr = payInterest === '' ? 0 : Number(payInterest)
+    if (payAmount === '' || payAmount == null) return { empty: true }
+    if (!Number.isFinite(amt) || amt <= 0) return { error: 'Enter a valid amount' }
+    if (!Number.isFinite(intr) || intr < 0) return { error: 'Invalid interest portion' }
+    if (intr > amt + 1e-9) return { error: 'Interest cannot exceed amount paid' }
+    const out = Number(payRow.outstanding_amount) || 0
+    const principal = amt - intr
+    const remaining = Math.max(0, Math.round((out - principal) * 100) / 100)
+    return { amount: amt, interest: intr, principal, remaining, outstanding: out }
+  }, [payId, payRow, payAmount, payInterest])
+
+  useEffect(() => {
+    if (!payId) return
+    const id = window.requestAnimationFrame(() => payAmountInputRef.current?.focus())
+    return () => window.cancelAnimationFrame(id)
+  }, [payId])
+
+  const chartTitle = 'text-sm font-bold text-slate-900 dark:text-[var(--pf-text)]'
+  const chartSub = 'mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]'
+
+  const kpiGlass =
+    'rounded-2xl border p-4 shadow-[var(--pf-shadow)] backdrop-blur-md transition dark:border-[var(--pf-border)] dark:bg-white/[0.04]'
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">Liabilities</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Money you owe — cards, loans you borrowed, bills, BNPL, EMIs.
-          </p>
-        </div>
-        <PfExportMenu
-          busy={exportBusy}
-          items={[{ key: 'xlsx', label: 'Export all (Excel)', onClick: handlePortfolioExport }]}
-        />
-      </div>
+    <div className="space-y-10">
+      <PageHeader
+        title="Liabilities"
+        description="How much you owe, what is due soon, and what to pay first — not just a list of balances."
+        action={
+          <PfExportMenu
+            busy={exportBusy}
+            items={[{ key: 'xlsx', label: 'Export all (Excel)', onClick: handlePortfolioExport }]}
+          />
+        }
+      />
 
       {error ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
@@ -587,32 +986,85 @@ export default function PfLiabilitiesPage() {
       ) : null}
 
       {summary ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className={pfChartCard}>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total liabilities (book)</p>
-            <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">
-              {formatInr(summary.total_liabilities_book)}
-            </p>
-          </div>
-          <div className={pfChartCard}>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total outstanding</p>
-            <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">
+        <section aria-label="Summary" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className={kpiGlass}>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Total outstanding</p>
+            <p className="mt-2 font-mono text-xl font-bold tabular-nums text-[var(--pf-text)] sm:text-2xl">
               {formatInr(summary.total_outstanding)}
             </p>
+            <p className="mt-1 text-xs text-[var(--pf-text-muted)]">Active book balance owed</p>
           </div>
-          <div className={pfChartCard}>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Due this month</p>
-            <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">
+          <div className={kpiGlass}>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">EMI / month (est.)</p>
+            <p className="mt-2 font-mono text-xl font-bold tabular-nums text-sky-600 dark:text-sky-300 sm:text-2xl">
+              {formatInr(kpiEmiMonth)}
+            </p>
+            <p className="mt-1 text-xs text-[var(--pf-text-muted)]">Next EMI or installment line per liability</p>
+          </div>
+          <div className={kpiGlass}>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Due this month</p>
+            <p className="mt-2 font-mono text-xl font-bold tabular-nums text-amber-700 dark:text-amber-300 sm:text-2xl">
               {formatInr(summary.due_this_month_amount)}
             </p>
+            <p className="mt-1 text-xs text-[var(--pf-text-muted)]">By statement due date (calendar month)</p>
           </div>
-          <div className={pfChartCard}>
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Overdue</p>
-            <p className="mt-1 text-lg font-bold tabular-nums text-red-700 dark:text-red-400">
+          <div className={`${kpiGlass} border-red-500/25 bg-red-500/[0.04]`}>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-red-800 dark:text-red-300">Overdue</p>
+            <p className="mt-2 font-mono text-xl font-bold tabular-nums text-red-700 dark:text-red-400 sm:text-2xl">
               {formatInr(summary.overdue_amount)}
             </p>
+            <p className="mt-1 text-xs text-red-800/80 dark:text-red-200/80">Past due date & still outstanding</p>
           </div>
-        </div>
+          <div className={kpiGlass}>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Avg interest (weighted)</p>
+            <p className="mt-2 font-mono text-xl font-bold tabular-nums text-[var(--pf-text)] sm:text-2xl">
+              {weightedAvgInterest != null ? `${weightedAvgInterest.toFixed(1)}%` : '—'}
+            </p>
+            <p className="mt-1 text-xs text-[var(--pf-text-muted)]">By outstanding × rate on visible active rows</p>
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && summary ? (
+        <section aria-label="Alerts" className="space-y-3">
+          <SectionHeaderPremium title="Alerts & upcoming dues" subtitle="What needs attention first." />
+          <div className="grid gap-2 sm:grid-cols-2">
+            {alertItems.map((a, idx) => (
+              <div
+                key={`${a.kind}-${a.title}-${idx}`}
+                className={[
+                  'flex gap-3 rounded-xl border p-4 backdrop-blur-sm',
+                  a.kind === 'danger'
+                    ? 'border-red-500/40 bg-red-500/[0.08]'
+                    : a.kind === 'warn'
+                      ? 'border-amber-500/40 bg-amber-500/[0.08]'
+                      : 'border-emerald-500/35 bg-emerald-500/[0.06]',
+                ].join(' ')}
+              >
+                {a.kind === 'ok' ? (
+                  <CheckCircleIcon className="h-6 w-6 shrink-0 text-emerald-500" />
+                ) : (
+                  <ExclamationTriangleIcon
+                    className={`h-6 w-6 shrink-0 ${a.kind === 'danger' ? 'text-red-400' : 'text-amber-400'}`}
+                  />
+                )}
+                <div className="min-w-0">
+                  <p className="font-semibold text-[var(--pf-text)]">{a.title}</p>
+                  <p className="mt-0.5 text-sm text-[var(--pf-text-muted)]">{a.detail}</p>
+                  {a.liabilityId ? (
+                    <button
+                      type="button"
+                      className="mt-2 text-xs font-semibold text-[var(--pf-primary)] hover:underline"
+                      onClick={() => setViewId(a.liabilityId)}
+                    >
+                      Open liability →
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       ) : null}
 
       <div className={`${cardCls} flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end`}>
@@ -686,177 +1138,255 @@ export default function PfLiabilitiesPage() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <p className="text-sm text-[var(--pf-text-muted)]">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-slate-500">No liabilities match your filters.</p>
+        <p className="text-sm text-[var(--pf-text-muted)]">No liabilities match your filters.</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {rows.map((r) => (
-            <div
-              key={r.id}
-              className={`${cardCls} flex flex-col border-sky-200/80 dark:border-slate-600 ${
-                r.display_status === 'OVERDUE' ? 'ring-2 ring-red-300 dark:ring-red-800' : ''
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <h3 className="font-bold text-slate-900 dark:text-slate-100">{r.liability_name}</h3>
-                  <p className="mt-1 text-xs text-slate-500">{typeLabel(r.liability_type)}</p>
-                </div>
-                {statusBadge(r.display_status)}
+        <div className="space-y-12">
+          {groupedRows.credit.length ? (
+            <section>
+              <SectionHeaderPremium title="Credit cards" subtitle="Revolving / statement-style dues." />
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {groupedRows.credit.map((r) => (
+                  <LiabilityPremiumCard
+                    key={r.id}
+                    r={r}
+                    onView={(x) => setViewId(x.id)}
+                    onEdit={openEdit}
+                    onPay={(x) => openPay(x)}
+                    onPayFull={(x) => openPay(x, { prefillOutstanding: true })}
+                  />
+                ))}
               </div>
-              <div className="mt-3 space-y-1 text-sm text-slate-700 dark:text-slate-200">
-                <p>
-                  Outstanding:{' '}
-                  <span className="font-mono font-semibold tabular-nums">{formatInr(r.outstanding_amount)}</span>
-                </p>
-                {r.minimum_due != null && Number(r.minimum_due) > 0 ? (
-                  <p>
-                    Min due: <span className="font-mono tabular-nums">{formatInr(r.minimum_due)}</span>
-                  </p>
-                ) : null}
-                {r.installment_amount != null && Number(r.installment_amount) > 0 ? (
-                  <p>
-                    EMI / installment:{' '}
-                    <span className="font-mono tabular-nums">{formatInr(r.installment_amount)}</span>
-                  </p>
-                ) : null}
-                <p>
-                  Due: <span className="font-medium">{formatShortDate(r.due_date)}</span>
-                </p>
-                {r.has_emi_schedule && r.next_emi_due ? (
-                  <p className="text-xs text-sky-800 dark:text-sky-200">
-                    Next EMI: {formatShortDate(r.next_emi_due)}
-                    {r.next_emi_amount != null ? ` · ${formatInr(r.next_emi_amount)}` : ''}
-                  </p>
-                ) : null}
-                {r.interest_rate != null ? <p>Interest: {r.interest_rate}%</p> : null}
+            </section>
+          ) : null}
+          {groupedRows.loans.length ? (
+            <section>
+              <SectionHeaderPremium title="Loans" subtitle="Home, vehicle, personal, and EMI-tied borrowing." />
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {groupedRows.loans.map((r) => (
+                  <LiabilityPremiumCard
+                    key={r.id}
+                    r={r}
+                    onView={(x) => setViewId(x.id)}
+                    onEdit={openEdit}
+                    onPay={(x) => openPay(x)}
+                    onPayFull={(x) => openPay(x, { prefillOutstanding: true })}
+                  />
+                ))}
               </div>
-              <div className="mt-4 flex flex-wrap gap-2 border-t border-sky-100/80 pt-4 dark:border-slate-600">
-                <button
-                  type="button"
-                  disabled={
-                    Number(r.outstanding_amount) <= 0 ||
-                    String(r.status).toUpperCase() === 'CLOSED' ||
-                    r.has_emi_schedule === true
-                  }
-                  className={`${btnSecondary} flex-1 justify-center text-xs`}
-                  onClick={() => openPay(r)}
-                  title={r.has_emi_schedule ? 'Use EMI schedule in detail view' : undefined}
-                >
-                  Pay
-                </button>
-                <button type="button" className={`${btnSecondary} flex-1 justify-center text-xs`} onClick={() => setViewId(r.id)}>
-                  View
-                </button>
-                <button type="button" className={`${btnSecondary} flex-1 justify-center text-xs`} onClick={() => openEdit(r)}>
-                  Edit
-                </button>
+            </section>
+          ) : null}
+          {groupedRows.other.length ? (
+            <section>
+              <SectionHeaderPremium title="Other liabilities" subtitle="BNPL, friends & family, bills payable, misc." />
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {groupedRows.other.map((r) => (
+                  <LiabilityPremiumCard
+                    key={r.id}
+                    r={r}
+                    onView={(x) => setViewId(x.id)}
+                    onEdit={openEdit}
+                    onPay={(x) => openPay(x)}
+                    onPayFull={(x) => openPay(x, { prefillOutstanding: true })}
+                  />
+                ))}
               </div>
-            </div>
-          ))}
+            </section>
+          ) : null}
         </div>
       )}
 
-      {showAddModal ? (
-        <div
-          className={pfModalOverlay}
-          role="dialog"
-          aria-modal="true"
-          onMouseDown={(e) => e.target === e.currentTarget && setShowAddModal(false)}
-        >
-          <div
-            className={`${pfModalSurface} max-w-xl p-5 md:p-6`}
-            onMouseDown={(ev) => ev.stopPropagation()}
-          >
-            <div className={pfModalHeader}>
-              <h2 className="text-lg font-semibold text-[var(--pf-text)]">{editId ? 'Edit liability' : 'Add liability'}</h2>
-              <button
-                type="button"
-                className={pfModalCloseBtn}
-                onClick={() => setShowAddModal(false)}
-                aria-label="Close"
-              >
-                <XMarkIcon className="h-6 w-6" />
-              </button>
-            </div>
-            <form onSubmit={handleSaveForm} className="grid gap-3 sm:grid-cols-2">
+      {!loading && rowsForKpi.length > 0 && (chartByGroup.length > 0 || chartTopOutstanding.length > 0) ? (
+        <section className="space-y-6" aria-label="Debt analytics">
+          <SectionHeaderPremium
+            title="Debt analytics"
+            subtitle="Where balances concentrate and which obligations dominate — from your current filters."
+          />
+          <div className="grid gap-6 lg:grid-cols-2">
+            {chartByGroup.length > 0 ? (
+              <div className={`${pfChartCard} min-h-[280px]`}>
+                <p className={chartTitle}>Outstanding by group</p>
+                <p className={chartSub}>Share of active debt across category buckets</p>
+                <div className="mt-4 h-[220px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={chartByGroup} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={78} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                        {chartByGroup.map((_, i) => (
+                          <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value) => formatInr(value)}
+                        contentStyle={{
+                          background: 'var(--pf-card)',
+                          border: '1px solid var(--pf-border)',
+                          borderRadius: '12px',
+                        }}
+                      />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : null}
+            {chartTopOutstanding.length > 0 ? (
+              <div className={`${pfChartCard} min-h-[280px]`}>
+                <p className={chartTitle}>Largest balances</p>
+                <p className={chartSub}>Top active liabilities by outstanding amount</p>
+                <div className="mt-4 h-[220px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartTopOutstanding} layout="vertical" margin={{ left: 8, right: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-[var(--pf-border)] opacity-40" />
+                      <XAxis type="number" tickFormatter={(v) => formatInr(v)} className="text-[10px]" />
+                      <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        formatter={(value, _n, item) => [formatInr(value), item?.payload?.fullName ?? 'Outstanding']}
+                        contentStyle={{
+                          background: 'var(--pf-card)',
+                          border: '1px solid var(--pf-border)',
+                          borderRadius: '12px',
+                        }}
+                      />
+                      <Bar dataKey="outstanding" fill="var(--pf-primary)" radius={[0, 6, 6, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          {summary ? (
+            <p className="text-center text-xs text-[var(--pf-text-muted)]">
+              Interest paid (lifetime, all liabilities):{' '}
+              <span className="font-mono font-semibold text-[var(--pf-text)]">{formatInr(summary.interest_paid_lifetime)}</span>
+              {' · '}
+              <Link to="/personal-finance/monthly-statements" className="font-semibold text-[var(--pf-primary)] hover:underline">
+                Open financial statements
+              </Link>{' '}
+              for income / cash-flow context (debt-to-income from reports).
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
+      <AppModal
+        open={showAddModal}
+        onClose={() => !submitting && setShowAddModal(false)}
+        title={editId ? 'Edit liability' : 'Add liability'}
+        subtitle="Structured fields — matches how banks show loan details."
+        maxWidthClass="max-w-2xl"
+        footer={
+          <>
+            <AppButton type="button" variant="ghost" disabled={submitting} onClick={() => setShowAddModal(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" variant="primary" form="pf-liability-form" disabled={submitting}>
+              {submitting ? 'Saving…' : editId ? 'Save changes' : 'Save liability'}
+            </AppButton>
+          </>
+        }
+      >
+            <form id="pf-liability-form" onSubmit={handleSaveForm} className="grid gap-5 sm:grid-cols-2">
               <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="fm-name">
-                  Name
-                </label>
-                <input id="fm-name" className={inputCls} value={form.liability_name} onChange={(e) => setForm((f) => ({ ...f, liability_name: e.target.value }))} required />
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">
+                  Loan details
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className={labelCls} htmlFor="fm-name">
+                      Name
+                    </label>
+                    <input id="fm-name" className={inputCls} value={form.liability_name} onChange={(e) => setForm((f) => ({ ...f, liability_name: e.target.value }))} required />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={labelCls} htmlFor="fm-type">
+                      Type
+                    </label>
+                    <select
+                      id="fm-type"
+                      className={inputCls}
+                      value={form.liability_type}
+                      onChange={(e) => setForm((f) => ({ ...f, liability_type: e.target.value }))}
+                    >
+                      {LIABILITY_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={labelCls} htmlFor="fm-lender">
+                      Lender
+                    </label>
+                    <input id="fm-lender" className={inputCls} value={form.lender_name} onChange={(e) => setForm((f) => ({ ...f, lender_name: e.target.value }))} />
+                  </div>
+                </div>
               </div>
-              <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="fm-type">
-                  Type
-                </label>
-                <select
-                  id="fm-type"
-                  className={inputCls}
-                  value={form.liability_type}
-                  onChange={(e) => setForm((f) => ({ ...f, liability_type: e.target.value }))}
-                >
-                  {LIABILITY_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
+
+              <div className="sm:col-span-2 border-t border-[var(--pf-border)] pt-5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">
+                  Amounts
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={labelCls} htmlFor="fm-tot">
+                      Total amount (₹)
+                    </label>
+                    <input id="fm-tot" type="number" min="0" step="0.01" className={`${inputCls} text-right font-mono tabular-nums`} value={form.total_amount} onChange={(e) => setForm((f) => ({ ...f, total_amount: e.target.value }))} required />
+                  </div>
+                  <div>
+                    <label className={labelCls} htmlFor="fm-out">
+                      Outstanding (₹)
+                    </label>
+                    <input id="fm-out" type="number" min="0" step="0.01" className={`${inputCls} text-right font-mono tabular-nums`} value={form.outstanding_amount} onChange={(e) => setForm((f) => ({ ...f, outstanding_amount: e.target.value }))} placeholder="Defaults to total" />
+                  </div>
+                  <div>
+                    <label className={labelCls} htmlFor="fm-rate">
+                      Interest % (optional)
+                    </label>
+                    <input id="fm-rate" type="number" step="0.01" className={`${inputCls} text-right font-mono tabular-nums`} value={form.interest_rate} onChange={(e) => setForm((f) => ({ ...f, interest_rate: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className={labelCls} htmlFor="fm-min">
+                      Minimum due (₹)
+                    </label>
+                    <input id="fm-min" type="number" min="0" step="0.01" className={`${inputCls} text-right font-mono tabular-nums`} value={form.minimum_due} onChange={(e) => setForm((f) => ({ ...f, minimum_due: e.target.value }))} />
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className={labelCls} htmlFor="fm-tot">
-                  Total amount (₹)
-                </label>
-                <input id="fm-tot" type="number" min="0" step="0.01" className={inputCls} value={form.total_amount} onChange={(e) => setForm((f) => ({ ...f, total_amount: e.target.value }))} required />
+
+              <div className="sm:col-span-2 border-t border-[var(--pf-border)] pt-5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">
+                  Schedule &amp; billing
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={labelCls} htmlFor="fm-ins">
+                      EMI / installment (₹)
+                    </label>
+                    <input id="fm-ins" type="number" min="0" step="0.01" className={`${inputCls} text-right font-mono tabular-nums`} value={form.installment_amount} onChange={(e) => setForm((f) => ({ ...f, installment_amount: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className={labelCls} htmlFor="fm-due">
+                      Due date
+                    </label>
+                    <input id="fm-due" type="date" className={inputCls} value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className={labelCls} htmlFor="fm-cycle">
+                      Billing cycle day (1–31)
+                    </label>
+                    <input id="fm-cycle" type="number" min="1" max="31" className={inputCls} value={form.billing_cycle_day} onChange={(e) => setForm((f) => ({ ...f, billing_cycle_day: e.target.value }))} />
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className={labelCls} htmlFor="fm-out">
-                  Outstanding (₹)
-                </label>
-                <input id="fm-out" type="number" min="0" step="0.01" className={inputCls} value={form.outstanding_amount} onChange={(e) => setForm((f) => ({ ...f, outstanding_amount: e.target.value }))} placeholder="Defaults to total" />
-              </div>
-              <div>
-                <label className={labelCls} htmlFor="fm-rate">
-                  Interest % (optional)
-                </label>
-                <input id="fm-rate" type="number" step="0.01" className={inputCls} value={form.interest_rate} onChange={(e) => setForm((f) => ({ ...f, interest_rate: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelCls} htmlFor="fm-min">
-                  Minimum due (₹)
-                </label>
-                <input id="fm-min" type="number" min="0" step="0.01" className={inputCls} value={form.minimum_due} onChange={(e) => setForm((f) => ({ ...f, minimum_due: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelCls} htmlFor="fm-ins">
-                  EMI / installment (₹)
-                </label>
-                <input id="fm-ins" type="number" min="0" step="0.01" className={inputCls} value={form.installment_amount} onChange={(e) => setForm((f) => ({ ...f, installment_amount: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelCls} htmlFor="fm-due">
-                  Due date
-                </label>
-                <input id="fm-due" type="date" className={inputCls} value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelCls} htmlFor="fm-cycle">
-                  Billing cycle day (1–31)
-                </label>
-                <input id="fm-cycle" type="number" min="1" max="31" className={inputCls} value={form.billing_cycle_day} onChange={(e) => setForm((f) => ({ ...f, billing_cycle_day: e.target.value }))} />
-              </div>
-              <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="fm-lender">
-                  Lender name
-                </label>
-                <input id="fm-lender" className={inputCls} value={form.lender_name} onChange={(e) => setForm((f) => ({ ...f, lender_name: e.target.value }))} />
-              </div>
+
               <div className="sm:col-span-2">
                 <label className={labelCls} htmlFor="fm-notes">
                   Notes
                 </label>
-                <textarea id="fm-notes" rows={2} className={`${inputCls} resize-y`} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+                <textarea id="fm-notes" rows={3} className={`${inputCls} resize-y`} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} placeholder="Optional context…" />
               </div>
               {!editId ? (
                 <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-600 dark:bg-slate-900/40">
@@ -939,7 +1469,7 @@ export default function PfLiabilitiesPage() {
                 </div>
               ) : null}
               {editId ? (
-                <div className="sm:col-span-2">
+                <div className="sm:col-span-2 border-t border-[var(--pf-border)] pt-5">
                   <label className={labelCls} htmlFor="fm-st">
                     Status
                   </label>
@@ -949,57 +1479,184 @@ export default function PfLiabilitiesPage() {
                   </select>
                 </div>
               ) : null}
-              <div className="flex flex-wrap gap-2 sm:col-span-2">
-                <button type="submit" disabled={submitting} className={btnPrimary}>
-                  {submitting ? 'Saving…' : 'Save liability'}
-                </button>
-                <button type="button" className={btnSecondary} onClick={() => setShowAddModal(false)}>
-                  Cancel
-                </button>
-              </div>
             </form>
-          </div>
-        </div>
-      ) : null}
+      </AppModal>
 
-      {payId ? (
-        <div
-          className={pfModalOverlay}
-          role="dialog"
-          aria-modal="true"
-          onMouseDown={(e) => e.target === e.currentTarget && setPayId(null)}
-        >
-          <div
-            className={`${pfModalSurfaceFit} max-w-md p-5 md:p-6`}
-            onMouseDown={(ev) => ev.stopPropagation()}
-          >
-            <div className={pfModalHeader}>
-              <h2 className="text-lg font-semibold text-[var(--pf-text)]">Record payment</h2>
+      <AppModal
+        open={Boolean(payId)}
+        onClose={() => !paySubmitting && setPayId(null)}
+        title={
+          payIntent === 'payoff' ? 'Close liability' : payRow?.has_emi_schedule ? 'Record EMI payment' : 'Record payment'
+        }
+        subtitle={payRow ? `${payRow.liability_name} · ${typeLabel(payRow.liability_type)}` : undefined}
+        maxWidthClass="max-w-[520px]"
+        footer={
+          <>
+            <AppButton type="button" variant="ghost" disabled={paySubmitting} onClick={() => setPayId(null)}>
+              Cancel
+            </AppButton>
+            <AppButton
+              type="submit"
+              form="pf-liability-pay-form"
+              variant="primary"
+              disabled={
+                paySubmitting ||
+                !paymentPreview ||
+                paymentPreview.empty ||
+                Boolean(paymentPreview.error) ||
+                (payMode === 'BANK' && (!payAccountId || accounts.length === 0)) ||
+                payRow?.has_emi_schedule === true
+              }
+              className={
+                payIntent === 'payoff'
+                  ? '!border-none !bg-orange-600 !shadow-md hover:!bg-orange-700 focus-visible:!ring-orange-500'
+                  : ''
+              }
+            >
+              {paySubmitting ? 'Saving…' : payIntent === 'payoff' ? 'Pay & close loan' : 'Record payment'}
+            </AppButton>
+          </>
+        }
+      >
+        <form id="pf-liability-pay-form" onSubmit={handlePaySubmit} className="space-y-5">
+          {payRow?.has_emi_schedule ? (
+            <div className="rounded-xl border border-amber-500/35 bg-amber-500/[0.07] px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+              This book uses an <strong>EMI schedule</strong>. Record each installment with <strong>Pay</strong> on the
+              schedule row — manual ledger payments are disabled here.
             </div>
-            <form onSubmit={handlePaySubmit} className="grid gap-3">
+          ) : null}
+
+          {payIntent === 'payoff' && payRow && !payRow.has_emi_schedule ? (
+            <div className="flex gap-3 rounded-xl border border-orange-500/40 bg-orange-500/[0.08] px-4 py-3 text-sm text-orange-950 dark:text-orange-100">
+              <ExclamationTriangleIcon className="h-6 w-6 shrink-0 text-orange-600 dark:text-orange-300" aria-hidden />
               <div>
-                <label className={labelCls}>Date</label>
-                <input type="date" className={inputCls} value={payDate} onChange={(e) => setPayDate(e.target.value)} required />
+                <p className="font-semibold">You are about to pay off this liability</p>
+                <p className="mt-1 text-xs opacity-90">
+                  Confirm the amount and interest split below. When outstanding reaches zero, the liability can be marked closed from the detail view.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {payRow ? (
+            <div className="rounded-xl border border-[var(--pf-border)] bg-white/[0.03] p-4 shadow-inner shadow-black/5 backdrop-blur-sm dark:bg-white/[0.04]">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">
+                {payIntent === 'payoff' ? 'Payoff summary' : 'Loan summary'}
+              </p>
+              <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">Outstanding</dt>
+                  <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-[var(--pf-text)]">
+                    {formatInr(payRow.outstanding_amount)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">EMI / installment line</dt>
+                  <dd className="mt-0.5 font-mono text-base font-semibold tabular-nums text-sky-600 dark:text-sky-300">
+                    {(() => {
+                      const em = monthlyObligationEstimate(payRow)
+                      return em > 0 ? formatInr(em) : '—'
+                    })()}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">Due date</dt>
+                  <dd className="mt-0.5 text-sm font-semibold text-[var(--pf-text)]">
+                    {effectiveDueDateStr(payRow) ? formatShortDate(effectiveDueDateStr(payRow)) : '—'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">Interest rate</dt>
+                  <dd className="mt-0.5 text-sm font-semibold text-[var(--pf-text)]">
+                    {payRow.interest_rate != null ? `${payRow.interest_rate}%` : '—'}
+                  </dd>
+                </div>
+              </dl>
+              {payIntent === 'payoff' ? (
+                <div className="mt-3 border-t border-[var(--pf-border)] pt-3 text-xs text-[var(--pf-text-muted)]">
+                  <p>
+                    <span className="text-[var(--pf-text-muted)]">Book outstanding: </span>
+                    <span className="font-mono font-semibold text-[var(--pf-text)]">{formatInr(payRow.outstanding_amount)}</span>
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">Payment details</p>
+            <div className="mt-3 grid gap-3">
+              <div>
+                <label className={labelCls} htmlFor="pf-pay-date">
+                  Payment date
+                </label>
+                <input
+                  id="pf-pay-date"
+                  type="date"
+                  className={inputCls}
+                  value={payDate}
+                  onChange={(e) => setPayDate(e.target.value)}
+                  required
+                />
               </div>
               <div>
-                <label className={labelCls}>Amount paid (₹)</label>
-                <input type="number" min="0" step="0.01" className={inputCls} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} required />
+                <label className={labelCls} htmlFor="pf-pay-amt">
+                  Amount paid (₹)
+                </label>
+                <input
+                  ref={payAmountInputRef}
+                  id="pf-pay-amt"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className={`${inputCls} text-right font-mono tabular-nums`}
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  required
+                  placeholder="0.00"
+                />
               </div>
               <div>
-                <label className={labelCls}>Interest portion (₹)</label>
-                <input type="number" min="0" step="0.01" className={inputCls} value={payInterest} onChange={(e) => setPayInterest(e.target.value)} />
+                <label className={labelCls} htmlFor="pf-pay-int">
+                  Interest portion (₹)
+                </label>
+                <input
+                  id="pf-pay-int"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className={`${inputCls} text-right font-mono tabular-nums`}
+                  value={payInterest}
+                  onChange={(e) => setPayInterest(e.target.value)}
+                  placeholder="0"
+                />
               </div>
               <div>
-                <label className={labelCls}>Mode</label>
-                <select className={inputCls} value={payMode} onChange={(e) => setPayMode(e.target.value)}>
+                <label className={labelCls} htmlFor="pf-pay-mode">
+                  Pay from
+                </label>
+                <select
+                  id="pf-pay-mode"
+                  className={inputCls}
+                  value={payMode}
+                  onChange={(e) => setPayMode(e.target.value)}
+                >
                   <option value="CASH">Cash</option>
-                  <option value="BANK">Bank</option>
+                  <option value="BANK">Bank account</option>
                 </select>
               </div>
               {payMode === 'BANK' ? (
                 <div>
-                  <label className={labelCls}>Account</label>
-                  <select className={inputCls} value={payAccountId} onChange={(e) => setPayAccountId(e.target.value)} required>
+                  <label className={labelCls} htmlFor="pf-pay-acc">
+                    Account
+                  </label>
+                  <select
+                    id="pf-pay-acc"
+                    className={inputCls}
+                    value={payAccountId}
+                    onChange={(e) => setPayAccountId(e.target.value)}
+                    required
+                  >
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.account_name}
@@ -1009,21 +1666,175 @@ export default function PfLiabilitiesPage() {
                 </div>
               ) : null}
               <div>
-                <label className={labelCls}>Notes</label>
-                <input className={inputCls} value={payNotes} onChange={(e) => setPayNotes(e.target.value)} />
+                <label className={labelCls} htmlFor="pf-pay-notes">
+                  Notes
+                </label>
+                <textarea
+                  id="pf-pay-notes"
+                  rows={2}
+                  className={`${inputCls} resize-y`}
+                  value={payNotes}
+                  onChange={(e) => setPayNotes(e.target.value)}
+                  placeholder="Optional — reference, receipt, etc."
+                />
               </div>
-              <div className="flex gap-2">
-                <button type="submit" disabled={paySubmitting} className={btnPrimary}>
-                  {paySubmitting ? 'Saving…' : 'Save payment'}
-                </button>
-                <button type="button" className={btnSecondary} onClick={() => setPayId(null)}>
-                  Cancel
-                </button>
-              </div>
-            </form>
+            </div>
           </div>
-        </div>
-      ) : null}
+
+          {paymentPreview && !paymentPreview.empty && !paymentPreview.error ? (
+            <div className="rounded-xl border border-[var(--pf-border)] bg-gradient-to-b from-white/[0.04] to-transparent px-4 py-3 dark:from-white/[0.06]">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">Payment preview</p>
+              <ul className="mt-3 space-y-2 font-mono text-sm tabular-nums text-[var(--pf-text)]">
+                <li className="flex justify-between gap-4">
+                  <span className="text-[var(--pf-text-muted)]">Amount paid</span>
+                  <span className="font-semibold">{formatInr(paymentPreview.amount)}</span>
+                </li>
+                <li className="flex justify-between gap-4">
+                  <span className="text-[var(--pf-text-muted)]">Interest</span>
+                  <span className="font-semibold">{formatInr(paymentPreview.interest)}</span>
+                </li>
+                <li className="flex justify-between gap-4 border-t border-[var(--pf-border)]/60 pt-2">
+                  <span className="text-[var(--pf-text-muted)]">Principal</span>
+                  <span className="font-semibold">{formatInr(paymentPreview.principal)}</span>
+                </li>
+                <li className="flex justify-between gap-4">
+                  <span className="font-semibold text-sky-600 dark:text-sky-300">Remaining balance</span>
+                  <span className="font-bold">{formatInr(paymentPreview.remaining)}</span>
+                </li>
+              </ul>
+            </div>
+          ) : paymentPreview?.error ? (
+            <p className="text-sm text-red-600 dark:text-red-300">{paymentPreview.error}</p>
+          ) : null}
+        </form>
+      </AppModal>
+
+      <AppModal
+        open={Boolean(emiPayScheduleRow && viewRow)}
+        onClose={closeEmiPaymentModal}
+        title="Record EMI payment"
+        subtitle={
+          emiPayScheduleRow && viewRow
+            ? `${viewRow.liability_name} · Installment #${emiPayScheduleRow.emi_number}`
+            : undefined
+        }
+        maxWidthClass="max-w-[520px]"
+        footer={
+          <>
+            <AppButton type="button" variant="ghost" disabled={emiPaySubmitting} onClick={closeEmiPaymentModal}>
+              Cancel
+            </AppButton>
+            <AppButton
+              type="submit"
+              form="pf-emipay-form"
+              variant="primary"
+              disabled={emiPaySubmitting || (payEmiMode === 'BANK' && (!payEmiAccountId || accounts.length === 0))}
+            >
+              {emiPaySubmitting ? 'Recording…' : 'Record payment'}
+            </AppButton>
+          </>
+        }
+      >
+        {emiPayScheduleRow ? (
+          <form id="pf-emipay-form" onSubmit={handleConfirmEmiPay} className="space-y-5">
+            <div className="rounded-xl border border-[var(--pf-border)] bg-white/[0.03] p-4 backdrop-blur-sm dark:bg-white/[0.04]">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">Installment breakdown</p>
+              <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">EMI amount</dt>
+                  <dd className="mt-0.5 font-mono text-lg font-bold tabular-nums text-[var(--pf-text)]">
+                    {formatInr(emiPayScheduleRow.emi_amount)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">Due</dt>
+                  <dd className="mt-0.5 text-sm font-semibold text-[var(--pf-text)]">
+                    {emiPayScheduleRow.due_date ? formatShortDate(String(emiPayScheduleRow.due_date).slice(0, 10)) : '—'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">Principal</dt>
+                  <dd className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-[var(--pf-text)]">
+                    {formatInr(emiPayScheduleRow.principal_amount)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[var(--pf-text-muted)]">Interest</dt>
+                  <dd className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-[var(--pf-text)]">
+                    {formatInr(emiPayScheduleRow.interest_amount)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">Debit source</p>
+              <div className="mt-3 grid gap-3">
+                <div>
+                  <label className={labelCls} htmlFor="pf-emipay-date">
+                    Payment date
+                  </label>
+                  <input
+                    id="pf-emipay-date"
+                    type="date"
+                    className={inputCls}
+                    value={payEmiDate}
+                    onChange={(e) => setPayEmiDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className={labelCls} htmlFor="pf-emipay-mode">
+                    Pay from
+                  </label>
+                  <select
+                    id="pf-emipay-mode"
+                    className={inputCls}
+                    value={payEmiMode}
+                    onChange={(e) => setPayEmiMode(e.target.value)}
+                  >
+                    <option value="CASH">Cash</option>
+                    <option value="BANK">Bank account</option>
+                  </select>
+                </div>
+                {payEmiMode === 'BANK' ? (
+                  <div>
+                    <label className={labelCls} htmlFor="pf-emipay-acc">
+                      Account
+                    </label>
+                    <select
+                      id="pf-emipay-acc"
+                      className={inputCls}
+                      value={payEmiAccountId}
+                      onChange={(e) => setPayEmiAccountId(e.target.value)}
+                      required
+                    >
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.account_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-[var(--pf-border)] bg-gradient-to-b from-white/[0.04] to-transparent px-4 py-3 dark:from-white/[0.06]">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">Preview</p>
+              <ul className="mt-2 space-y-1.5 font-mono text-sm tabular-nums text-[var(--pf-text)]">
+                <li className="flex justify-between gap-4">
+                  <span className="text-[var(--pf-text-muted)]">Total debit</span>
+                  <span className="font-bold">{formatInr(emiPayScheduleRow.emi_amount)}</span>
+                </li>
+                <li className="flex justify-between gap-4 text-xs text-[var(--pf-text-muted)]">
+                  <span>After confirm, EMI #{emiPayScheduleRow.emi_number} is marked paid and your books update.</span>
+                </li>
+              </ul>
+            </div>
+          </form>
+        ) : null}
+      </AppModal>
 
       {viewId && viewRow ? (
         <div
@@ -1116,6 +1927,9 @@ export default function PfLiabilitiesPage() {
                 {detailSchedule.length > 0 ? (
                   <div className="mt-6">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">EMI schedule</h3>
+                    <p className="mt-1 text-[11px] text-[var(--pf-text-muted)]">
+                      Use <strong>Pay</strong> on a due row to open the confirmation dialog (debit source is chosen there).
+                    </p>
                     <div className={`${pfTableWrap} mt-2`}>
                       <table className={`${pfTable} min-w-[48rem] text-xs`}>
                         <thead>
@@ -1125,20 +1939,14 @@ export default function PfLiabilitiesPage() {
                             <th className={pfThSmRight}>EMI</th>
                             <th className={pfThSmRight}>Principal</th>
                             <th className={pfThSmRight}>Interest</th>
-                            <th className={`${pfThSm} min-w-[10rem]`}>Pay from</th>
+                            <th className={`${pfThSm} min-w-[9rem]`}>Debit source</th>
                             <th className={pfThSm}>Status</th>
-                            <th className={`${pfThSmRight} ${pfThSmActionCol}`}> </th>
+                            <th className={`${pfThSmRight} ${pfThSmActionCol}`}>Action</th>
                           </tr>
                         </thead>
                         <tbody>
                           {detailSchedule.map((s) => {
                             const paid = String(s.payment_status).toLowerCase() === 'paid'
-                            const pk = `${viewId}-${s.emi_number}`
-                            const accLabel =
-                              s.finance_account_id != null
-                                ? accountNameById.get(s.finance_account_id) ?? `#${s.finance_account_id}`
-                                : null
-                            const paidAsLabel = s.credit_as_cash ? 'Cash' : accLabel ?? '—'
                             return (
                               <tr key={s.id} className={pfTrHover}>
                                 <td className={pfTdSm}>{s.emi_number}</td>
@@ -1151,24 +1959,9 @@ export default function PfLiabilitiesPage() {
                                   {formatInr(s.interest_amount)}
                                 </td>
                                 <td className={pfTdSm}>
-                                  {paid ? (
-                                    <span className="text-slate-700 dark:text-slate-300">{paidAsLabel}</span>
-                                  ) : (
-                                    <select
-                                      className={`${inputCls} max-w-[12rem] py-1 text-xs`}
-                                      disabled={patchingKey === pk}
-                                      value={payFromSelectValue(s)}
-                                      onChange={(e) => onLiabilityCreditChange(viewId, s.emi_number, e.target.value)}
-                                    >
-                                      <option value="">—</option>
-                                      <option value="cash">Cash</option>
-                                      {accounts.map((a) => (
-                                        <option key={a.id} value={a.id}>
-                                          {a.account_name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  )}
+                                  <span className="text-slate-700 dark:text-slate-300" title="Adjust when you open Pay">
+                                    {schedulePayFromLabel(s, accountNameById)}
+                                  </span>
                                 </td>
                                 <td className={pfTdSm}>
                                   <span
@@ -1185,11 +1978,11 @@ export default function PfLiabilitiesPage() {
                                   {paid ? null : (
                                     <button
                                       type="button"
-                                      disabled={payingKey === pk}
-                                      className="rounded-[10px] bg-[#1E3A8A] px-2 py-1 text-[10px] font-semibold text-white hover:bg-[#172554] disabled:opacity-60 dark:bg-sky-700"
-                                      onClick={() => handlePayLiabilityEmi(viewId, s.emi_number)}
+                                      disabled={emiPaySubmitting}
+                                      className="rounded-[10px] bg-[#1E3A8A] px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm hover:bg-[#172554] disabled:opacity-60 dark:bg-sky-700"
+                                      onClick={() => openEmiPaymentModal(s)}
                                     >
-                                      {payingKey === pk ? '…' : 'Pay EMI'}
+                                      Pay
                                     </button>
                                   )}
                                 </td>

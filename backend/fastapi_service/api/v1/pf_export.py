@@ -111,6 +111,7 @@ def export_reports_excel(
     account_id: int | None = Query(None),
     expense_category_id: int | None = Query(None),
     person: str | None = Query(None),
+    expense_account_type: str | None = Query(None),
 ) -> Response:
     try:
         ctx = pf_export_service.reports_bundle_context(
@@ -121,6 +122,7 @@ def export_reports_excel(
             account_id=account_id,
             expense_category_id=expense_category_id,
             person=person,
+            expense_account_type=expense_account_type,
         )
         data = pf_export_service.reports_excel_bytes(ctx)
     except ValueError as e:
@@ -143,6 +145,7 @@ def export_reports_pdf(
     account_id: int | None = Query(None),
     expense_category_id: int | None = Query(None),
     person: str | None = Query(None),
+    expense_account_type: str | None = Query(None),
 ) -> Response:
     try:
         ctx = pf_export_service.reports_bundle_context(
@@ -153,6 +156,7 @@ def export_reports_pdf(
             account_id=account_id,
             expense_category_id=expense_category_id,
             person=person,
+            expense_account_type=expense_account_type,
         )
         data = pf_export_service.reports_pdf_bytes(ctx)
     except ValueError as e:

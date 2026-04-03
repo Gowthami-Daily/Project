@@ -1,6 +1,30 @@
-import { BanknotesIcon, CalendarDaysIcon, PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/solid'
+import {
+  BanknotesIcon,
+  CalendarDaysIcon,
+  ClockIcon,
+  EllipsisVerticalIcon,
+  ExclamationTriangleIcon,
+  PlusIcon,
+  TrashIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/solid'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import {
   addLoanPrincipalAmount,
   closeFinanceLoan,
@@ -8,6 +32,7 @@ import {
   createLoanPayment,
   deleteFinanceLoan,
   getFinanceLoansSummary,
+  getLoanDashboardAnalytics,
   listFinanceAccounts,
   listFinanceLoans,
   listLoanPayments,
@@ -20,6 +45,7 @@ import {
   triggerDownloadBlob,
 } from '../api.js'
 import PfExportMenu from '../PfExportMenu.jsx'
+import { AppButton, AppModal } from '../pfDesignSystem/index.js'
 import {
   btnDanger,
   btnPrimary,
@@ -53,6 +79,9 @@ import {
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 import PfSegmentedControl from '../PfSegmentedControl.jsx'
+import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+
+const LOAN_PIE_COLORS = ['#3b82f6', '#10b981']
 
 function todayISODate() {
   const d = new Date()
@@ -110,6 +139,14 @@ function canRecordPaymentFromList(loan) {
   return true
 }
 
+/** Primary “Record payment” — manual repayment or open detail to mark an EMI. */
+function canPrimaryRecordLoan(loan) {
+  if (!loan) return false
+  if (String(loan.status || '').toUpperCase() === 'CLOSED') return false
+  if (balanceDue(loan) <= 0) return false
+  return canRecordPaymentFromList(loan) || loan.has_emi_schedule === true
+}
+
 function progressBarTone(pct) {
   if (pct == null) return 'bg-slate-400'
   if (pct >= 70) return 'bg-emerald-500'
@@ -129,40 +166,42 @@ function loanTypeLabel(t) {
 function loanTypeBadgeCls(t) {
   switch (t) {
     case 'EMI':
-      return 'border border-blue-200 bg-blue-100 text-blue-900'
+      return 'border border-violet-200 bg-violet-100 text-violet-900 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-100'
     case 'INTEREST_FREE':
-      return 'border border-emerald-200 bg-emerald-100 text-emerald-900'
+      return 'border border-slate-300 bg-slate-100 text-slate-800 dark:border-slate-500/40 dark:bg-slate-500/15 dark:text-slate-200'
     case 'SIMPLE_INTEREST':
-      return 'border border-amber-200 bg-amber-100 text-amber-950'
+      return 'border border-amber-200 bg-amber-100 text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-100'
     default:
-      return 'border border-slate-200 bg-slate-100 text-slate-800'
+      return 'border border-slate-200 bg-slate-100 text-slate-800 dark:border-[var(--pf-border)] dark:bg-white/10 dark:text-[var(--pf-text)]'
   }
 }
 
 function displayStatusBadge(displayStatus, isOverdue) {
+  const base =
+    'inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide'
   if (isOverdue || displayStatus === 'OVERDUE') {
     return (
-      <span className="inline-flex rounded-full border border-red-200 bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-900">
+      <span className={`${base} border border-red-300 bg-red-100 text-red-900 dark:border-red-400/45 dark:bg-red-500/15 dark:text-red-100`}>
         Overdue
       </span>
     )
   }
   if (displayStatus === 'COMPLETED') {
     return (
-      <span className="inline-flex rounded-full border border-violet-200 bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-900">
+      <span className={`${base} border border-violet-200 bg-violet-100 text-violet-900 dark:border-violet-400/40 dark:bg-violet-500/15 dark:text-violet-100`}>
         Completed
       </span>
     )
   }
   if (displayStatus === 'CLOSED') {
     return (
-      <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-700">
+      <span className={`${base} border border-emerald-200 bg-emerald-100 text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/15 dark:text-emerald-100`}>
         Closed
       </span>
     )
   }
   return (
-    <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-900">
+    <span className={`${base} border border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-400/40 dark:bg-sky-500/15 dark:text-sky-100`}>
       Active
     </span>
   )
@@ -173,6 +212,41 @@ function formatNextEmiDue(iso) {
   const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function formatShortDue(iso) {
+  if (!iso) return '—'
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return String(iso)
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+}
+
+function daysFromTodayLoan(iso) {
+  if (!iso) return null
+  const t = new Date()
+  t.setHours(12, 0, 0, 0)
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return null
+  return Math.round((d.getTime() - t.getTime()) / 86400000)
+}
+
+function emiDisplayForLoan(l) {
+  if (l?.next_emi_amount != null && Number(l.next_emi_amount) > 0) return Number(l.next_emi_amount)
+  if (l?.emi_amount != null && Number(l.emi_amount) > 0) return Number(l.emi_amount)
+  return null
+}
+
+function interestDisplayLoan(l) {
+  if (l?.loan_type === 'INTEREST_FREE') return '0%'
+  if (l?.interest_rate != null && l.interest_rate !== '') return `${l.interest_rate}%`
+  return '—'
+}
+
+function tableDueCellCls(l) {
+  const d = daysFromTodayLoan(l.next_emi_due)
+  if (l.is_overdue || (d != null && d < 0)) return 'text-red-600 dark:text-red-400'
+  if (d != null && d >= 0 && d <= 7) return 'text-amber-700 dark:text-amber-300'
+  return ''
 }
 
 /** 0–100 for progress bar; null if total not known. */
@@ -191,6 +265,122 @@ function creditSelectValue(s) {
   if (s?.credit_as_cash === true) return 'cash'
   if (s?.finance_account_id != null && s.finance_account_id !== '') return String(s.finance_account_id)
   return ''
+}
+
+function loanOverviewCardShell(l) {
+  if (l.is_overdue || l.display_status === 'OVERDUE') {
+    return 'border-red-500/35 bg-red-500/[0.06] ring-1 ring-red-500/15 shadow-[0_8px_30px_rgba(239,68,68,0.08)]'
+  }
+  const dd = daysFromTodayLoan(l.next_emi_due)
+  if (dd != null && dd >= 0 && dd <= 7) {
+    return 'border-amber-500/35 bg-amber-500/[0.06] ring-1 ring-amber-400/15'
+  }
+  return 'border-[var(--pf-border)] bg-white/[0.03] ring-1 ring-[var(--pf-border)]/40 shadow-[var(--pf-shadow)] dark:bg-white/[0.03]'
+}
+
+function LoanOverviewCard({ l, onView, onRecord, recordEnabled, onDelete, deletingId }) {
+  const pct = loanCollectedPercent(l)
+  const emiAmt = emiDisplayForLoan(l)
+  const dueIso = l.next_emi_due
+  const dueDays = daysFromTodayLoan(dueIso)
+  const dueCls =
+    l.is_overdue || (dueDays != null && dueDays < 0)
+      ? 'font-bold text-red-400'
+      : dueDays != null && dueDays <= 7
+        ? 'font-bold text-amber-300'
+        : 'font-semibold text-[var(--pf-text)]'
+
+  return (
+    <div
+      className={`flex flex-col rounded-2xl border p-5 backdrop-blur-md transition hover:-translate-y-0.5 hover:shadow-lg ${loanOverviewCardShell(l)}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="truncate text-base font-bold text-[var(--pf-text)]">{l.borrower_name}</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <span
+              className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${loanTypeBadgeCls(l.loan_type)}`}
+            >
+              {loanTypeLabel(l.loan_type)}
+            </span>
+            {displayStatusBadge(l.display_status, l.is_overdue)}
+          </div>
+        </div>
+      </div>
+      <p className="mt-3 font-mono text-xl font-bold tabular-nums tracking-tight text-[var(--pf-text)]">
+        {formatInr(balanceDue(l))}
+        <span className="ml-2 text-xs font-normal text-[var(--pf-text-muted)]">outstanding</span>
+      </p>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+        {emiAmt != null ? (
+          <p>
+            <span className="text-[var(--pf-text-muted)]">EMI: </span>
+            <span className="font-mono font-semibold tabular-nums text-sky-300 dark:text-sky-200">{formatInr(emiAmt)}</span>
+          </p>
+        ) : (
+          <p className="text-[var(--pf-text-muted)]">EMI: —</p>
+        )}
+        <p className={dueCls}>
+          <span className="text-[var(--pf-text-muted)]">Next due: </span>
+          {dueIso ? formatShortDue(dueIso) : '—'}
+          {dueDays != null && dueDays >= 0 ? (
+            <span className="ml-1 text-xs font-normal text-[var(--pf-text-muted)]">({dueDays}d)</span>
+          ) : null}
+          {dueDays != null && dueDays < 0 ? <span className="ml-1 text-xs">(late)</span> : null}
+        </p>
+        <p>
+          <span className="text-[var(--pf-text-muted)]">Interest: </span>
+          <span className="font-semibold">{interestDisplayLoan(l)}</span>
+        </p>
+      </div>
+      {pct != null ? (
+        <div className="mt-4">
+          <div className="mb-1 flex justify-between text-[10px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">
+            <span>Collected</span>
+            <span className="tabular-nums">{pct}%</span>
+          </div>
+          <div className="h-3 w-full overflow-hidden rounded-full bg-black/15 dark:bg-white/10">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${progressBarTone(pct)}`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-[var(--pf-text-muted)]">No amortization baseline for progress.</p>
+      )}
+      <div className="mt-5 flex flex-wrap gap-2 border-t border-[var(--pf-border)]/60 pt-4">
+        <button
+          type="button"
+          disabled={!recordEnabled}
+          title={recordEnabled ? 'Record a repayment' : 'Nothing to record'}
+          className={`${btnPrimary} inline-flex min-w-[7rem] flex-1 items-center justify-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50`}
+          onClick={onRecord}
+        >
+          <BanknotesIcon className="h-4 w-4 shrink-0" />
+          Record payment
+        </button>
+        <button
+          type="button"
+          className={`${btnSecondary} min-w-[5rem] flex-1 justify-center px-3 py-2 text-xs`}
+          onClick={onView}
+        >
+          View
+        </button>
+        {onDelete ? (
+          <button
+            type="button"
+            disabled={deletingId === l.id}
+            className={`${btnDanger} inline-flex items-center justify-center px-3 py-2 text-xs`}
+            onClick={onDelete}
+            title="Delete loan"
+          >
+            <TrashIcon className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 export default function PfLoansPage() {
@@ -233,6 +423,9 @@ export default function PfLoansPage() {
   const [showBorrowerProfileForm, setShowBorrowerProfileForm] = useState(false)
   const [loanExportBusy, setLoanExportBusy] = useState(false)
   const [loanSummary, setLoanSummary] = useState(null)
+  const [loanAnalytics, setLoanAnalytics] = useState(null)
+  const [analyticsYear, setAnalyticsYear] = useState(() => new Date().getFullYear())
+  const [actionsMenuLoanId, setActionsMenuLoanId] = useState(null)
   const [filterLoanType, setFilterLoanType] = useState('ALL')
   const [filterStatus, setFilterStatus] = useState('ACTIVE')
   const [searchBorrower, setSearchBorrower] = useState('')
@@ -303,6 +496,20 @@ export default function PfLoansPage() {
   useEffect(() => {
     load()
   }, [load, tick])
+
+  useEffect(() => {
+    let cancelled = false
+    getLoanDashboardAnalytics(analyticsYear)
+      .then((d) => {
+        if (!cancelled) setLoanAnalytics(d && typeof d === 'object' ? d : null)
+      })
+      .catch(() => {
+        if (!cancelled) setLoanAnalytics(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [analyticsYear, tick])
 
   useEffect(() => {
     if (!viewLoan?.id) {
@@ -737,79 +944,184 @@ export default function PfLoansPage() {
     }
   }
 
+  function openRecordFlow(l) {
+    setShowAddAmountForm(false)
+    setViewLoan(l)
+    setShowRecordPaymentForm(canRecordPaymentFromList(l))
+  }
+
+  const loanAlerts = useMemo(() => {
+    if (!loanSummary) return []
+    const items = []
+    const seen = new Set()
+    const push = (tier, label, borrower, amount, due, loanId, emiNum) => {
+      const k = `${loanId}-${emiNum ?? 'na'}-${String(due || '').slice(0, 10)}-${tier}`
+      if (seen.has(k)) return
+      seen.add(k)
+      items.push({ tier, label, borrower, amount, due, loanId })
+    }
+    for (const r of loanSummary.reminders || []) {
+      let tier = 'soon'
+      let label = r.kind || 'REMINDER'
+      if (r.kind === 'OVERDUE') {
+        tier = 'overdue'
+        label = 'OVERDUE'
+      } else if (r.kind === 'DUE_TODAY') {
+        tier = 'soon'
+        label = 'DUE TODAY'
+      } else if (r.kind === 'DUE_TOMORROW') {
+        tier = 'soon'
+        label = 'DUE TOMORROW'
+      }
+      push(tier, label, r.borrower_name, r.emi_amount, r.due_date, r.loan_id, r.emi_number)
+    }
+    for (const u of loanSummary.upcoming_emis_this_week || []) {
+      const dueStr = String(u.due_date).slice(0, 10)
+      const d = daysFromTodayLoan(dueStr)
+      let tier = 'week'
+      let label = 'THIS WEEK'
+      if (d != null && d < 0) {
+        tier = 'overdue'
+        label = 'OVERDUE'
+      } else if (d === 0) {
+        tier = 'soon'
+        label = 'DUE TODAY'
+      } else if (d === 1) {
+        tier = 'soon'
+        label = 'DUE TOMORROW'
+      }
+      push(tier, label, u.borrower_name, u.emi_amount, u.due_date, u.loan_id, u.emi_number)
+    }
+    const rank = { overdue: 0, soon: 1, week: 2 }
+    items.sort(
+      (a, b) =>
+        (rank[a.tier] ?? 9) - (rank[b.tier] ?? 9) ||
+        String(a.due || '').localeCompare(String(b.due || '')),
+    )
+    return items
+  }, [loanSummary])
+
+  const kpiGlass =
+    'rounded-2xl border p-4 shadow-[var(--pf-shadow)] backdrop-blur-md transition dark:border-[var(--pf-border)] dark:bg-white/[0.04]'
+  const chartTitle = 'text-sm font-bold text-slate-900 dark:text-[var(--pf-text)]'
+  const chartSub = 'mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]'
+
   const modalPanelPb =
     'pb-[max(1.5rem,calc(5.5rem+env(safe-area-inset-bottom)))]'
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">Loans</h1>
-        <button
-          type="button"
-          onClick={() => {
-            resetNewLoanForm()
-            setShowNewLoanModal(true)
-          }}
-          className={`${btnPrimary} inline-flex gap-2 md:self-start`}
-        >
-          <PlusIcon className="h-5 w-5" />
-          New loan
-        </button>
-      </div>
+    <div className="space-y-10">
+      <PageHeader
+        title="Loans"
+        description="Lending status, collections, and who owes you next — a loan manager view, not just a ledger table."
+        action={
+          <button
+            type="button"
+            onClick={() => {
+              resetNewLoanForm()
+              setShowNewLoanModal(true)
+            }}
+            className={`${btnPrimary} inline-flex gap-2`}
+          >
+            <PlusIcon className="h-5 w-5" />
+            New loan
+          </button>
+        }
+      />
 
       {error ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{error}</div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+          {error}
+        </div>
       ) : null}
 
       {loanSummary ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <section aria-label="Summary" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {[
-            { label: 'Total given', value: formatInr(loanSummary.total_given) },
-            { label: 'Total received', value: formatInr(loanSummary.total_received) },
-            { label: 'Outstanding', value: formatInr(loanSummary.total_outstanding) },
-            { label: 'Overdue (EMI)', value: formatInr(loanSummary.overdue_amount) },
+            { label: 'Total lent', value: formatInr(loanSummary.total_given) },
+            { label: 'Total collected', value: formatInr(loanSummary.total_received) },
+            { label: 'Total outstanding', value: formatInr(loanSummary.total_outstanding) },
+            {
+              label: 'Overdue amount',
+              value: formatInr(loanSummary.overdue_amount),
+              warn: Number(loanSummary.overdue_amount) > 0,
+            },
             { label: 'Interest earned', value: formatInr(loanSummary.interest_earned_lifetime) },
           ].map((c) => (
-            <div key={c.label} className={pfChartCard}>
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{c.label}</p>
-              <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-100">{c.value}</p>
+            <div
+              key={c.label}
+              className={`${kpiGlass} ${c.warn ? 'border-red-500/30 bg-red-500/[0.04]' : ''}`}
+            >
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">{c.label}</p>
+              <p className="mt-2 font-mono text-lg font-bold tabular-nums text-[var(--pf-text)] sm:text-xl">{c.value}</p>
             </div>
           ))}
-        </div>
+        </section>
       ) : null}
 
-      {loanSummary &&
-      (loanSummary.reminders?.length > 0 || loanSummary.upcoming_emis_this_week?.length > 0) ? (
-        <div className={`${cardCls} border-amber-200/80 bg-amber-50/40`}>
-          <h3 className="text-sm font-bold text-amber-950">EMI reminders</h3>
-          <ul className="mt-2 space-y-1.5 text-sm text-amber-950">
-            {(loanSummary.reminders || []).slice(0, 12).map((r, i) => (
-              <li key={`r-${r.loan_id}-${r.emi_number}-${i}`}>
-                <span className="font-semibold">{r.borrower_name}</span>
-                {r.kind === 'OVERDUE' ? (
-                  <span className="text-red-700"> — overdue (due {r.due_date})</span>
-                ) : r.kind === 'DUE_TODAY' ? (
-                  <span> — due today</span>
-                ) : (
-                  <span> — due tomorrow ({r.due_date})</span>
-                )}
-                {r.emi_amount != null ? (
-                  <span className="tabular-nums"> · {formatInr(r.emi_amount)}</span>
-                ) : null}
-              </li>
-            ))}
-            {(loanSummary.upcoming_emis_this_week || []).length > 0 ? (
-              <li className="pt-2 text-xs font-semibold uppercase tracking-wide text-amber-900/80">
-                This week (next 7 days)
-              </li>
-            ) : null}
-            {(loanSummary.upcoming_emis_this_week || []).slice(0, 15).map((u) => (
-              <li key={`u-${u.loan_id}-${u.emi_number}`} className="text-xs">
-                {u.borrower_name} · due {formatNextEmiDue(u.due_date)} · {formatInr(u.emi_amount)}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {loanAlerts.length > 0 ? (
+        <section aria-label="Alerts" className="space-y-3">
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--pf-text-muted)]">
+              EMI &amp; collections
+            </h2>
+            <p className="mt-1 text-sm text-[var(--pf-text-muted)]">What needs attention first.</p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {loanAlerts.slice(0, 16).map((a, idx) => {
+              const shell =
+                a.tier === 'overdue'
+                  ? 'border-red-500/40 bg-red-500/[0.08]'
+                  : a.tier === 'soon'
+                    ? 'border-amber-500/40 bg-amber-500/[0.08]'
+                    : 'border-sky-500/35 bg-sky-500/[0.06]'
+              const IconCmp =
+                a.tier === 'overdue' ? ExclamationTriangleIcon : a.tier === 'soon' ? ClockIcon : CalendarDaysIcon
+              return (
+                <div
+                  key={`${a.loanId}-${idx}-${a.label}`}
+                  className={`flex gap-3 rounded-xl border p-4 backdrop-blur-sm ${shell}`}
+                >
+                  <IconCmp
+                    className={`h-6 w-6 shrink-0 ${
+                      a.tier === 'overdue' ? 'text-red-400' : a.tier === 'soon' ? 'text-amber-400' : 'text-sky-400'
+                    }`}
+                    aria-hidden
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">{a.label}</p>
+                    <p className="mt-1 font-semibold text-[var(--pf-text)]">{a.borrower}</p>
+                    <p className="mt-0.5 text-sm text-[var(--pf-text-muted)]">
+                      <span className="font-mono font-semibold text-[var(--pf-text)]">
+                        {a.amount != null ? formatInr(a.amount) : '—'}
+                      </span>
+                      {a.due ? (
+                        <>
+                          {' '}
+                          · Due {formatShortDue(a.due)}
+                        </>
+                      ) : null}
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-2 text-xs font-semibold text-[var(--pf-primary)] hover:underline"
+                      onClick={() => {
+                        const ln = loans.find((x) => x.id === a.loanId)
+                        if (ln) {
+                          setShowRecordPaymentForm(false)
+                          setShowAddAmountForm(false)
+                          setViewLoan(ln)
+                        }
+                      }}
+                    >
+                      Open loan →
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
       ) : null}
 
       <div className={`${cardCls} flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end`}>
@@ -863,238 +1175,390 @@ export default function PfLoansPage() {
       </div>
 
       <div className={cardCls}>
-        <h2 className="text-base font-bold text-slate-900">Your loans</h2>
+        <div>
+          <h2 className="text-base font-bold text-[var(--pf-text)]">Loan portfolio</h2>
+          <p className="mt-1 text-sm text-[var(--pf-text-muted)]">
+            Overview cards and the register — outstanding, EMI, and due dates first.
+          </p>
+        </div>
         {loading ? (
-          <p className="mt-4 text-sm text-slate-500">Loading…</p>
+          <p className="mt-4 text-sm text-[var(--pf-text-muted)]">Loading…</p>
         ) : loans.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500">No loans yet — tap New loan.</p>
+          <p className="mt-4 text-sm text-[var(--pf-text-muted)]">No loans yet — use New loan.</p>
         ) : (
           <>
-            <div className="mt-4 space-y-3 md:hidden">
-              {loans.map((l) => {
-                const pct = loanCollectedPercent(l)
-                const emi = l.emi_amount != null && l.emi_amount !== '' ? formatInr(l.emi_amount) : '—'
-                return (
-                  <div
-                    key={l.id}
-                    className="rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_2px_14px_rgba(15,23,42,0.06)] transition active:scale-[0.99]"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-bold text-slate-900">{l.borrower_name}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${loanTypeBadgeCls(l.loan_type)}`}
-                          >
-                            {loanTypeLabel(l.loan_type)}
-                          </span>
-                          {displayStatusBadge(l.display_status, l.is_overdue)}
-                        </div>
-                        <p className="mt-1 text-xs text-slate-600">
-                          Given{' '}
-                          <span className="font-mono font-semibold text-slate-900">{formatInr(l.loan_amount)}</span>
-                          {' · '}
-                          Balance{' '}
-                          <span className="font-mono font-semibold text-slate-900">{formatInr(balanceDue(l))}</span>
-                        </p>
-                        <p className="mt-0.5 text-xs text-slate-500">EMI: {emi}</p>
-                        {l.next_emi_due ? (
-                          <p className="mt-1 text-xs font-medium text-[#1E3A8A]">
-                            Next due: {formatNextEmiDue(l.next_emi_due)}
-                          </p>
-                        ) : (
-                          <p className="mt-1 text-xs text-slate-400">Next due: —</p>
-                        )}
-                      </div>
-                    </div>
-                    {pct != null ? (
-                      <div className="mt-3">
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
-                          <span>Progress</span>
-                          <span className="tabular-nums">{pct}% paid</span>
-                        </div>
-                        <div className="mt-1 h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
-                          <div
-                            className={`h-full rounded-full transition-[width] duration-500 ease-out ${progressBarTone(pct)}`}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                    ) : null}
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowRecordPaymentForm(false)
-                          setShowAddAmountForm(false)
-                          setViewLoan(l)
-                        }}
-                        className={`${btnPrimary} min-w-[6rem] flex-1 justify-center text-center`}
-                      >
-                        View
-                      </button>
-                      {l.has_emi_schedule &&
-                      String(l.status || '').toUpperCase() !== 'CLOSED' &&
-                      balanceDue(l) > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowRecordPaymentForm(false)
-                            setShowAddAmountForm(false)
-                            setViewLoan(l)
-                          }}
-                          className={`${btnSecondary} min-w-[6rem] flex-1 justify-center border-emerald-600 text-emerald-800`}
-                        >
-                          Mark paid
-                        </button>
-                      ) : null}
-                      {canRecordPaymentFromList(l) ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setViewLoan(l)
-                            setShowRecordPaymentForm(true)
-                            setShowAddAmountForm(false)
-                          }}
-                          className={`${btnSecondary} px-3 text-xs`}
-                        >
-                          Record
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                )
-              })}
+            <div className="mt-6 hidden gap-4 md:grid md:grid-cols-2 xl:grid-cols-3">
+              {loans.map((l) => (
+                <LoanOverviewCard
+                  key={`overview-${l.id}`}
+                  l={l}
+                  onView={() => {
+                    setShowRecordPaymentForm(false)
+                    setShowAddAmountForm(false)
+                    setViewLoan(l)
+                  }}
+                  onRecord={() => openRecordFlow(l)}
+                  recordEnabled={canPrimaryRecordLoan(l)}
+                />
+              ))}
             </div>
-            <div className={`${pfTableWrap} mt-4 hidden md:block`}>
-            <table className={`${pfTable} min-w-[920px]`}>
-              <thead>
-                <tr>
-                  <th className={pfTh}>Borrower</th>
-                  <th className={pfTh}>Loan type</th>
-                  <th className={pfThRight}>Given</th>
-                  <th className={pfThRight}>Balance due</th>
-                  <th className={pfThRight}>Next due</th>
-                  <th className={pfTh}>Progress</th>
-                  <th className={`${pfThRight} ${pfThActionsWide}`}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loans.map((l) => {
-                  const pct = loanCollectedPercent(l)
-                  return (
-                  <tr key={l.id} className={pfTrHover}>
-                    <td className={`${pfTd} font-medium text-slate-900`}>
-                      <div>{l.borrower_name}</div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {displayStatusBadge(l.display_status, l.is_overdue)}
-                      </div>
-                    </td>
-                    <td className={pfTd}>
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${loanTypeBadgeCls(l.loan_type)}`}
-                      >
-                        {loanTypeLabel(l.loan_type)}
-                      </span>
-                    </td>
-                    <td className={pfTdRight}>{formatInr(l.loan_amount)}</td>
-                    <td className={pfTdRight}>{formatInr(balanceDue(l))}</td>
-                    <td className={pfTdRight}>
-                      {l.next_emi_due ? formatNextEmiDue(l.next_emi_due) : '—'}
-                    </td>
-                    <td className={`${pfTd} max-w-[8rem]`}>
-                      {pct != null ? (
-                        <>
-                          <div className="text-[10px] font-semibold tabular-nums text-slate-600">{pct}%</div>
-                          <div className="mt-0.5 h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                            <div
-                              className={`h-full rounded-full transition-[width] duration-500 ease-out ${progressBarTone(pct)}`}
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                        </>
-                      ) : (
-                        <span className="text-xs text-slate-400">—</span>
-                      )}
-                    </td>
-                    <td className={pfTdActions}>
-                      <div className={pfActionRow}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowRecordPaymentForm(false)
-                            setShowAddAmountForm(false)
-                            setViewLoan(l)
-                          }}
-                          className={`${btnSecondary} px-3 py-1.5 text-xs`}
-                        >
-                          View
-                        </button>
-                        {canRecordPaymentFromList(l) ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setViewLoan(l)
-                              setShowRecordPaymentForm(true)
-                              setShowAddAmountForm(false)
-                            }}
-                            className={`${btnSecondary} inline-flex items-center gap-1 border-emerald-600 px-2.5 py-1.5 text-xs text-emerald-800`}
-                            title="Record a repayment; loan closes when balance is zero"
-                          >
-                            <BanknotesIcon className="h-3.5 w-3.5" />
-                            Record
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          disabled={deletingId === l.id}
-                          onClick={() => handleDeleteLoan(l)}
-                          className={`${btnDanger} inline-flex items-center gap-1 px-2.5 py-1.5 text-xs`}
-                          title="Delete loan"
-                        >
-                          <TrashIcon className="h-3.5 w-3.5" />
-                          {deletingId === l.id ? '…' : 'Delete'}
-                        </button>
-                      </div>
-                    </td>
+            <div className="mt-4 space-y-4 md:hidden">
+              {loans.map((l) => (
+                <LoanOverviewCard
+                  key={l.id}
+                  l={l}
+                  onView={() => {
+                    setShowRecordPaymentForm(false)
+                    setShowAddAmountForm(false)
+                    setViewLoan(l)
+                  }}
+                  onRecord={() => openRecordFlow(l)}
+                  recordEnabled={canPrimaryRecordLoan(l)}
+                  onDelete={() => handleDeleteLoan(l)}
+                  deletingId={deletingId}
+                />
+              ))}
+            </div>
+            <div className="mt-8">
+              <h3 className="text-sm font-bold text-[var(--pf-text)]">All loans</h3>
+              <p className="mt-0.5 text-xs text-[var(--pf-text-muted)]">Full register for quick scanning.</p>
+            </div>
+            <div className={`${pfTableWrap} mt-3 hidden md:block`}>
+              <table className={`${pfTable} min-w-[1000px]`}>
+                <thead>
+                  <tr>
+                    <th className={pfTh}>Borrower</th>
+                    <th className={pfThRight}>Outstanding</th>
+                    <th className={pfThRight}>EMI</th>
+                    <th className={pfThRight}>Next due</th>
+                    <th className={pfThRight}>Interest</th>
+                    <th className={pfTh}>Progress</th>
+                    <th className={pfTh}>Status</th>
+                    <th className={`${pfThRight} ${pfThActionsWide}`}>Actions</th>
                   </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {loans.map((l) => {
+                    const pct = loanCollectedPercent(l)
+                    const emiN = emiDisplayForLoan(l)
+                    const rowTint =
+                      l.is_overdue || l.display_status === 'OVERDUE'
+                        ? 'bg-red-500/[0.06] dark:bg-red-950/25'
+                        : ''
+                    return (
+                      <tr key={l.id} className={`${pfTrHover} ${rowTint}`}>
+                        <td className={`${pfTd} max-w-[12rem]`}>
+                          <div className="font-bold text-[var(--pf-text)]">{l.borrower_name}</div>
+                          <div className="mt-1">
+                            <span
+                              className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${loanTypeBadgeCls(l.loan_type)}`}
+                            >
+                              {loanTypeLabel(l.loan_type)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className={`${pfTdRight} font-mono text-sm font-semibold tabular-nums text-[var(--pf-text)]`}>
+                          {formatInr(balanceDue(l))}
+                        </td>
+                        <td className={`${pfTdRight} font-mono text-sm tabular-nums text-[var(--pf-text)]`}>
+                          {emiN != null ? formatInr(emiN) : '—'}
+                        </td>
+                        <td className={`${pfTdRight} text-sm font-medium ${tableDueCellCls(l)}`}>
+                          {l.next_emi_due ? formatShortDue(l.next_emi_due) : '—'}
+                        </td>
+                        <td className={`${pfTdRight} text-sm font-medium text-[var(--pf-text)]`}>
+                          {interestDisplayLoan(l)}
+                        </td>
+                        <td className={`${pfTd} max-w-[9rem]`}>
+                          {pct != null ? (
+                            <>
+                              <div className="text-[10px] font-semibold tabular-nums text-[var(--pf-text-muted)]">
+                                {pct}%
+                              </div>
+                              <div className="mt-1 h-3 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                                <div
+                                  className={`h-full rounded-full transition-[width] duration-500 ease-out ${progressBarTone(pct)}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-xs text-[var(--pf-text-muted)]">—</span>
+                          )}
+                        </td>
+                        <td className={pfTd}>{displayStatusBadge(l.display_status, l.is_overdue)}</td>
+                        <td className={pfTdActions}>
+                          <div className={`${pfActionRow} relative`}>
+                            <button
+                              type="button"
+                              disabled={!canPrimaryRecordLoan(l)}
+                              onClick={() => openRecordFlow(l)}
+                              className={`${btnPrimary} inline-flex items-center gap-1 px-3 py-1.5 text-xs disabled:opacity-50`}
+                            >
+                              <BanknotesIcon className="h-3.5 w-3.5" />
+                              Record
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowRecordPaymentForm(false)
+                                setShowAddAmountForm(false)
+                                setViewLoan(l)
+                              }}
+                              className={`${btnSecondary} px-3 py-1.5 text-xs`}
+                            >
+                              View
+                            </button>
+                            <div className="relative">
+                              <button
+                                type="button"
+                                className={`${btnSecondary} inline-flex items-center px-2 py-1.5 text-xs`}
+                                aria-label="More actions"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setActionsMenuLoanId((id) => (id === l.id ? null : l.id))
+                                }}
+                              >
+                                <EllipsisVerticalIcon className="h-5 w-5" />
+                              </button>
+                              {actionsMenuLoanId === l.id ? (
+                                <div
+                                  className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)] py-1 shadow-lg"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                                    onClick={() => {
+                                      setActionsMenuLoanId(null)
+                                      handleDeleteLoan(l)
+                                    }}
+                                  >
+                                    <TrashIcon className="h-4 w-4 shrink-0" />
+                                    Delete loan
+                                  </button>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
       </div>
 
-      {showNewLoanModal ? (
-        <div
-          className={pfModalOverlay}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="pf-new-loan-title"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setShowNewLoanModal(false)
-          }}
-        >
-          <div
-            className={`${pfModalSurface} max-w-2xl p-5 md:p-6 ${modalPanelPb}`}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className={pfModalHeader}>
-              <h2 id="pf-new-loan-title" className="text-lg font-semibold text-[var(--pf-text)]">
-                New loan
-              </h2>
-              <button
-                type="button"
-                onClick={() => setShowNewLoanModal(false)}
-                className={pfModalCloseBtn}
-                aria-label="Close"
-              >
-                <XMarkIcon className="h-6 w-6" />
-              </button>
+      {loanAnalytics ? (
+        <section className="space-y-4" aria-label="Loan analytics">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-[var(--pf-text)]">Loan analytics</h2>
+              <p className="mt-0.5 text-xs text-[var(--pf-text-muted)]">
+                Collections and interest by month ({analyticsYear}). Snapshot KPIs from your book.
+              </p>
             </div>
-            <form onSubmit={handleLoanSubmit} className="grid gap-4 sm:grid-cols-2">
+            <label className="flex flex-col text-xs font-medium text-[var(--pf-text-muted)] sm:items-end">
+              Year
+              <select
+                className={`${pfSelectCompact} mt-1`}
+                value={analyticsYear}
+                onChange={(e) => setAnalyticsYear(Number(e.target.value))}
+              >
+                {(() => {
+                  const cy = new Date().getFullYear()
+                  return Array.from({ length: 7 }, (_, i) => cy - 5 + i).map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))
+                })()}
+              </select>
+            </label>
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className={`${pfChartCard} min-h-[280px]`}>
+              <p className={chartTitle}>Collections by month</p>
+              <p className={chartSub}>Total received per month</p>
+              <div className="mt-4 h-[220px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={(loanAnalytics.collections_by_month ?? []).map((r) => ({
+                      month: r.month,
+                      amount: Number(r.amount) || 0,
+                    }))}
+                    margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-[var(--pf-border)] opacity-40" />
+                    <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="var(--pf-text-muted)" />
+                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatInr(v)} width={72} />
+                    <Tooltip
+                      formatter={(v) => formatInr(v)}
+                      contentStyle={{
+                        background: 'var(--pf-card)',
+                        border: '1px solid var(--pf-border)',
+                        borderRadius: '12px',
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="amount"
+                      name="Collected"
+                      stroke="var(--pf-primary)"
+                      strokeWidth={2.5}
+                      dot
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className={`${pfChartCard} min-h-[280px]`}>
+              <p className={chartTitle}>Interest collected by month</p>
+              <p className={chartSub}>From repayment records</p>
+              <div className="mt-4 h-[220px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={(loanAnalytics.interest_profit_by_month ?? []).map((r) => ({
+                      month: r.month,
+                      amount: Number(r.amount) || 0,
+                    }))}
+                    margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-[var(--pf-border)] opacity-40" />
+                    <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="var(--pf-text-muted)" />
+                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatInr(v)} width={72} />
+                    <Tooltip
+                      formatter={(v) => formatInr(v)}
+                      contentStyle={{
+                        background: 'var(--pf-card)',
+                        border: '1px solid var(--pf-border)',
+                        borderRadius: '12px',
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="amount"
+                      name="Interest"
+                      stroke="#a855f7"
+                      strokeWidth={2.5}
+                      dot
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className={`${pfChartCard} min-h-[260px]`}>
+              <p className={chartTitle}>Given vs collected vs outstanding</p>
+              <p className={chartSub}>Book snapshot</p>
+              <div className="mt-4 h-[200px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={[
+                      {
+                        name: 'Position',
+                        given: Number(loanAnalytics.given_vs_collected_vs_remaining?.given) || 0,
+                        collected: Number(loanAnalytics.given_vs_collected_vs_remaining?.collected) || 0,
+                        remaining: Number(loanAnalytics.given_vs_collected_vs_remaining?.remaining) || 0,
+                      },
+                    ]}
+                    margin={{ top: 8, right: 8, left: 8, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-[var(--pf-border)] opacity-40" />
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatInr(v)} width={72} />
+                    <Tooltip
+                      formatter={(v) => formatInr(v)}
+                      contentStyle={{
+                        background: 'var(--pf-card)',
+                        border: '1px solid var(--pf-border)',
+                        borderRadius: '12px',
+                      }}
+                    />
+                    <Legend />
+                    <Bar dataKey="given" name="Lent (principal)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="collected" name="Collected" fill="#10b981" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="remaining" name="Outstanding" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className={`${pfChartCard} min-h-[260px]`}>
+              <p className={chartTitle}>Risk & EMI (snapshot)</p>
+              <p className={chartSub}>From analytics API — use alerts above for action items</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-[var(--pf-border)] bg-white/5 px-4 py-3 dark:bg-white/[0.03]">
+                  <p className="text-xs text-[var(--pf-text-muted)]">Overdue EMI (amount)</p>
+                  <p className="mt-1 font-mono text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
+                    {formatInr(loanAnalytics.overdue_emi_amount ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[var(--pf-border)] bg-white/5 px-4 py-3 dark:bg-white/[0.03]">
+                  <p className="text-xs text-[var(--pf-text-muted)]">EMI due this month</p>
+                  <p className="mt-1 font-mono text-lg font-bold tabular-nums text-[var(--pf-text)]">
+                    {formatInr(loanAnalytics.emi_due_this_month ?? 0)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className={`${pfChartCard} min-h-[260px]`}>
+            <p className={chartTitle}>Active vs closed loans</p>
+            <p className={chartSub}>Loan count</p>
+            <div className="mt-4 h-[200px] w-full">
+              {(() => {
+                const pieLoan = (loanAnalytics.active_vs_closed_pie ?? []).filter((x) => Number(x.value) > 0)
+                return pieLoan.length === 0 ? (
+                  <p className="flex h-[180px] items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                    No data
+                  </p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieLoan}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={78}
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      >
+                        {pieLoan.map((_, i) => (
+                          <Cell key={i} fill={LOAN_PIE_COLORS[i % LOAN_PIE_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )
+              })()}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <AppModal
+        open={showNewLoanModal}
+        onClose={() => !submittingLoan && setShowNewLoanModal(false)}
+        title="New loan"
+        subtitle="Create a loan you’ve given — EMI schedule, interest-free, or simple accrual."
+        maxWidthClass="max-w-2xl"
+        footer={
+          <>
+            <AppButton type="button" variant="secondary" disabled={submittingLoan} onClick={() => setShowNewLoanModal(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" variant="primary" disabled={submittingLoan} form="pf-new-loan-form">
+              {submittingLoan ? 'Saving…' : 'Create loan'}
+            </AppButton>
+          </>
+        }
+      >
+            <form id="pf-new-loan-form" onSubmit={handleLoanSubmit} className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Loan type</p>
                 <PfSegmentedControl
@@ -1365,18 +1829,8 @@ export default function PfLoansPage() {
               {loanKind === 'simple_accrual' && loanAmount && interestRate && startDate && !accrualPreview ? (
                 <p className="sm:col-span-2 text-xs text-slate-500">Enter valid principal, rate, and start date to preview total due.</p>
               ) : null}
-              <div className="flex flex-wrap gap-2 sm:col-span-2">
-                <button type="submit" disabled={submittingLoan} className={btnPrimary}>
-                  {submittingLoan ? 'Saving…' : 'Create loan'}
-                </button>
-                <button type="button" onClick={() => setShowNewLoanModal(false)} className={btnSecondary}>
-                  Cancel
-                </button>
-              </div>
             </form>
-          </div>
-        </div>
-      ) : null}
+      </AppModal>
 
       {viewLoan ? (
         <div

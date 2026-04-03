@@ -1,6 +1,5 @@
 import {
   Bars3Icon,
-  BellIcon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
   ChevronDownIcon,
@@ -16,6 +15,7 @@ import {
   switchProfile,
 } from './api.js'
 import PrivacyToggle from '../../components/ui/PrivacyToggle.jsx'
+import PfNotificationBell from './notifications/PfNotificationBell.jsx'
 import { usePfPrivacy } from './PfPrivacyContext.jsx'
 import { usePfRefresh } from './pfRefreshContext.jsx'
 
@@ -118,13 +118,7 @@ export default function PfToolbar({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <PrivacyToggle active={privacyBlur} onToggle={setPrivacyBlur} />
-          <button
-            type="button"
-            className="flex h-10 w-10 items-center justify-center rounded-[10px] text-[var(--pf-text-muted)] transition hover:bg-black/[0.06] active:scale-95 dark:hover:bg-white/[0.06]"
-            aria-label="Notifications (coming soon)"
-          >
-            <BellIcon className="h-[22px] w-[22px]" />
-          </button>
+          <PfNotificationBell onSessionInvalid={onSessionInvalid} />
           <div className="relative hidden sm:block" ref={menuRef}>
             <button
               type="button"

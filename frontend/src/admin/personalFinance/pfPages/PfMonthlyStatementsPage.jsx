@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { ChevronDownIcon } from '@heroicons/react/24/outline'
+import { InformationCircleIcon, WalletIcon } from '@heroicons/react/24/solid'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   Bar,
   BarChart,
@@ -10,6 +12,7 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -32,7 +35,6 @@ import {
   cardCls,
   inputCls,
   labelCls,
-  pfSelectCompact,
   pfTable,
   pfTableWrap,
   pfTd,
@@ -69,6 +71,44 @@ const REPORT_TABS = [
   { id: 'ledger', label: 'Ledger' },
 ]
 
+/** Tab title + subtitle — “what question does this answer?” */
+const TAB_INTROS = {
+  income: {
+    title: 'Income statement',
+    subtitle:
+      'Answers: Am I profitable? Shows revenue-style income, total spend, and profit (income − expenses) for the year.',
+  },
+  cashflow: {
+    title: 'Cash flow statement',
+    subtitle:
+      'Answers: Where did cash move? Operating (income − spend), investing (allocations), and financing (debt repayments) with an estimated cash roll-forward.',
+  },
+  balancesheet: {
+    title: 'Balance sheet',
+    subtitle:
+      'Answers: What do I own vs owe? Assets, liabilities, and equity (net worth) — latest book positions repeat in monthly columns until full history exists.',
+  },
+  networth: {
+    title: 'Net worth',
+    subtitle:
+      'Answers: Am I getting richer? Trend of net worth plus how assets and liabilities are allocated today.',
+  },
+  ledger: {
+    title: 'Ledger',
+    subtitle:
+      'Answers: What exactly happened? Chronological income and expense lines with an optional running balance.',
+  },
+}
+
+const RATIO_HELP = {
+  'Savings rate': '(Income − expenses) ÷ income for the year to date. Higher means more of earnings left after spend.',
+  'Debt to income (EMI)': 'Total EMI-tagged expenses ÷ income YTD — share of earnings going to EMI.',
+  'Expense ratio': 'Total expenses ÷ income YTD.',
+  'Credit utilization': 'Card balances ÷ total credit limits across cards in the app.',
+  'Liquidity (mo.)': 'Estimated cash ÷ average monthly expense — rough months of coverage.',
+  'Investments / assets': 'Investments ÷ total assets — allocation signal, not advice.',
+}
+
 const PIE_COLORS = ['#0ea5e9', '#22c55e', '#a855f7', '#f97316', '#eab308', '#64748b', '#ef4444', '#14b8a6']
 
 const chartTitle = 'text-base font-bold text-slate-900 dark:text-[var(--pf-text)]'
@@ -102,16 +142,6 @@ function buildMergedLedger(income, expenses) {
   })
 }
 
-function groupByDateDesc(rows) {
-  const m = new Map()
-  for (const r of rows) {
-    const d = String(r.entry_date ?? '')
-    if (!m.has(d)) m.set(d, [])
-    m.get(d).push(r)
-  }
-  return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0]))
-}
-
 function rowDetail(r) {
   if (r.kind === 'income') {
     const parts = [r.received_from, r.description].filter(Boolean)
@@ -122,6 +152,142 @@ function rowDetail(r) {
     bits.push('Pending')
   }
   return bits.length ? bits.join(' · ') : '—'
+}
+
+function rowPersonKey(r) {
+  if (r.kind === 'income') return String(r.received_from ?? '').trim()
+  return String(r.paid_by ?? '').trim()
+}
+
+function RatioHint({ label }) {
+  const tip = RATIO_HELP[label]
+  if (!tip) return null
+  return (
+    <span title={tip} className="group inline-flex align-middle">
+      <InformationCircleIcon className="ml-0.5 h-3.5 w-3.5 shrink-0 text-slate-400 opacity-70 group-hover:opacity-100 dark:text-slate-500" />
+    </span>
+  )
+}
+
+function StatementSectionHeader({ tabId }) {
+  const meta = TAB_INTROS[tabId]
+  if (!meta) return null
+  return (
+    <div className="mb-5 border-b border-slate-200/80 pb-4 dark:border-[var(--pf-border)]">
+      <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-[var(--pf-text)]">{meta.title}</h2>
+      <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600 dark:text-[var(--pf-text-muted)]">
+        {meta.subtitle}
+      </p>
+    </div>
+  )
+}
+
+const premiumTriggerCls =
+  'flex h-10 min-h-10 w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold shadow-sm outline-none transition-all duration-200 ' +
+  'border-slate-200/90 bg-white text-slate-900 hover:border-sky-400/50 hover:bg-slate-50/90 focus-visible:ring-2 focus-visible:ring-sky-400/40 ' +
+  'dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100 dark:hover:border-sky-400/35 dark:hover:bg-white/[0.1] dark:focus-visible:ring-sky-400/30'
+
+const premiumPanelCls =
+  'absolute left-0 z-[100] mt-1.5 max-h-72 min-w-full overflow-y-auto rounded-xl border border-slate-200/90 bg-white py-1.5 shadow-2xl ring-1 ring-slate-900/5 ' +
+  'dark:border-white/10 dark:bg-slate-950 dark:ring-white/10'
+
+function PremiumSelect({
+  id,
+  ariaLabel,
+  value,
+  onChange,
+  options,
+  className = '',
+  icon: Icon,
+  /** 'simple' = text-only rows; 'account' = wallet / totals glyph per row */
+  variant = 'simple',
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    function onDoc(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const selected = options.find((o) => o.value === value)
+  const showLabel = selected?.label ?? '—'
+
+  return (
+    <div className={`relative ${className}`} ref={wrapRef}>
+      <button
+        type="button"
+        id={id}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((x) => !x)}
+        className={premiumTriggerCls}
+      >
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          {Icon ? <Icon className="h-4 w-4 shrink-0 text-sky-600 opacity-90 dark:text-sky-400" aria-hidden /> : null}
+          <span className="min-w-0 truncate">{showLabel}</span>
+        </span>
+        <ChevronDownIcon
+          className={`h-4 w-4 shrink-0 text-slate-500 opacity-70 transition-transform dark:text-slate-400 ${open ? 'rotate-180' : ''}`}
+          aria-hidden
+        />
+      </button>
+      {open ? (
+        <ul role="listbox" aria-labelledby={id} className={premiumPanelCls}>
+          {options.map((o) => {
+            const active = value === o.value
+            return (
+              <li key={o.value === '' ? '__all__' : String(o.value)} role="presentation">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  className={
+                    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ' +
+                    (active
+                      ? 'mx-1 bg-sky-500/15 font-semibold text-sky-900 dark:bg-sky-400/15 dark:text-sky-100'
+                      : 'mx-1 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-white/10')
+                  }
+                  onClick={() => {
+                    onChange(o.value)
+                    setOpen(false)
+                  }}
+                >
+                  {variant === 'account' ? (
+                    o.value !== '' && o.value != null ? (
+                      <WalletIcon className="h-4 w-4 shrink-0 text-sky-600/80 dark:text-sky-400/90" aria-hidden />
+                    ) : (
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-md bg-slate-200/80 text-[10px] font-bold text-slate-600 dark:bg-white/10 dark:text-slate-300">
+                        ∑
+                      </span>
+                    )
+                  ) : (
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-sky-500/20 dark:bg-sky-400/15" aria-hidden />
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{o.label}</span>
+                    {o.sub ? <span className="mt-0.5 block truncate text-[11px] font-normal text-slate-500 dark:text-slate-400">{o.sub}</span> : null}
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function pctDeltaLabel(cur, prev) {
+  if (prev == null || cur == null || !Number.isFinite(prev) || !Number.isFinite(cur)) return null
+  if (Math.abs(prev) < 0.01) return null
+  const p = Math.round(1000 * ((cur - prev) / prev)) / 10
+  if (!Number.isFinite(p)) return null
+  return p
 }
 
 /** Sticky row label + month columns (financial tables) */
@@ -138,6 +304,8 @@ const tdVal =
 export default function PfMonthlyStatementsPage() {
   const { onSessionInvalid } = useOutletContext() || {}
   const { tick, refresh } = usePfRefresh()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const statementsDeepLinkApplied = useRef(false)
   const [reportTab, setReportTab] = useState('income')
   const now = new Date()
   const [year, setYear] = useState(() => now.getFullYear())
@@ -157,6 +325,15 @@ export default function PfMonthlyStatementsPage() {
   const [drill, setDrill] = useState(null)
   const [drillRows, setDrillRows] = useState([])
   const [drillLoading, setDrillLoading] = useState(false)
+  const [compareYear, setCompareYear] = useState('')
+  const [compareMonthlyData, setCompareMonthlyData] = useState(null)
+  const [compareLoading, setCompareLoading] = useState(false)
+  const [ledgerAccountId, setLedgerAccountId] = useState('')
+  const [ledgerCategory, setLedgerCategory] = useState('')
+  const [ledgerType, setLedgerType] = useState('')
+  const [ledgerPerson, setLedgerPerson] = useState('')
+  const [ledgerAmtMin, setLedgerAmtMin] = useState('')
+  const [ledgerAmtMax, setLedgerAmtMax] = useState('')
 
   const yearOptions = useMemo(() => {
     const y = new Date().getFullYear()
@@ -203,12 +380,32 @@ export default function PfMonthlyStatementsPage() {
     }
   }, [year, bankFilter, onSessionInvalid])
 
+  const loadCompareMonthly = useCallback(async () => {
+    if (!getPfToken()) return
+    if (!compareYear || Number(compareYear) === Number(year)) {
+      setCompareMonthlyData(null)
+      setCompareLoading(false)
+      return
+    }
+    setCompareLoading(true)
+    try {
+      const q = bankFilter === '' ? undefined : bankFilter
+      const res = await getMonthlyFinancialTables(Number(compareYear), q)
+      setCompareMonthlyData(res)
+    } catch {
+      setCompareMonthlyData(null)
+    } finally {
+      setCompareLoading(false)
+    }
+  }, [compareYear, year, bankFilter])
+
   const loadDailyLedger = useCallback(async () => {
     if (!getPfToken()) return
     setDailyLoading(true)
     setError('')
     try {
-      const q = bankFilter === '' ? undefined : bankFilter
+      const accRaw = ledgerAccountId !== '' ? ledgerAccountId : bankFilter
+      const q = accRaw === '' ? undefined : accRaw
       const res = await getDailyLedger(dailyFrom, dailyTo, q)
       setDailyData(res)
     } catch (e) {
@@ -222,11 +419,28 @@ export default function PfMonthlyStatementsPage() {
     } finally {
       setDailyLoading(false)
     }
-  }, [dailyFrom, dailyTo, bankFilter, onSessionInvalid])
+  }, [dailyFrom, dailyTo, bankFilter, ledgerAccountId, onSessionInvalid])
 
   useEffect(() => {
     loadAccounts()
   }, [loadAccounts, tick])
+
+  useEffect(() => {
+    if (statementsDeepLinkApplied.current) return
+    const tab = searchParams.get('tab')
+    const aid = searchParams.get('account_id')
+    if (tab !== 'ledger' && !aid) return
+    if (tab === 'ledger') setReportTab('ledger')
+    if (aid) {
+      setBankFilter(aid)
+      setLedgerAccountId(aid)
+    }
+    statementsDeepLinkApplied.current = true
+    const next = new URLSearchParams(searchParams)
+    next.delete('tab')
+    next.delete('account_id')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     if (reportTab !== 'ledger') return
@@ -238,16 +452,47 @@ export default function PfMonthlyStatementsPage() {
     loadMonthlyTables()
   }, [reportTab, loadMonthlyTables, tick])
 
+  useEffect(() => {
+    if (reportTab === 'ledger') return
+    loadCompareMonthly()
+  }, [reportTab, loadCompareMonthly, tick])
+
   const mergedDaily = useMemo(
     () => buildMergedLedger(dailyData?.income, dailyData?.expenses),
     [dailyData],
   )
-  const byDay = useMemo(() => groupByDateDesc(mergedDaily), [mergedDaily])
 
   const rows = Array.isArray(monthlyData?.rows) ? monthlyData.rows : []
   const filterName = bankFilter
     ? accounts.find((a) => String(a.id) === bankFilter)?.account_name ?? ''
     : ''
+
+  const yearPremiumOptions = useMemo(
+    () => yearOptions.map((y) => ({ value: String(y), label: String(y) })),
+    [yearOptions],
+  )
+
+  const comparePremiumOptions = useMemo(
+    () => [
+      { value: '', label: 'No comparison', sub: 'Current year only' },
+      ...yearOptions
+        .filter((y) => y !== year)
+        .map((y) => ({ value: String(y), label: `vs ${y}`, sub: 'YTD delta %' })),
+    ],
+    [yearOptions, year],
+  )
+
+  const accountPremiumOptions = useMemo(
+    () => [
+      { value: '', label: 'All accounts', sub: 'Consolidated · all books' },
+      ...accounts.map((a) => ({
+        value: String(a.id),
+        label: a.account_name,
+        sub: 'Single account scope',
+      })),
+    ],
+    [accounts],
+  )
 
   const loading = reportTab === 'ledger' ? dailyLoading : monthlyLoading
 
@@ -325,6 +570,161 @@ export default function PfMonthlyStatementsPage() {
   const lastBs = rows.length ? rows[rows.length - 1]?.balance_sheet : null
   const ratios = monthlyData?.ratios_ytd
 
+  const assetsVsLiabTrend = useMemo(
+    () =>
+      rows.map((r) => ({
+        label: monthColumnHeading(r),
+        assets: Number(r.balance_sheet?.total_assets) || 0,
+        liabilities: Number(r.balance_sheet?.liabilities) || 0,
+      })),
+    [rows],
+  )
+
+  const closingCashTrend = useMemo(
+    () =>
+      rows.map((r) => ({
+        label: monthColumnHeading(r),
+        closing: Number(r.cash_flow?.closing_cash_estimate) || 0,
+      })),
+    [rows],
+  )
+
+  const liquidInvestLoanData = useMemo(() => {
+    if (!lastBs) return []
+    return [
+      { name: 'Liquid (cash est.)', value: Number(lastBs.cash_estimate) || 0 },
+      { name: 'Investments', value: Number(lastBs.investments) || 0 },
+      { name: 'Loans given', value: Number(lastBs.loans_given_receivable ?? lastBs.loans_outstanding) || 0 },
+    ].filter((x) => x.value > 0.01)
+  }, [lastBs])
+
+  const latestCfBridge = useMemo(() => {
+    if (!rows.length || !monthlyData) return null
+    const i = rows.length - 1
+    const r = rows[i]
+    const cf = r.cash_flow || {}
+    const op = Number(cf.net_operating_cash_flow) || 0
+    const inv = Number(cf.investing_cash_flow) || 0
+    const fin = Number(cf.financing_cash_flow) || 0
+    const closing = Number(cf.closing_cash_estimate) || 0
+    const prevClosing =
+      i > 0
+        ? Number(rows[i - 1].cash_flow?.closing_cash_estimate) || 0
+        : Number(monthlyData.opening_cash_estimate) || 0
+    const netActivity = op + inv + fin
+    return {
+      monthLabel: monthColumnHeading(r),
+      prevClosing,
+      op,
+      inv,
+      fin,
+      netActivity,
+      closing,
+      checkOk: Math.abs(prevClosing + netActivity - closing) < 1,
+    }
+  }, [rows, monthlyData])
+
+  const ledgerCategories = useMemo(() => {
+    const s = new Set()
+    for (const r of mergedDaily) {
+      const c = String(r.category ?? '').trim()
+      if (c) s.add(c)
+    }
+    return [...s].sort((a, b) => a.localeCompare(b))
+  }, [mergedDaily])
+
+  const ledgerAccountPremiumOptions = useMemo(
+    () => [
+      {
+        value: '',
+        label: 'Same as header filter',
+        sub: bankFilter ? filterName || 'Account in filter bar' : 'All accounts · consolidated',
+      },
+      ...accounts.map((a) => ({
+        value: String(a.id),
+        label: a.account_name,
+        sub: 'Load this account only',
+      })),
+    ],
+    [accounts, bankFilter, filterName],
+  )
+
+  const ledgerCategoryOptions = useMemo(
+    () => [
+      { value: '', label: 'All categories' },
+      ...ledgerCategories.map((c) => ({ value: c, label: c })),
+    ],
+    [ledgerCategories],
+  )
+
+  const ledgerTypeOptions = useMemo(
+    () => [
+      { value: '', label: 'All types' },
+      { value: 'income', label: 'Income' },
+      { value: 'expense', label: 'Expense' },
+    ],
+    [],
+  )
+
+  const ledgerFilteredWithBalance = useMemo(() => {
+    const minA = ledgerAmtMin === '' ? null : Number(ledgerAmtMin)
+    const maxA = ledgerAmtMax === '' ? null : Number(ledgerAmtMax)
+    const cat = ledgerCategory.trim()
+    const person = ledgerPerson.trim().toLowerCase()
+    const filtered = mergedDaily.filter((r) => {
+      if (ledgerType === 'income' && r.kind !== 'income') return false
+      if (ledgerType === 'expense' && r.kind !== 'expense') return false
+      if (cat && String(r.category ?? '') !== cat) return false
+      if (person && !rowPersonKey(r).toLowerCase().includes(person)) return false
+      const amt = Number(r.amount) || 0
+      if (minA != null && Number.isFinite(minA) && amt < minA) return false
+      if (maxA != null && Number.isFinite(maxA) && amt > maxA) return false
+      return true
+    })
+    const sorted = [...filtered].sort((a, b) => {
+      const c = String(a.entry_date ?? '').localeCompare(String(b.entry_date ?? ''))
+      if (c !== 0) return c
+      return (Number(a.id) || 0) - (Number(b.id) || 0)
+    })
+    let bal = 0
+    return sorted.map((r) => {
+      if (r.kind === 'income') bal += Number(r.amount) || 0
+      else bal -= Number(r.amount) || 0
+      return { ...r, balance: bal }
+    })
+  }, [
+    mergedDaily,
+    ledgerCategory,
+    ledgerType,
+    ledgerPerson,
+    ledgerAmtMin,
+    ledgerAmtMax,
+  ])
+
+  const ledgerDisplayDesc = useMemo(() => [...ledgerFilteredWithBalance].reverse(), [ledgerFilteredWithBalance])
+
+  const dailyTotalsFiltered = useMemo(() => {
+    let inc = 0
+    let exp = 0
+    for (const r of ledgerFilteredWithBalance) {
+      if (r.kind === 'income') inc += Number(r.amount) || 0
+      else exp += Number(r.amount) || 0
+    }
+    return { inc, exp, net: inc - exp }
+  }, [ledgerFilteredWithBalance])
+
+  const ledgerFiltersActive = useMemo(
+    () =>
+      Boolean(
+        ledgerCategory ||
+          ledgerType ||
+          ledgerPerson.trim() ||
+          ledgerAmtMin !== '' ||
+          ledgerAmtMax !== '',
+      ),
+    [ledgerCategory, ledgerType, ledgerPerson, ledgerAmtMin, ledgerAmtMax],
+  )
+
   const assetsVsLiabData = useMemo(() => {
     if (!lastBs) return []
     const assets = Number(lastBs.total_assets) || 0
@@ -364,6 +764,51 @@ export default function PfMonthlyStatementsPage() {
     return { inc, exp, net: inc - exp, loanRecv }
   }, [rows])
 
+  const incomeStatementYtd = useMemo(() => {
+    let inc = 0
+    let exp = 0
+    let emi = 0
+    for (const row of rows) {
+      inc += Number(row.income_statement?.income) || 0
+      exp += Number(row.income_statement?.expense) || 0
+      emi += Number(row.income_statement?.expense_emi) || 0
+    }
+    const operating = inc - exp
+    return { inc, exp, emi, operating, net: operating }
+  }, [rows])
+
+  const compareRows = Array.isArray(compareMonthlyData?.rows) ? compareMonthlyData.rows : []
+
+  const compareYtd = useMemo(() => {
+    if (!compareRows.length) return null
+    let inc = 0
+    let exp = 0
+    for (const row of compareRows) {
+      inc += Number(row.income_statement?.income) || 0
+      exp += Number(row.income_statement?.expense) || 0
+    }
+    const last = compareRows[compareRows.length - 1]
+    return {
+      inc,
+      exp,
+      net: inc - exp,
+      netWorth: Number(last?.balance_sheet?.net_worth) || 0,
+    }
+  }, [compareRows])
+
+  const yoyDeltas = useMemo(() => {
+    if (!monthlyYtd || !compareYtd || !compareYear) return null
+    return {
+      income: pctDeltaLabel(monthlyYtd.inc, compareYtd.inc),
+      expense: pctDeltaLabel(monthlyYtd.exp, compareYtd.exp),
+      net: pctDeltaLabel(monthlyYtd.net, compareYtd.net),
+      netWorth: pctDeltaLabel(
+        lastBs != null ? Number(lastBs.net_worth) : null,
+        compareYtd.netWorth,
+      ),
+    }
+  }, [monthlyYtd, compareYtd, compareYear, lastBs])
+
   const dailyTotals = useMemo(() => {
     let inc = 0
     let exp = 0
@@ -377,7 +822,10 @@ export default function PfMonthlyStatementsPage() {
   function handleReload() {
     refresh()
     if (reportTab === 'ledger') loadDailyLedger()
-    else loadMonthlyTables()
+    else {
+      loadMonthlyTables()
+      loadCompareMonthly()
+    }
   }
 
   const yearDateBounds = useMemo(() => {
@@ -496,73 +944,231 @@ export default function PfMonthlyStatementsPage() {
           busy={fsExportBusy}
           items={[
             {
-              key: 'pdf-full',
-              label: 'Full report (PDF)',
+              key: 'pdf-pack',
+              label: 'Financial pack (PDF)',
               onClick: () => handleFinancialStatementExport('pdf'),
             },
             {
-              key: 'xlsx-full',
-              label: 'Full report (Excel)',
+              key: 'xlsx-pack',
+              label: 'Financial pack (Excel)',
               onClick: () => handleFinancialStatementExport('excel'),
             },
             {
-              key: 'pdf-is',
-              label: 'Income statement (PDF — same workbook)',
+              key: 'pdf-pl',
+              label: 'P&L / income statement (PDF)',
+              onClick: () => handleFinancialStatementExport('pdf'),
+            },
+            {
+              key: 'pdf-cf',
+              label: 'Cash flow & monthly (PDF)',
+              onClick: () => handleFinancialStatementExport('pdf'),
+            },
+            {
+              key: 'pdf-bs',
+              label: 'Balance sheet context (PDF)',
               onClick: () => handleFinancialStatementExport('pdf'),
             },
             {
               key: 'xlsx-ledger',
-              label: 'Year details (Excel)',
+              label: 'Ledger & detail tabs (Excel)',
               onClick: () => handleFinancialStatementExport('excel'),
             },
           ]}
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-slate-200/80 bg-white/80 px-3 py-2 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-[var(--pf-text-muted)]">
-          Filters
-        </span>
-        <label htmlFor="pf-fs-year" className="sr-only">
-          Year
-        </label>
-        <select
-          id="pf-fs-year"
-          className={`${pfSelectCompact} min-w-[4.5rem]`}
-          value={year}
-          onChange={(e) => setYear(Number(e.target.value))}
-        >
-          {yearOptions.map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
-        <label htmlFor="pf-fs-bank" className="sr-only">
-          Account
-        </label>
-        <select
-          id="pf-fs-bank"
-          className={`${pfSelectCompact} min-w-[6rem] flex-1 sm:max-w-[14rem]`}
-          value={bankFilter}
-          onChange={(e) => setBankFilter(e.target.value)}
-        >
-          <option value="">All accounts</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={String(a.id)}>
-              {a.account_name}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={handleReload}
-          disabled={loading}
-          className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-[var(--pf-border)] dark:text-[var(--pf-text)] dark:hover:bg-[var(--pf-card-hover)]"
-        >
-          {loading ? '…' : 'Reload'}
-        </button>
+      <div className="rounded-2xl border border-slate-200/85 bg-gradient-to-br from-white via-white to-slate-50/35 p-4 shadow-[var(--pf-shadow)] dark:border-[var(--pf-border)] dark:from-[var(--pf-card)] dark:via-[var(--pf-card)] dark:to-slate-950/40 sm:p-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Statement filters
+            </p>
+            <p className="mt-0.5 hidden text-xs text-slate-500 dark:text-[var(--pf-text-muted)] sm:block">
+              Choose the fiscal year, optional YoY compare, and which account books to include.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-w-md">
+              <div>
+                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Year
+                </label>
+                <PremiumSelect
+                  id="pf-fs-year"
+                  ariaLabel="Statement year"
+                  value={String(year)}
+                  onChange={(v) => setYear(Number(v))}
+                  options={yearPremiumOptions}
+                  variant="simple"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Compare
+                </label>
+                <PremiumSelect
+                  id="pf-fs-compare"
+                  ariaLabel="Compare to prior year"
+                  value={compareYear}
+                  onChange={setCompareYear}
+                  options={comparePremiumOptions}
+                  variant="simple"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="min-w-0 w-full sm:w-[min(100%,20rem)] lg:w-[min(100%,22rem)]">
+            <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Account scope
+            </label>
+            <PremiumSelect
+              id="pf-fs-bank"
+              ariaLabel="Finance account filter"
+              value={bankFilter}
+              onChange={setBankFilter}
+              options={accountPremiumOptions}
+              icon={WalletIcon}
+              variant="account"
+              className="w-full"
+            />
+          </div>
+          <div className="flex w-full items-end sm:w-auto">
+            <button
+              type="button"
+              onClick={handleReload}
+              disabled={loading}
+              className="h-10 min-h-10 w-full rounded-xl border border-slate-200/90 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm transition hover:border-sky-400/40 hover:bg-slate-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.06] dark:text-slate-100 dark:hover:bg-white/10 sm:w-auto"
+            >
+              {loading ? '…' : 'Reload'}
+            </button>
+          </div>
+        </div>
       </div>
+
+      {reportTab !== 'ledger' && monthlyYtd && rows.length > 0 ? (
+        <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-b from-white to-slate-50/40 p-4 shadow-[var(--pf-shadow)] dark:border-[var(--pf-border)] dark:from-[var(--pf-card)] dark:to-[var(--pf-card)] sm:p-5">
+          <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200/70 pb-3 dark:border-[var(--pf-border)]">
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+                Year summary ({year})
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">
+                Same figures on each statement tab — grouped for quick scanning.
+              </p>
+            </div>
+            {compareYear && compareLoading ? (
+              <span className="text-xs text-slate-500">Loading {compareYear}…</span>
+            ) : null}
+          </div>
+          {compareYear && yoyDeltas ? (
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-700 dark:text-[var(--pf-text)]">
+              <span className="font-semibold text-slate-500 dark:text-[var(--pf-text-muted)]">
+                vs {compareYear} (YTD):
+              </span>
+              {[
+                ['Income', yoyDeltas.income],
+                ['Expense', yoyDeltas.expense],
+                ['Net income', yoyDeltas.net],
+                ['Net worth', yoyDeltas.netWorth],
+              ].map(([label, p]) =>
+                p == null ? (
+                  <span key={label}>
+                    {label}: <span className="text-slate-400">n/a</span>
+                  </span>
+                ) : (
+                  <span key={label}>
+                    {label}{' '}
+                    <span className={p > 0 ? 'font-semibold text-emerald-600' : 'font-semibold text-rose-600'}>
+                      {p > 0 ? '↑' : '↓'} {Math.abs(p)}%
+                    </span>
+                  </span>
+                ),
+              )}
+            </div>
+          ) : null}
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <div className="rounded-xl border border-slate-200/60 bg-white/90 p-3 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-sky-700 dark:text-sky-400">Performance</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-slate-50/80 px-2 py-2 dark:bg-[var(--pf-card-hover)]">
+                  <p className="text-[10px] font-semibold text-slate-500 dark:text-[var(--pf-text-muted)]">Income</p>
+                  <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                    {formatInr(monthlyYtd.inc)}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-slate-50/80 px-2 py-2 dark:bg-[var(--pf-card-hover)]">
+                  <p className="text-[10px] font-semibold text-slate-500 dark:text-[var(--pf-text-muted)]">Expense</p>
+                  <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
+                    {formatInr(monthlyYtd.exp)}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-slate-50/80 px-2 py-2 dark:bg-[var(--pf-card-hover)]">
+                  <p className="text-[10px] font-semibold text-slate-500 dark:text-[var(--pf-text-muted)]">Net income</p>
+                  <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">
+                    {formatInr(monthlyYtd.net)}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-slate-50/80 px-2 py-2 dark:bg-[var(--pf-card-hover)]">
+                  <p className="flex items-center text-[10px] font-semibold text-slate-500 dark:text-[var(--pf-text-muted)]">
+                    Savings rate
+                    <RatioHint label="Savings rate" />
+                  </p>
+                  <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-sky-700 dark:text-sky-300">
+                    {formatRatio(ratios?.savings_rate)}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200/60 bg-white/90 p-3 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-400">Risk</p>
+              <ul className="mt-3 space-y-2 text-xs">
+                {[
+                  ['Debt to income (EMI)', formatRatio(ratios?.debt_to_income_emi), 'Debt to income (EMI)'],
+                  ['Expense ratio', formatRatio(ratios?.expense_ratio), 'Expense ratio'],
+                  ['Credit utilization', formatRatio(ratios?.credit_utilization), 'Credit utilization'],
+                  [
+                    'Liquidity',
+                    ratios?.liquidity_months != null ? `${ratios.liquidity_months} mo` : '—',
+                    'Liquidity (mo.)',
+                  ],
+                ].map(([label, val, helpKey]) => (
+                  <li key={label} className="flex items-center justify-between gap-2 border-b border-slate-100 pb-1 last:border-0 dark:border-[var(--pf-border)]">
+                    <span className="flex items-center font-medium text-slate-600 dark:text-[var(--pf-text-muted)]">
+                      {label}
+                      <RatioHint label={helpKey} />
+                    </span>
+                    <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">{val}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="rounded-xl border border-slate-200/60 bg-white/90 p-3 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-violet-800 dark:text-violet-400">Wealth</p>
+              <div className="mt-3 space-y-2 text-xs">
+                <div className="flex justify-between gap-2 border-b border-slate-100 pb-1 dark:border-[var(--pf-border)]">
+                  <span className="text-slate-600 dark:text-[var(--pf-text-muted)]">Cash (est.)</span>
+                  <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">
+                    {formatInr(lastBs?.cash_estimate)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 border-b border-slate-100 pb-1 dark:border-[var(--pf-border)]">
+                  <span className="flex items-center text-slate-600 dark:text-[var(--pf-text-muted)]">
+                    Investments
+                    <RatioHint label="Investments / assets" />
+                  </span>
+                  <span className="font-mono font-semibold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">
+                    {formatInr(lastBs?.investments)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 pt-0.5">
+                  <span className="font-semibold text-slate-800 dark:text-[var(--pf-text)]">Net worth</span>
+                  <span className="font-mono text-sm font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">
+                    {formatInr(lastBs?.net_worth)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="min-w-0 overflow-x-auto pb-1" aria-label="Report sections">
         <PfSegmentedControl
@@ -574,44 +1180,65 @@ export default function PfMonthlyStatementsPage() {
       </div>
 
       {reportTab === 'ledger' ? (
-        <div className="flex flex-col gap-3 rounded-[16px] border border-slate-200/80 bg-white p-4 shadow-[var(--pf-shadow)] sm:flex-row sm:flex-wrap sm:items-end sm:justify-between dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]">
-          <p className="text-xs text-slate-600 sm:text-sm dark:text-[var(--pf-text-muted)]">
-            <span className="font-semibold text-slate-800 dark:text-[var(--pf-text)]">Ledger range:</span> {dailyRangeLabel}
-            {bankFilter ? ` · ${filterName || 'filtered'}` : ''}
+        <div className="rounded-2xl border border-slate-200/85 bg-gradient-to-br from-white to-slate-50/35 p-4 shadow-[var(--pf-shadow)] dark:border-[var(--pf-border)] dark:from-[var(--pf-card)] dark:to-slate-950/35">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-[var(--pf-text-muted)]">
+            Ledger query
           </p>
-          <div className="flex flex-wrap items-end gap-2 sm:gap-3">
-            <div className="min-w-[9rem]">
-              <label htmlFor="pf-daily-from" className={labelCls}>
-                From
-              </label>
-              <input
-                id="pf-daily-from"
-                type="date"
-                className={inputCls}
-                value={dailyFrom}
-                onChange={(e) => setDailyFrom(e.target.value)}
-              />
+          <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-end">
+            <p className="text-xs text-slate-600 dark:text-[var(--pf-text-muted)] lg:max-w-xs">
+              <span className="font-semibold text-slate-800 dark:text-[var(--pf-text)]">Range:</span> {dailyRangeLabel}
+            </p>
+            <div className="flex flex-wrap items-end gap-2 sm:gap-3">
+              <div className="min-w-[9rem]">
+                <label htmlFor="pf-daily-from" className={labelCls}>
+                  From
+                </label>
+                <input
+                  id="pf-daily-from"
+                  type="date"
+                  className={inputCls}
+                  value={dailyFrom}
+                  onChange={(e) => setDailyFrom(e.target.value)}
+                />
+              </div>
+              <div className="min-w-[9rem]">
+                <label htmlFor="pf-daily-to" className={labelCls}>
+                  To
+                </label>
+                <input
+                  id="pf-daily-to"
+                  type="date"
+                  className={inputCls}
+                  value={dailyTo}
+                  onChange={(e) => setDailyTo(e.target.value)}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => loadDailyLedger()}
+                disabled={dailyLoading}
+                className={`${btnPrimary} w-full sm:w-auto`}
+              >
+                {dailyLoading ? 'Loading…' : 'Apply'}
+              </button>
             </div>
-            <div className="min-w-[9rem]">
-              <label htmlFor="pf-daily-to" className={labelCls}>
-                To
+            <div className="min-w-0 w-full lg:ml-auto lg:w-72">
+              <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Account source
               </label>
-              <input
-                id="pf-daily-to"
-                type="date"
-                className={inputCls}
-                value={dailyTo}
-                onChange={(e) => setDailyTo(e.target.value)}
+              <PremiumSelect
+                id="pf-ledger-acc"
+                ariaLabel="Ledger data account scope"
+                value={ledgerAccountId}
+                onChange={setLedgerAccountId}
+                options={ledgerAccountPremiumOptions}
+                variant="account"
+                className="w-full"
               />
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-[var(--pf-text-muted)]">
+                Overrides the statement header for this download only. Leave on “Same as header filter”.
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={() => loadDailyLedger()}
-              disabled={dailyLoading}
-              className={`${btnPrimary} w-full sm:w-auto`}
-            >
-              {dailyLoading ? 'Loading…' : 'Apply'}
-            </button>
           </div>
         </div>
       ) : null}
@@ -623,7 +1250,7 @@ export default function PfMonthlyStatementsPage() {
               Total income
             </p>
             <p className="mt-1 font-mono text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-              {formatInr(dailyTotals.inc)}
+              {formatInr(dailyTotalsFiltered.inc)}
             </p>
           </div>
           <div className={cardCls}>
@@ -631,199 +1258,199 @@ export default function PfMonthlyStatementsPage() {
               Total expense
             </p>
             <p className="mt-1 font-mono text-lg font-bold tabular-nums text-[#EF4444] dark:text-red-400">
-              {formatInr(dailyTotals.exp)}
+              {formatInr(dailyTotalsFiltered.exp)}
             </p>
           </div>
           <div className={`${cardCls} col-span-2 sm:col-span-2`}>
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">Net</p>
             <p className="mt-1 font-mono text-lg font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">
-              {formatInr(dailyTotals.net)}
+              {formatInr(dailyTotalsFiltered.net)}
             </p>
+            {ledgerFiltersActive ? (
+              <p className="mt-1 text-[10px] text-slate-500 dark:text-[var(--pf-text-muted)]">After row filters below</p>
+            ) : null}
           </div>
-        </div>
-      ) : null}
-
-      {showMonthly && monthlyYtd && rows.length > 0 ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <div className={cardCls}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-              Income (YTD)
-            </p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400 sm:text-lg">
-              {formatInr(monthlyYtd.inc)}
-            </p>
-          </div>
-          <div className={cardCls}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-              Expense (YTD)
-            </p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-[#EF4444] dark:text-red-400 sm:text-lg">
-              {formatInr(monthlyYtd.exp)}
-            </p>
-          </div>
-          <div className={cardCls}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-              Net income
-            </p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)] sm:text-lg">
-              {formatInr(monthlyYtd.net)}
-            </p>
-          </div>
-          <div className={cardCls}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-              Savings rate
-            </p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-sky-700 dark:text-sky-300 sm:text-lg">
-              {formatRatio(ratios?.savings_rate)}
-            </p>
-          </div>
-          <div className={cardCls}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-              Cash (est.)
-            </p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)] sm:text-lg">
-              {formatInr(lastBs?.cash_estimate)}
-            </p>
-          </div>
-          <div className={cardCls}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-              Net worth
-            </p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)] sm:text-lg">
-              {formatInr(lastBs?.net_worth)}
-            </p>
-          </div>
-        </div>
-      ) : null}
-
-      {showMonthly && ratios && rows.length > 0 ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          {[
-            { k: 'Savings rate', v: formatRatio(ratios.savings_rate) },
-            { k: 'Debt to income (EMI)', v: formatRatio(ratios.debt_to_income_emi) },
-            { k: 'Expense ratio', v: formatRatio(ratios.expense_ratio) },
-            { k: 'Credit utilization', v: formatRatio(ratios.credit_utilization) },
-            {
-              k: 'Liquidity (mo.)',
-              v: ratios.liquidity_months != null ? `${ratios.liquidity_months} mo` : '—',
-            },
-            { k: 'Investments / assets', v: formatRatio(ratios.investment_to_assets) },
-          ].map((x) => (
-            <div
-              key={x.k}
-              className="rounded-xl border border-slate-200/80 bg-white px-3 py-2 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]"
-            >
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-                {x.k}
-              </p>
-              <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">
-                {x.v}
-              </p>
-            </div>
-          ))}
         </div>
       ) : null}
 
       {error ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{error}</div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+          {error}
+        </div>
       ) : null}
 
       {reportTab === 'ledger' ? (
-        <section className={cardCls} aria-labelledby="pf-daily-heading">
-          <h2 id="pf-daily-heading" className="text-base font-bold text-slate-900 dark:text-[var(--pf-text)]">
-            Daily transactions
-          </h2>
-          <p className="mt-0.5 hidden text-xs text-slate-500 md:block dark:text-[var(--pf-text-muted)]">
-            Newest days first. Pending expenses are included with a note.
-          </p>
+        <section className={cardCls} aria-label="Ledger entries">
+          <StatementSectionHeader tabId="ledger" />
+          {!dailyLoading && mergedDaily.length > 0 ? (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Category
+                </label>
+                <PremiumSelect
+                  id="pf-ledger-cat"
+                  ariaLabel="Filter by category"
+                  value={ledgerCategory}
+                  onChange={setLedgerCategory}
+                  options={ledgerCategoryOptions}
+                  variant="simple"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Type
+                </label>
+                <PremiumSelect
+                  id="pf-ledger-type"
+                  ariaLabel="Income or expense"
+                  value={ledgerType}
+                  onChange={setLedgerType}
+                  options={ledgerTypeOptions}
+                  variant="simple"
+                />
+              </div>
+              <div>
+                <label htmlFor="pf-ledger-person" className={labelCls}>
+                  Person contains
+                </label>
+                <input
+                  id="pf-ledger-person"
+                  type="text"
+                  className={inputCls}
+                  placeholder="Paid by / received from"
+                  value={ledgerPerson}
+                  onChange={(e) => setLedgerPerson(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <div className="min-w-[5.5rem] flex-1">
+                  <label htmlFor="pf-ledger-min" className={labelCls}>
+                    Min ₹
+                  </label>
+                  <input
+                    id="pf-ledger-min"
+                    type="number"
+                    min={0}
+                    className={inputCls}
+                    value={ledgerAmtMin}
+                    onChange={(e) => setLedgerAmtMin(e.target.value)}
+                  />
+                </div>
+                <div className="min-w-[5.5rem] flex-1">
+                  <label htmlFor="pf-ledger-max" className={labelCls}>
+                    Max ₹
+                  </label>
+                  <input
+                    id="pf-ledger-max"
+                    type="number"
+                    min={0}
+                    className={inputCls}
+                    value={ledgerAmtMax}
+                    onChange={(e) => setLedgerAmtMax(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
           {dailyLoading && !dailyData ? (
             <p className="mt-4 text-sm text-slate-500 dark:text-[var(--pf-text-muted)]">Loading…</p>
-          ) : byDay.length === 0 ? (
+          ) : mergedDaily.length === 0 ? (
             <p className="mt-4 text-sm text-slate-500 dark:text-[var(--pf-text-muted)]">
-              No income or expense rows in this month for the current filter.
+              No income or expense rows in this range for the current account scope.
+            </p>
+          ) : ledgerDisplayDesc.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500 dark:text-[var(--pf-text-muted)]">
+              No rows match your filters — adjust category, type, person, or amounts.
             </p>
           ) : (
-            <div className="mt-4 space-y-6">
-              {byDay.map(([dayIso, dayRows]) => (
-                <div key={dayIso}>
-                  <h3 className="mb-2 border-b border-slate-200/90 pb-1 text-sm font-bold text-slate-900 dark:border-[var(--pf-border)] dark:text-[var(--pf-text)]">
-                    {formatDayHeading(dayIso)}
-                  </h3>
-                  <div className="space-y-2 md:hidden">
-                    {dayRows.map((r) => (
-                      <div
-                        key={`${r.kind}-${r.id}`}
-                        className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition active:scale-[0.99] dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)] dark:shadow-none"
+            <>
+              <p className="mt-4 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">
+                Newest first. Running balance is cumulative in date order (income increases, expenses decrease).
+              </p>
+              <div className="mt-3 space-y-3 md:hidden">
+                {ledgerDisplayDesc.map((r) => (
+                  <div
+                    key={`${r.kind}-${r.id}`}
+                    className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-500 dark:text-[var(--pf-text-muted)]">
+                        {formatDayHeading(r.entry_date)}
+                      </span>
+                      <span
+                        className={`shrink-0 font-mono text-sm font-bold tabular-nums ${
+                          r.kind === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-[#EF4444] dark:text-red-400'
+                        }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="min-w-0 flex-1 font-semibold text-slate-900 dark:text-[var(--pf-text)]">
-                            {r.category}
-                          </span>
+                        {r.kind === 'income' ? '+' : '−'}
+                        {formatInr(r.amount)}
+                      </span>
+                    </div>
+                    <p className="mt-1 font-semibold text-slate-900 dark:text-[var(--pf-text)]">{r.category}</p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">{rowDetail(r)}</p>
+                    <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2 dark:border-[var(--pf-border)]">
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold capitalize dark:bg-slate-700 dark:text-slate-200">
+                        {r.kind}
+                      </span>
+                      <span className="font-mono text-xs font-semibold text-slate-700 dark:text-[var(--pf-text-muted)]">
+                        Bal {formatInr(r.balance)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className={`${pfTableWrap} mt-4 hidden max-h-[70vh] overflow-auto md:block`}>
+                <table className={`${pfTable} min-w-[44rem]`}>
+                  <thead className="sticky top-0 z-10">
+                    <tr className="bg-sky-100 dark:bg-[var(--pf-th-bg)]">
+                      <th className={pfTh}>Date</th>
+                      <th className={pfTh}>Type</th>
+                      <th className={pfTh}>Category</th>
+                      <th className={pfTh}>Account</th>
+                      <th className={pfTh}>Detail</th>
+                      <th className={pfThRight}>Debit</th>
+                      <th className={pfThRight}>Credit</th>
+                      <th className={pfThRight}>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledgerDisplayDesc.map((r) => (
+                      <tr key={`${r.kind}-${r.id}`} className={pfTrHover}>
+                        <td className={`${pfTd} whitespace-nowrap text-xs`}>{r.entry_date}</td>
+                        <td className={pfTd}>
                           <span
-                            className={`shrink-0 font-mono text-base font-bold tabular-nums ${
-                              r.kind === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-[#EF4444] dark:text-red-400'
+                            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              r.kind === 'income'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200'
+                                : 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200'
                             }`}
                           >
-                            {r.kind === 'income' ? '+' : '−'}
-                            {formatInr(r.amount)}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">{rowDetail(r)}</p>
-                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-[var(--pf-text-muted)]">
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize dark:bg-slate-700 dark:text-slate-200">
                             {r.kind}
                           </span>
-                          <span>{r.account_id != null ? accountNameById.get(r.account_id) ?? '' : '—'}</span>
-                        </div>
-                      </div>
+                        </td>
+                        <td className={pfTd}>{r.category}</td>
+                        <td className={`${pfTd} text-slate-600 dark:text-[var(--pf-text-muted)]`}>
+                          {r.account_id != null ? accountNameById.get(r.account_id) ?? `#${r.account_id}` : '—'}
+                        </td>
+                        <td className={`${pfTd} max-w-[12rem] text-xs text-slate-600 sm:max-w-md dark:text-[var(--pf-text-muted)]`}>
+                          {rowDetail(r)}
+                        </td>
+                        <td className={`${pfTdRight} text-orange-900 dark:text-orange-300`}>
+                          {r.kind === 'expense' ? formatInr(r.amount) : '—'}
+                        </td>
+                        <td className={`${pfTdRight} text-emerald-800 dark:text-emerald-300`}>
+                          {r.kind === 'income' ? formatInr(r.amount) : '—'}
+                        </td>
+                        <td className={`${pfTdRight} font-semibold text-slate-900 dark:text-[var(--pf-text)]`}>
+                          {formatInr(r.balance)}
+                        </td>
+                      </tr>
                     ))}
-                  </div>
-                  <div className={`${pfTableWrap} hidden md:block`}>
-                    <table className={`${pfTable} min-w-[36rem]`}>
-                      <thead>
-                        <tr>
-                          <th className={pfTh}>Type</th>
-                          <th className={pfTh}>Category</th>
-                          <th className={pfTh}>Account</th>
-                          <th className={pfTh}>Detail</th>
-                          <th className={pfThRight}>Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {dayRows.map((r) => (
-                          <tr key={`${r.kind}-${r.id}`} className={pfTrHover}>
-                            <td className={pfTd}>
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                  r.kind === 'income'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-orange-100 text-orange-800'
-                                }`}
-                              >
-                                {r.kind}
-                              </span>
-                            </td>
-                            <td className={pfTd}>{r.category}</td>
-                            <td className={`${pfTd} text-slate-600`}>
-                              {r.account_id != null ? accountNameById.get(r.account_id) ?? `#${r.account_id}` : '—'}
-                            </td>
-                            <td className={`${pfTd} max-w-[14rem] text-xs text-slate-600 sm:max-w-md`}>{rowDetail(r)}</td>
-                            <td
-                              className={`${pfTdRight} ${
-                                r.kind === 'income' ? 'text-emerald-800' : 'text-orange-900'
-                              }`}
-                            >
-                              {r.kind === 'income' ? '+' : '−'}
-                              {formatInr(r.amount)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
       ) : null}
@@ -854,8 +1481,62 @@ export default function PfMonthlyStatementsPage() {
 
           {rows.length > 0 ? (
             <>
+              <StatementSectionHeader tabId={reportTab} />
+
               {reportTab === 'income' ? (
                 <div className="grid gap-4 lg:grid-cols-2">
+                  <div className={`${cardCls} border-sky-200/60 bg-sky-50/30 dark:border-sky-900/40 dark:bg-sky-950/20 lg:col-span-2`}>
+                    <h2 className={`${chartTitle} text-sm uppercase tracking-wide text-sky-900 dark:text-sky-200`}>
+                      Income statement — {year} (year to date)
+                    </h2>
+                    <p className={chartSub}>
+                      Classical P&amp;L layout. EMI shown for visibility — it is already included in total expenses unless you use a
+                      separate carve-out in your process.
+                    </p>
+                    <div className="mt-4 font-mono text-sm">
+                      <table className="w-full max-w-xl border-collapse text-left">
+                        <tbody className="text-slate-900 dark:text-[var(--pf-text)]">
+                          <tr className="border-b border-slate-200/80 dark:border-[var(--pf-border)]">
+                            <th scope="row" className="py-2 pr-4 font-normal text-slate-700 dark:text-[var(--pf-text-muted)]">
+                              Revenue (income)
+                            </th>
+                            <td className="py-2 text-right font-semibold tabular-nums">{formatInr(incomeStatementYtd.inc)}</td>
+                          </tr>
+                          <tr className="border-b border-slate-200/80 dark:border-[var(--pf-border)]">
+                            <th scope="row" className="py-2 pr-4 font-normal text-slate-700 dark:text-[var(--pf-text-muted)]">
+                              Expenses
+                            </th>
+                            <td className="py-2 text-right font-semibold tabular-nums">{formatInr(incomeStatementYtd.exp)}</td>
+                          </tr>
+                          <tr className="border-b-2 border-slate-300/80 dark:border-slate-600">
+                            <th scope="row" className="py-2 pr-4 font-semibold text-slate-900 dark:text-[var(--pf-text)]">
+                              Operating income
+                            </th>
+                            <td className="py-2 text-right text-base font-bold tabular-nums">
+                              {formatInr(incomeStatementYtd.operating)}
+                            </td>
+                          </tr>
+                          <tr className="border-b border-slate-200/80 dark:border-[var(--pf-border)]">
+                            <th scope="row" className="py-2 pr-4 text-xs font-normal text-slate-600 dark:text-[var(--pf-text-muted)]">
+              Debt service — EMI (ledger tagged){' '}
+                              <span title="Subtotal of EMI-category expenses for transparency — not subtracted again from operating income.">
+                                <InformationCircleIcon className="inline h-3.5 w-3.5 text-slate-400" />
+                              </span>
+                            </th>
+                            <td className="py-2 text-right text-sm tabular-nums text-slate-700 dark:text-[var(--pf-text-muted)]">
+                              {formatInr(incomeStatementYtd.emi)}
+                            </td>
+                          </tr>
+                          <tr>
+                            <th scope="row" className="py-2 pr-4 font-bold text-slate-900 dark:text-[var(--pf-text)]">
+                              Net income
+                            </th>
+                            <td className="py-2 text-right text-base font-bold tabular-nums">{formatInr(incomeStatementYtd.net)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                   <div className={`${cardCls} ${pfChartCard}`}>
                     <h2 className={chartTitle}>Income vs expense</h2>
                     <p className={chartSub}>Month | Income | Expense | Net income</p>
@@ -1023,8 +1704,8 @@ onClick={(_, idx) => {
                   <div className={`${cardCls} ${pfChartCard} lg:col-span-2`}>
                     <h2 className={chartTitle}>Cash flow — operating, investing, financing</h2>
                     <p className={chartSub}>
-                      Operating = income − expense. Investing = −new investments. Financing = −(loan + liability + credit
-                      card payments).
+                      Grouped bars per month (not stacked). Operating = income − expense. Investing = −new investments.
+                      Financing = −(loan + liability + credit card payments).
                     </p>
                     <div className="mt-3 h-72 w-full min-w-0">
                       <ResponsiveContainer width="100%" height="100%">
@@ -1034,13 +1715,82 @@ onClick={(_, idx) => {
                           <YAxis tick={{ fontSize: 10 }} width={48} tickFormatter={(v) => formatInr(v)} />
                           <Tooltip formatter={(v) => formatInr(v)} />
                           <Legend />
-                          <Bar dataKey="Operating" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} />
-                          <Bar dataKey="Investing" stackId="a" fill="#0ea5e9" radius={[0, 0, 0, 0]} />
-                          <Bar dataKey="Financing" stackId="a" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                          <ReferenceLine y={0} stroke="#64748b" strokeDasharray="3 3" />
+                          <Bar dataKey="Operating" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="Investing" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="Financing" fill="#a855f7" radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
+                  <div className={`${cardCls} ${pfChartCard}`}>
+                    <h2 className={chartTitle}>Closing cash trend</h2>
+                    <p className={chartSub}>Month-end cash estimate after rolled-forward activity</p>
+                    <div className="mt-3 h-64 w-full min-w-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={closingCashTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                          <YAxis tick={{ fontSize: 11 }} width={48} tickFormatter={(v) => formatInr(v)} />
+                          <Tooltip formatter={(v) => formatInr(v)} />
+                          <Line type="monotone" dataKey="closing" name="Closing cash" stroke="#0ea5e9" strokeWidth={2} dot />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  {latestCfBridge ? (
+                    <div className={`${cardCls} ${pfChartCard}`}>
+                      <h2 className={chartTitle}>Latest month bridge ({latestCfBridge.monthLabel})</h2>
+                      <p className={chartSub}>Contribution of each activity type in the most recent month.</p>
+                      <div className="mt-3 h-56 w-full min-w-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={[
+                              { name: 'Operating', v: latestCfBridge.op },
+                              { name: 'Investing', v: latestCfBridge.inv },
+                              { name: 'Financing', v: latestCfBridge.fin },
+                            ]}
+                            margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
+                            <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                            <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatInr(v)} />
+                            <Tooltip formatter={(v) => formatInr(v)} />
+                            <ReferenceLine y={0} stroke="#64748b" strokeDasharray="3 3" />
+                            <Bar dataKey="v" radius={[4, 4, 0, 0]}>
+                              {[0, 1, 2].map((i) => (
+                                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <dl className="mt-3 grid grid-cols-2 gap-2 font-mono text-xs text-slate-700 dark:text-[var(--pf-text-muted)]">
+                        <div>
+                          <dt className="text-[10px] font-bold uppercase">Opening</dt>
+                          <dd className="tabular-nums">{formatInr(latestCfBridge.prevClosing)}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[10px] font-bold uppercase">Closing</dt>
+                          <dd className="tabular-nums">{formatInr(latestCfBridge.closing)}</dd>
+                        </div>
+                        <div className="col-span-2 border-t border-slate-200/80 pt-2 dark:border-[var(--pf-border)]">
+                          <dt className="text-[10px] font-bold uppercase">Check (open + O+I+F)</dt>
+                          <dd
+                            className={
+                              latestCfBridge.checkOk
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-amber-700 dark:text-amber-400'
+                            }
+                          >
+                            {formatInr(latestCfBridge.prevClosing + latestCfBridge.netActivity)} ≈{' '}
+                            {formatInr(latestCfBridge.closing)}
+                            {latestCfBridge.checkOk ? '' : ' · review recon'}
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -1061,67 +1811,92 @@ onClick={(_, idx) => {
                     </div>
                   </div>
                   {lastBs ? (
-                    <div className={cardCls}>
-                      <h2 className="text-base font-bold text-slate-900 dark:text-[var(--pf-text)]">
-                        Balance sheet (current book)
+                    <div
+                      className={`${cardCls} border-slate-300/80 bg-white dark:border-slate-600 dark:bg-[var(--pf-card)]`}
+                    >
+                      <h2 className="text-sm font-bold uppercase tracking-wide text-slate-800 dark:text-[var(--pf-text)]">
+                        Balance sheet — as of latest month ({year})
                       </h2>
                       <p className="mt-1 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">
-                        Non-cash lines repeat the latest profile snapshot each month until history is tracked.
+                        Accounting-style presentation. Non-cash lines repeat current book until historical snapshots exist.
                       </p>
-                      <ul className="mt-3 space-y-2 text-sm">
-                        <li className="font-semibold text-slate-800 dark:text-[var(--pf-text)]">ASSETS</li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Cash &amp; bank (reported)</span>
-                          <span className="font-mono">{formatInr(monthlyData?.cash_bank_reported?.total)}</span>
-                        </li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Cash (wallet / hand)</span>
-                          <span className="font-mono">{formatInr(lastBs.cash_wallet)}</span>
-                        </li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Bank accounts</span>
-                          <span className="font-mono">{formatInr(lastBs.bank_accounts)}</span>
-                        </li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Investments</span>
-                          <span className="font-mono">{formatInr(lastBs.investments)}</span>
-                        </li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Fixed assets</span>
-                          <span className="font-mono">{formatInr(lastBs.fixed_assets)}</span>
-                        </li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Loans given (receivable)</span>
-                          <span className="font-mono">{formatInr(lastBs.loans_given_receivable ?? lastBs.loans_outstanding)}</span>
-                        </li>
-                        <li className="flex justify-between py-1 font-semibold">
-                          <span>Total assets</span>
-                          <span className="font-mono">{formatInr(lastBs.total_assets)}</span>
-                        </li>
-                        <li className="pt-2 font-semibold text-slate-800 dark:text-[var(--pf-text)]">LIABILITIES</li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Credit cards</span>
-                          <span className="font-mono">{formatInr(lastBs.credit_cards_liabilities)}</span>
-                        </li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>Loans &amp; other</span>
-                          <span className="font-mono">{formatInr(lastBs.loans_other_liabilities)}</span>
-                        </li>
-                        <li className="flex justify-between border-b border-slate-100 py-1 dark:border-[var(--pf-border)]">
-                          <span>EMI outstanding (schedule)</span>
-                          <span className="font-mono">{formatInr(lastBs.emi_installments_due)}</span>
-                        </li>
-                        <li className="flex justify-between py-1 font-semibold">
-                          <span>Total liabilities</span>
-                          <span className="font-mono">{formatInr(lastBs.liabilities)}</span>
-                        </li>
-                        <li className="flex justify-between border-t border-slate-200 pt-2 font-bold dark:border-[var(--pf-border)]">
-                          <span>NET WORTH</span>
-                          <span className="font-mono">{formatInr(lastBs.net_worth)}</span>
-                        </li>
-                      </ul>
+                      <div className={`${pfTableWrap} mt-4`}>
+                        <table className={`${pfTable} text-sm`}>
+                          <tbody>
+                            <tr>
+                              <td colSpan={2} className="bg-slate-100 px-3 py-2 text-xs font-bold uppercase dark:bg-slate-800">
+                                Assets
+                              </td>
+                            </tr>
+                            {[
+                              ['Cash & bank (reported)', monthlyData?.cash_bank_reported?.total],
+                              ['Cash (wallet / hand)', lastBs.cash_wallet],
+                              ['Bank accounts', lastBs.bank_accounts],
+                              ['Investments', lastBs.investments],
+                              ['Fixed assets', lastBs.fixed_assets],
+                              ['Loans given (receivable)', lastBs.loans_given_receivable ?? lastBs.loans_outstanding],
+                            ].map(([label, v]) => (
+                              <tr key={label} className={pfTrHover}>
+                                <td className={pfTd}>{label}</td>
+                                <td className={pfTdRight}>{formatInr(v)}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t-2 border-slate-200 font-bold dark:border-slate-600">
+                              <td className={pfTd}>Total assets</td>
+                              <td className={pfTdRight}>{formatInr(lastBs.total_assets)}</td>
+                            </tr>
+                            <tr>
+                              <td colSpan={2} className="bg-slate-100 px-3 py-2 text-xs font-bold uppercase dark:bg-slate-800">
+                                Liabilities
+                              </td>
+                            </tr>
+                            {[
+                              ['Credit cards', lastBs.credit_cards_liabilities],
+                              ['Loans & other', lastBs.loans_other_liabilities],
+                              ['EMI outstanding (schedule)', lastBs.emi_installments_due],
+                            ].map(([label, v]) => (
+                              <tr key={label} className={pfTrHover}>
+                                <td className={pfTd}>{label}</td>
+                                <td className={pfTdRight}>{formatInr(v)}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t-2 border-slate-200 font-bold dark:border-slate-600">
+                              <td className={pfTd}>Total liabilities</td>
+                              <td className={pfTdRight}>{formatInr(lastBs.liabilities)}</td>
+                            </tr>
+                            <tr className="border-t-2 border-sky-200 bg-sky-50/80 text-base dark:border-sky-800 dark:bg-sky-950/40">
+                              <td className={`${pfTd} font-bold`}>Net worth</td>
+                              <td className={`${pfTdRight} font-bold`}>{formatInr(lastBs.net_worth)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   ) : null}
+                  <div className={`${cardCls} ${pfChartCard} lg:col-span-2`}>
+                    <h2 className={chartTitle}>Total assets vs total liabilities</h2>
+                    <p className={chartSub}>Month-end series — liability &amp; non-cash asset lines often flat until history is tracked.</p>
+                    <div className="mt-3 h-72 w-full min-w-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={assetsVsLiabTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
+                          <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 11 }} width={52} tickFormatter={(v) => formatInr(v)} />
+                          <Tooltip formatter={(v) => formatInr(v)} />
+                          <Legend />
+                          <Line type="monotone" dataKey="assets" name="Total assets" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+                          <Line
+                            type="monotone"
+                            dataKey="liabilities"
+                            name="Total liabilities"
+                            stroke="#f43f5e"
+                            strokeWidth={2}
+                            dot={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
                 </div>
               ) : null}
 
@@ -1139,6 +1914,50 @@ onClick={(_, idx) => {
                           <Line type="monotone" dataKey="netWorth" name="Net worth" stroke="#0ea5e9" strokeWidth={2} dot />
                         </LineChart>
                       </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className={`${cardCls} ${pfChartCard} lg:col-span-2`}>
+                    <h2 className={chartTitle}>Assets vs liabilities over time</h2>
+                    <p className={chartSub}>Same series as balance sheet — useful for the &ldquo;wealth gap&rdquo; story.</p>
+                    <div className="mt-3 h-64 w-full min-w-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={assetsVsLiabTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
+                          <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                          <YAxis tick={{ fontSize: 11 }} width={52} tickFormatter={(v) => formatInr(v)} />
+                          <Tooltip formatter={(v) => formatInr(v)} />
+                          <Legend />
+                          <Line type="monotone" dataKey="assets" name="Assets" stroke="#22c55e" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="liabilities" name="Liabilities" stroke="#ef4444" strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className={`${cardCls} ${pfChartCard}`}>
+                    <h2 className={chartTitle}>Liquid vs invested vs loans given</h2>
+                    <p className={chartSub}>Latest month asset composition (cash vs investments vs receivables)</p>
+                    <div className="mt-3 h-56 w-full min-w-0">
+                      {liquidInvestLoanData.length === 0 ? (
+                        <p className="py-12 text-center text-sm text-slate-500 dark:text-[var(--pf-text-muted)]">No asset slices.</p>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={liquidInvestLoanData}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              outerRadius={72}
+                            >
+                              {liquidInvestLoanData.map((_, i) => (
+                                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(v) => formatInr(v)} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      )}
                     </div>
                   </div>
                   <div className={`${cardCls} ${pfChartCard}`}>

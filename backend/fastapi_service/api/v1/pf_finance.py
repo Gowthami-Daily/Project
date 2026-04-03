@@ -26,9 +26,9 @@ from fastapi_service.schemas_extended import (
     AccountTransactionOut,
     AccountTransferOut,
     AssetsPageSummaryOut,
-    FinanceAccountBalanceUpdate,
     FinanceAccountCreate,
     FinanceAccountOut,
+    FinanceAccountPatch,
     FinanceAssetCreate,
     FinanceAssetOut,
     FinanceAssetUpdate,
@@ -130,15 +130,17 @@ def create_account(
         account_name=body.account_name,
         account_type=body.account_type,
         balance=body.balance,
+        include_in_networth=body.include_in_networth,
+        include_in_liquid=body.include_in_liquid,
     )
     return pf_finance_repo.create_account(db, row)
 
 
 @router.patch('/accounts/{account_id}', response_model=FinanceAccountOut)
-def patch_account_balance(
+def patch_account(
     account_id: int,
     _: FinanceParticipant,
-    body: FinanceAccountBalanceUpdate,
+    body: FinanceAccountPatch,
     user: CurrentUser,
     db: DbSession,
     profile_id: ActiveProfileId,
@@ -147,7 +149,15 @@ def patch_account_balance(
     row = pf_finance_repo.get_account_for_profile(db, account_id, profile_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Account not found')
-    return pf_finance_repo.update_account_balance(db, row, body.balance)
+    return pf_finance_repo.patch_finance_account(
+        db,
+        row,
+        balance=body.balance,
+        account_type=body.account_type,
+        account_name=body.account_name,
+        include_in_networth=body.include_in_networth,
+        include_in_liquid=body.include_in_liquid,
+    )
 
 
 @router.delete('/accounts/{account_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -254,10 +264,13 @@ def create_account_transfer(
 @router.get('/accounts/transfer-history', response_model=list[AccountTransferOut])
 def list_transfer_history(
     _: FinanceParticipant,
+    response: Response,
     db: DbSession,
     profile_id: ActiveProfileId,
     page: Pagination,
 ) -> list:
+    total = pf_finance_repo.count_account_movements(db, profile_id)
+    response.headers['X-Total-Count'] = str(total)
     return pf_finance_repo.list_account_movements(db, profile_id, page.skip, page.limit)
 
 
@@ -681,6 +694,8 @@ def create_investment(
         investment_type=body.investment_type,
         name=body.name,
         invested_amount=body.invested_amount,
+        current_value=body.current_value,
+        sip_monthly_amount=body.sip_monthly_amount,
         investment_date=body.investment_date,
         platform=(body.platform.strip() or None) if body.platform is not None else None,
         notes=(body.notes.strip() or None) if body.notes is not None else None,
@@ -704,6 +719,8 @@ def update_investment(
     row.investment_type = body.investment_type
     row.name = body.name
     row.invested_amount = body.invested_amount
+    row.current_value = body.current_value
+    row.sip_monthly_amount = body.sip_monthly_amount
     row.investment_date = body.investment_date
     row.platform = (body.platform.strip() or None) if body.platform is not None else None
     row.notes = (body.notes.strip() or None) if body.notes is not None else None

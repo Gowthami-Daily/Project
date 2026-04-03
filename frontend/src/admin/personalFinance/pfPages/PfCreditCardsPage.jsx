@@ -1,3 +1,11 @@
+import {
+  ArrowPathRoundedSquareIcon,
+  BanknotesIcon,
+  ChartBarIcon,
+  CreditCardIcon,
+  PlusIcon,
+  ShoppingBagIcon,
+} from '@heroicons/react/24/solid'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
@@ -52,25 +60,23 @@ import {
   inputCls,
   labelCls,
   pfChartCard,
+  pfSelectCompact,
   pfTable,
   pfTableWrap,
   pfTd,
+  pfTdRight,
   pfTh,
+  pfThRight,
   pfTrHover,
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
+import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+import { AppButton, AppModal } from '../pfDesignSystem/index.js'
 
 function todayISODate() {
   return new Date().toISOString().slice(0, 10)
 }
-
-const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'cards', label: 'Cards' },
-  { id: 'transactions', label: 'Transactions' },
-  { id: 'bills', label: 'Bills & pay' },
-]
 
 const chartTitle = 'text-base font-bold text-sky-950 dark:text-[var(--pf-text)]'
 const chartSub = 'mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]'
@@ -100,8 +106,8 @@ function ledgerRowAccentClass(status) {
   if (s === 'billed') return 'border-l-4 border-amber-500 bg-amber-500/5'
   if (s === 'paid') return 'border-l-4 border-emerald-500 bg-emerald-500/5'
   if (s === 'overdue') return 'border-l-4 border-red-500 bg-red-500/5'
-  if (s === 'refunded') return 'border-l-4 border-violet-500 bg-violet-500/5'
-  if (s === 'emi') return 'border-l-4 border-fuchsia-500 bg-fuchsia-500/5'
+  if (s === 'refunded') return 'border-l-4 border-teal-500 bg-teal-500/5'
+  if (s === 'emi') return 'border-l-4 border-purple-600 bg-purple-500/5'
   return 'border-l-4 border-transparent'
 }
 
@@ -114,6 +120,35 @@ function billStatusPillClass(displayStatus) {
   if (s === 'paid' || s === 'closed') return 'text-emerald-900 dark:text-emerald-200 bg-emerald-500/15 border-emerald-500/40'
   if (s === 'overdue') return 'text-red-900 dark:text-red-200 bg-red-500/15 border-red-500/40'
   return 'text-[var(--pf-text-muted)] bg-[var(--pf-card-hover)] border-[var(--pf-border)]'
+}
+
+/** Ledger row status — match app-wide CC palette (blue / orange / green / red / purple / teal). */
+function ledgerStatusBadgeClass(status) {
+  const s = String(status || '').toLowerCase()
+  if (s === 'unbilled') return 'border-sky-500/50 bg-sky-500/15 text-sky-800 dark:text-sky-200'
+  if (s === 'billed') return 'border-amber-500/50 bg-amber-500/15 text-amber-900 dark:text-amber-200'
+  if (s === 'paid') return 'border-emerald-500/50 bg-emerald-500/15 text-emerald-900 dark:text-emerald-200'
+  if (s === 'overdue') return 'border-red-500/50 bg-red-500/15 text-red-900 dark:text-red-200'
+  if (s === 'emi') return 'border-purple-500/50 bg-purple-500/15 text-purple-900 dark:text-purple-200'
+  if (s === 'refunded') return 'border-teal-500/50 bg-teal-500/15 text-teal-900 dark:text-teal-200'
+  return 'border-[var(--pf-border)] bg-[var(--pf-card-hover)] text-[var(--pf-text-muted)]'
+}
+
+function txTypeIcon(transactionType, isEmi) {
+  const t = String(transactionType || '').toLowerCase()
+  const cls = 'h-4 w-4 shrink-0'
+  if (isEmi || t === 'emi') return <CreditCardIcon className={`${cls} text-purple-500`} title="EMI" />
+  if (t === 'refund') return <ArrowPathRoundedSquareIcon className={`${cls} text-teal-500`} title="Refund" />
+  if (t === 'fee' || t === 'interest') return <ChartBarIcon className={`${cls} text-amber-500`} title={t} />
+  if (t === 'swipe') return <ShoppingBagIcon className={`${cls} text-sky-500`} title="Swipe" />
+  return <BanknotesIcon className={`${cls} text-[var(--pf-text-muted)]`} title={t} />
+}
+
+function ledgerAmountClass(r) {
+  const t = String(r.transaction_type || '').toLowerCase()
+  const amt = Number(r.amount) || 0
+  if (t === 'refund' || amt < 0) return 'text-emerald-600 dark:text-emerald-400'
+  return 'text-red-600 dark:text-red-400'
 }
 
 function formatShortDate(iso) {
@@ -165,7 +200,10 @@ function creditHealthBadgeClass(health) {
 export default function PfCreditCardsPage() {
   const { onSessionInvalid } = useOutletContext() || {}
   const { tick, refresh } = usePfRefresh()
-  const [tab, setTab] = useState('overview')
+  const [swipeModalOpen, setSwipeModalOpen] = useState(false)
+  const [payModalOpen, setPayModalOpen] = useState(false)
+  const [addCardModalOpen, setAddCardModalOpen] = useState(false)
+  const [expandedAnalytics, setExpandedAnalytics] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [cards, setCards] = useState([])
@@ -328,6 +366,32 @@ export default function PfCreditCardsPage() {
       }),
     [billedVsPaid],
   )
+
+  /** Portfolio-wide monthly spend from loaded ledger (swipe, EMI, fee, interest; excludes refunds). */
+  const portfolioMonthlySpendChart = useMemo(() => {
+    const bucket = new Map()
+    const now = new Date()
+    const cutoff = new Date(now.getFullYear(), now.getMonth() - 11, 1)
+    for (const r of tx) {
+      const raw = String(r.transaction_date || '').slice(0, 10)
+      if (!raw) continue
+      const d = new Date(`${raw}T12:00:00`)
+      if (d < cutoff) continue
+      const typ = String(r.transaction_type || '').toLowerCase()
+      const amt = Number(r.amount) || 0
+      if (typ === 'refund' || amt <= 0) continue
+      if (!['swipe', 'emi', 'fee', 'interest'].includes(typ)) continue
+      const key = raw.slice(0, 7)
+      bucket.set(key, (bucket.get(key) || 0) + amt)
+    }
+    return [...bucket.keys()]
+      .sort()
+      .map((k) => {
+        const [y, m] = k.split('-').map(Number)
+        const label = new Date(y, m - 1, 1).toLocaleString(undefined, { month: 'short', year: '2-digit' })
+        return { key: k, label, amount: Math.round((bucket.get(k) || 0) * 100) / 100 }
+      })
+  }, [tx])
 
   const outstandingBalanceChart = useMemo(
     () =>
@@ -649,11 +713,25 @@ export default function PfCreditCardsPage() {
   }, [load, tick])
 
   useEffect(() => {
-    if (tab === 'transactions' && pendingTxCardId != null) {
+    if (pendingTxCardId != null) {
       setTxCardId(String(pendingTxCardId))
+      setTxType('swipe')
+      setTxIsEmiForm(false)
+      setSwipeModalOpen(true)
       setPendingTxCardId(null)
     }
-  }, [tab, pendingTxCardId])
+  }, [pendingTxCardId])
+
+  function openLedgerModal(kind) {
+    if (kind === 'emi') {
+      setTxType('emi')
+      setTxIsEmiForm(true)
+    } else {
+      setTxType('swipe')
+      setTxIsEmiForm(false)
+    }
+    setSwipeModalOpen(true)
+  }
 
   useEffect(() => {
     if (yearlyYears.length && !yearlyYears.includes(yearlyChartYear)) {
@@ -692,6 +770,7 @@ export default function PfCreditCardsPage() {
       setAnnualFee('')
       setCurrency('INR')
       setIsActiveAdd(true)
+      setAddCardModalOpen(false)
       await load()
       refresh()
     } catch (err) {
@@ -741,12 +820,13 @@ export default function PfCreditCardsPage() {
       await payCreditCardBill({
         bill_id: Number(payBillId),
         amount: Number(payAmount),
-        payment_date: todayISODate(),
+        payment_date: payPaymentDate || todayISODate(),
         from_account_id: Number(payFromAcc),
         reference_number: payRef.trim() || null,
       })
       setPayAmount('')
       setPayRef('')
+      setPayModalOpen(false)
       await load()
       refresh()
     } catch (err) {
@@ -787,6 +867,7 @@ export default function PfCreditCardsPage() {
       setTxAttachmentUrl('')
       setTxIsEmiForm(false)
       setTxType('swipe')
+      setSwipeModalOpen(false)
       await load()
       refresh()
     } catch (err) {
@@ -996,53 +1077,55 @@ export default function PfCreditCardsPage() {
     }
   }
 
+  const kpiGlass =
+    'rounded-2xl border border-[var(--pf-border)] bg-white/[0.03] p-4 shadow-[var(--pf-shadow)] backdrop-blur-md dark:bg-white/[0.04]'
+
   return (
-    <div className="mx-auto max-w-[1400px] space-y-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">Credit cards</h1>
-            {dash && tab === 'overview' ? (
+    <div className="mx-auto max-w-[1400px] space-y-8 pb-16">
+      <PageHeader
+        title="Credit cards"
+        description="Swipe → unbilled → statement → paid. Track limits, utilization, and spend like a modern card app."
+        action={
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+            {dash ? (
               <span
-                className={`rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-wide ${creditHealthBadgeClass(dash.credit_health)}`}
+                className={`inline-flex items-center justify-center rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide ${creditHealthBadgeClass(dash.credit_health)}`}
               >
-                Credit health: {String(dash.credit_health || '—').replace(/_/g, ' ')}
+                {String(dash.credit_health || '—').replace(/_/g, ' ')}
               </span>
             ) : null}
+            <button
+              type="button"
+              className={`${btnPrimary} inline-flex items-center justify-center gap-2`}
+              onClick={() => openLedgerModal('swipe')}
+            >
+              <PlusIcon className="h-5 w-5 shrink-0" />
+              Swipe
+            </button>
+            <button
+              type="button"
+              className={`${btnSecondary} inline-flex items-center justify-center gap-2`}
+              onClick={() => setPayModalOpen(true)}
+            >
+              Record payment
+            </button>
+            <button
+              type="button"
+              className={`${btnSecondary} inline-flex items-center justify-center gap-2`}
+              onClick={() => setAddCardModalOpen(true)}
+            >
+              Add card
+            </button>
+            <button
+              type="button"
+              className={`${btnSecondary} inline-flex items-center justify-center gap-2`}
+              onClick={() => openLedgerModal('emi')}
+            >
+              EMI conversion
+            </button>
           </div>
-          <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-400">
-            Swipes post as expenses without debiting your bank until you pay the statement; statements create liabilities.
-          </p>
-        </div>
-        <div className="flex flex-shrink-0 flex-wrap gap-2 sm:justify-end">
-          <button type="button" className={btnSecondary} onClick={() => setTab('transactions')}>
-            + Add expense
-          </button>
-          <button type="button" className={btnSecondary} onClick={() => setTab('bills')}>
-            + Record payment
-          </button>
-          <button type="button" className={btnSecondary} onClick={() => setTab('cards')}>
-            + Add card
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-              tab === t.id
-                ? 'bg-[var(--pf-primary)] text-white'
-                : 'border border-[var(--pf-border)] text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)]'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+        }
+      />
 
       {error ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
@@ -1054,52 +1137,304 @@ export default function PfCreditCardsPage() {
         <div className="animate-pulse rounded-2xl bg-slate-200/60 p-8 dark:bg-slate-700/40">Loading…</div>
       ) : null}
 
-      {tab === 'overview' && dash ? (
+      {dash ? (
         <>
-          <div className={`${cardCls} space-y-4 p-4 sm:p-5`}>
-            <h2 className="text-base font-bold text-[var(--pf-text)]">
-              Summary ({period.y}-{String(period.m).padStart(2, '0')})
+          <section className="space-y-3" aria-label="Portfolio summary">
+            <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--pf-text-muted)]">
+              Portfolio · {period.y}-{String(period.m).padStart(2, '0')}
             </h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <div className={kpiGlass}>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">
+                  Total outstanding
+                </p>
+                <p className="mt-2 font-mono text-lg font-bold tabular-nums text-[var(--pf-text)]">
+                  {formatInr(dash.total_outstanding ?? dash.used_limit)}
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">Unbilled + billed due</p>
+              </div>
+              <div className={`${kpiGlass} border-sky-500/25 bg-sky-500/[0.04]`}>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Unbilled</p>
+                <p className="mt-2 font-mono text-lg font-bold tabular-nums text-sky-700 dark:text-sky-300">
+                  {formatInr(dash.unbilled_charges)}
+                </p>
+              </div>
+              <div className={`${kpiGlass} border-amber-500/25 bg-amber-500/[0.04]`}>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">
+                  Due this month
+                </p>
+                <p className="mt-2 font-mono text-lg font-bold tabular-nums text-amber-800 dark:text-amber-200">
+                  {formatInr(dash.due_this_month)}
+                </p>
+                {dash.overdue_amount > 0.01 ? (
+                  <p className="mt-1 text-[10px] font-semibold text-red-600 dark:text-red-400">
+                    Overdue {formatInr(dash.overdue_amount)}
+                  </p>
+                ) : null}
+              </div>
+              <div className={kpiGlass}>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">
+                  Credit limit
+                </p>
+                <p className="mt-2 font-mono text-lg font-bold tabular-nums text-[var(--pf-text)]">
+                  {formatInr(dash.total_credit_limit)}
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">
+                  Available {formatInr(dash.available_limit)}
+                </p>
+              </div>
+              <div className={kpiGlass}>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Utilization</p>
+                <p
+                  className={`mt-2 font-mono text-lg font-bold tabular-nums ${utilizationBadgeClass(Number(dash.utilization_pct ?? 0))}`}
+                >
+                  {(dash.utilization_pct ?? 0).toFixed(1)}%
+                </p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--pf-border)]">
+                  <div
+                    className={`h-full rounded-full ${utilizationBarColorClass(Number(dash.utilization_pct ?? 0))}`}
+                    style={{ width: `${Math.min(100, Number(dash.utilization_pct ?? 0))}%` }}
+                  />
+                </div>
+              </div>
+              <div className={`${kpiGlass} border-purple-500/25 bg-purple-500/[0.05]`}>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">
+                  EMI (ledger)
+                </p>
+                <p className="mt-2 font-mono text-lg font-bold tabular-nums text-purple-800 dark:text-purple-200">
+                  {formatInr(txSummary?.emi_amount ?? 0)}
+                </p>
+                <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">Filtered view</p>
+              </div>
+            </div>
+          </section>
+
+          <section
+            className={`${cardCls} border border-dashed border-[var(--pf-border)] bg-gradient-to-r from-sky-500/[0.06] via-transparent to-emerald-500/[0.06] px-4 py-4 sm:px-6`}
+            aria-label="Billing flow"
+          >
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">
+              Mental model
+            </p>
+            <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               {[
-                ['Total limit', formatInr(dash.total_credit_limit), false],
-                [
-                  'Utilization',
-                  `${(dash.utilization_pct ?? 0).toFixed(1)}%`,
-                  true,
-                ],
-                ['Used', formatInr(dash.used_limit), false],
-                ['Available', formatInr(dash.available_limit), false],
-                ['Cards', String(dash.card_count ?? cards.length ?? '—'), false],
-                ['Avg monthly spend (12m)', formatInr(dash.avg_monthly_spend), false],
-                ['Last month spend', formatInr(dash.last_month_spend), false],
-                ['Unbilled', formatInr(dash.unbilled_charges), false],
-                ['Billed outstanding', formatInr(dash.billed_outstanding), false],
-                ['Paid this month', formatInr(dash.paid_this_month), false],
-                ['Due this month', formatInr(dash.due_this_month), false],
-                ['Due this week', formatInr(dash.due_this_week), false],
-                ['Overdue', formatInr(dash.overdue_amount), false],
-                ['Next due date', dash.next_due_date ?? '—', false],
-                ['Interest + fees (due this month)', formatInr(dash.interest_fees_due_month), false],
-              ].map(([k, v, isUtil]) => (
-                <div key={k} className="rounded-xl border border-[var(--pf-border)] bg-[var(--pf-surface)] px-3 py-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">{k}</p>
-                  <p
-                    className={`mt-1 text-lg font-bold tabular-nums ${
-                      isUtil ? utilizationBadgeClass(Number(dash.utilization_pct ?? 0)) : 'text-[var(--pf-text)]'
+                {
+                  step: 'Unbilled',
+                  hint: 'Swipes & EMI not yet on a statement',
+                  amt: dash.unbilled_charges,
+                  tone: 'sky',
+                },
+                {
+                  step: 'Billed',
+                  hint: 'Statement generated — amount owed',
+                  amt: dash.billed_outstanding,
+                  tone: 'amber',
+                },
+                {
+                  step: 'Paid',
+                  hint: 'Payments this month',
+                  amt: dash.paid_this_month,
+                  tone: 'emerald',
+                },
+              ].map((s, i) => (
+                <div key={s.step} className="flex min-w-0 flex-1 items-center gap-3">
+                  <div
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 font-bold ${
+                      s.tone === 'sky'
+                        ? 'border-sky-500 bg-sky-500/20 text-sky-800 dark:text-sky-200'
+                        : s.tone === 'amber'
+                          ? 'border-amber-500 bg-amber-500/20 text-amber-900 dark:text-amber-200'
+                          : 'border-emerald-500 bg-emerald-500/20 text-emerald-900 dark:text-emerald-200'
                     }`}
                   >
-                    {v}
-                  </p>
+                    {i + 1}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-[var(--pf-text)]">{s.step}</p>
+                    <p className="text-xs text-[var(--pf-text-muted)]">{s.hint}</p>
+                    <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-[var(--pf-text)]">
+                      {formatInr(s.amt)}
+                    </p>
+                  </div>
+                  {i < 2 ? (
+                    <span className="hidden text-lg font-light text-[var(--pf-text-muted)] lg:block" aria-hidden>
+                      →
+                    </span>
+                  ) : null}
                 </div>
               ))}
             </div>
-            {outstanding ? (
-              <p className="text-sm text-[var(--pf-text-muted)]">
-                Outstanding (API): unbilled {formatInr(outstanding.unbilled_charges)} + billed{' '}
-                {formatInr(outstanding.billed_outstanding)} = {formatInr(outstanding.total)}
+            {dash.next_due_date ? (
+              <p className="mt-3 text-sm text-[var(--pf-text-muted)]">
+                Next due <span className="font-semibold text-[var(--pf-text)]">{formatShortDate(dash.next_due_date)}</span>
               </p>
             ) : null}
+          </section>
+
+          {enrichedCards.length ? (
+            <section className="space-y-3" aria-label="Your cards" id="cc-card-carousel">
+              <div className="flex items-end justify-between gap-2">
+                <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--pf-text-muted)]">Your cards</h2>
+                <p className="text-[10px] text-[var(--pf-text-muted)]">Scroll horizontally</p>
+              </div>
+              <div className="flex gap-4 overflow-x-auto pb-2 pt-1 [scrollbar-width:thin]">
+                {enrichedCards.map((c) => {
+                  const pct = Number(c.utilization_pct) || 0
+                  const dueLabel = c.next_due_date
+                    ? new Date(c.next_due_date).toLocaleDateString(undefined, {
+                        day: 'numeric',
+                        month: 'short',
+                      })
+                    : '—'
+                  const overdue = Number(c.overdue_amount) > 0.01
+                  return (
+                    <div
+                      key={c.id}
+                      className={`relative min-w-[280px] max-w-[320px] shrink-0 rounded-2xl border p-5 shadow-lg transition hover:-translate-y-0.5 ${
+                        overdue
+                          ? 'border-red-500/40 bg-gradient-to-br from-red-500/10 to-slate-900/80'
+                          : 'border-[var(--pf-border)] bg-gradient-to-br from-indigo-600/90 via-slate-900 to-slate-950 text-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">
+                            {c.bank_name || 'Credit card'}
+                          </p>
+                          <p className="mt-1 truncate text-lg font-bold leading-tight">{c.card_name}</p>
+                        </div>
+                        <CreditCardIcon className="h-8 w-8 shrink-0 opacity-90" />
+                      </div>
+                      <dl className="mt-4 space-y-2 text-sm">
+                        <div className="flex justify-between gap-2">
+                          <dt className="opacity-80">Limit</dt>
+                          <dd className="font-mono font-semibold tabular-nums">{formatInr(c.card_limit)}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <dt className="opacity-80">Outstanding</dt>
+                          <dd className="font-mono font-semibold tabular-nums">{formatInr(c.used_amount)}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2 text-xs">
+                          <dt className="opacity-80">Unbilled</dt>
+                          <dd className="font-mono tabular-nums text-sky-200">{formatInr(c.unbilled_charges)}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2 text-xs">
+                          <dt className="opacity-80">Due</dt>
+                          <dd className={`font-mono tabular-nums ${overdue ? 'text-red-200' : ''}`}>{dueLabel}</dd>
+                        </div>
+                        <div className="flex justify-between gap-2 border-t border-white/10 pt-2">
+                          <dt className="opacity-80">Utilization</dt>
+                          <dd className="font-mono font-bold tabular-nums">{pct.toFixed(0)}%</dd>
+                        </div>
+                      </dl>
+                      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
+                        <div
+                          className="h-full rounded-full bg-white"
+                          style={{ width: `${Math.min(100, pct)}%`, opacity: pct >= 75 ? 0.85 : 1 }}
+                        />
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold backdrop-blur hover:bg-white/25"
+                          onClick={() => {
+                            setPendingTxCardId(c.id)
+                          }}
+                        >
+                          Swipe
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/20"
+                          onClick={() => setPayModalOpen(true)}
+                        >
+                          Pay
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/20"
+                          onClick={() => openCardEditor(c)}
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <section className={pfChartCard} aria-label="Monthly spend">
+              <h3 className={chartTitle}>Monthly credit card spend</h3>
+              <p className={chartSub}>All cards · from ledger (excl. refunds)</p>
+              <div className="mt-3 h-[260px] w-full">
+                {!portfolioMonthlySpendChart.length ? (
+                  <p className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                    Record swipes to see spend by month.
+                  </p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={portfolioMonthlySpendChart} margin={{ top: 8, right: 16, left: 0, bottom: 24 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-[var(--pf-border)] opacity-40" />
+                      <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} width={48} />
+                      <Tooltip formatter={(v) => formatInr(v)} />
+                      <Bar dataKey="amount" name="Spend" fill="var(--pf-primary)" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </section>
+
+            <section className={pfChartCard} aria-label="Category spend">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className={chartTitle}>Spend by category</h3>
+                  <p className={chartSub}>Year {yearlyChartYear} · all cards</p>
+                </div>
+                <select
+                  className={`${pfSelectCompact} max-w-[7rem]`}
+                  value={yearlyChartYear}
+                  onChange={(e) => setYearlyChartYear(Number(e.target.value))}
+                >
+                  {(yearlyYears.length ? yearlyYears : [yearlyChartYear]).map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-3 h-[260px] w-full">
+                {!categoryPieData.length || categoryPieData.every((d) => d.value === 0) ? (
+                  <p className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                    No categorized spend for this year.
+                  </p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Tooltip formatter={(v) => formatInr(v)} />
+                      <Legend />
+                      <Pie
+                        data={categoryPieData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={52}
+                        outerRadius={86}
+                        paddingAngle={2}
+                      >
+                        {categoryPieData.map((_, i) => (
+                          <Cell key={categoryPieData[i].name} fill={CATEGORY_PIE_COLORS[i % CATEGORY_PIE_COLORS.length]} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </section>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -1190,6 +1525,15 @@ export default function PfCreditCardsPage() {
             </section>
           </div>
 
+          <div className="flex justify-center py-1">
+            <button type="button" className={btnSecondary} onClick={() => setExpandedAnalytics((v) => !v)}>
+              {expandedAnalytics
+                ? 'Hide extra charts'
+                : 'More analytics — yearly per card, trend, statements vs payments'}
+            </button>
+          </div>
+
+          {expandedAnalytics ? (
           <div className="grid gap-4 lg:grid-cols-2">
             <section className={pfChartCard} aria-label="Yearly spend per card">
               <div className="flex flex-wrap items-end justify-between gap-2">
@@ -1356,44 +1700,7 @@ export default function PfCreditCardsPage() {
               </div>
             </section>
           </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <section className={pfChartCard} aria-label="Spend by category">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className={chartTitle}>Spend by category</h3>
-                  <p className={chartSub}>All cards · year {yearlyChartYear}</p>
-                </div>
-              </div>
-              <div className="mt-3 h-[280px] w-full">
-                {!categoryPieData.length || categoryPieData.every((d) => d.value === 0) ? (
-                  <p className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
-                    No categorized spend for this year.
-                  </p>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Tooltip formatter={(v) => formatInr(v)} />
-                      <Legend />
-                      <Pie
-                        data={categoryPieData}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={48}
-                        outerRadius={80}
-                        paddingAngle={2}
-                      >
-                        {categoryPieData.map((_, i) => (
-                          <Cell key={categoryPieData[i].name} fill={CATEGORY_PIE_COLORS[i % CATEGORY_PIE_COLORS.length]} />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </section>
+          ) : null}
 
             <section className={pfChartCard} aria-label="Card utilization">
               <h3 className={chartTitle}>Card utilization</h3>
@@ -1434,7 +1741,6 @@ export default function PfCreditCardsPage() {
                 )}
               </div>
             </section>
-          </div>
 
           <section className={pfChartCard} aria-label="Statement vs payments">
             <h3 className={chartTitle}>Statement totals vs payments</h3>
@@ -1478,159 +1784,8 @@ export default function PfCreditCardsPage() {
         </>
       ) : null}
 
-      {tab === 'cards' ? (
-        <div className="space-y-6">
-          <div className="grid gap-6 lg:grid-cols-2">
-            <form onSubmit={handleAddCard} className={`${cardCls} space-y-3 p-4 sm:p-5`}>
-              <h2 className="text-base font-bold text-[var(--pf-text)]">Add credit card</h2>
-              <div>
-                <label className={labelCls}>Card name</label>
-                <input className={inputCls} value={cardName} onChange={(e) => setCardName(e.target.value)} required />
-              </div>
-              <div>
-                <label className={labelCls}>Bank (optional)</label>
-                <input className={inputCls} value={bankName} onChange={(e) => setBankName(e.target.value)} />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className={labelCls}>Card network</label>
-                  <select
-                    className={inputCls}
-                    value={cardNetwork}
-                    onChange={(e) => setCardNetwork(e.target.value)}
-                  >
-                    <option value="">— Select —</option>
-                    <option value="Visa">Visa</option>
-                    <option value="Mastercard">Mastercard</option>
-                    <option value="RuPay">RuPay</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={labelCls}>Card type</label>
-                  <select className={inputCls} value={cardType} onChange={(e) => setCardType(e.target.value)}>
-                    <option value="">— Select —</option>
-                    <option value="Rewards">Rewards</option>
-                    <option value="Cashback">Cashback</option>
-                    <option value="Business">Business</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className={labelCls}>Credit limit</label>
-                <input
-                  className={inputCls}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cardLimit}
-                  onChange={(e) => setCardLimit(e.target.value)}
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className={labelCls}>Interest rate %</label>
-                  <input
-                    className={inputCls}
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={interestRate}
-                    onChange={(e) => setInterestRate(e.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className={labelCls}>Annual fee</label>
-                  <input
-                    className={inputCls}
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={annualFee}
-                    onChange={(e) => setAnnualFee(e.target.value)}
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className={labelCls}>Currency</label>
-                <input
-                  className={inputCls}
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  placeholder="INR"
-                  maxLength={8}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelCls}>Statement closing day (1–31)</label>
-                  <input
-                    className={inputCls}
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={closingDay}
-                    onChange={(e) => setClosingDay(e.target.value)}
-                    placeholder="optional"
-                  />
-                </div>
-                <div>
-                  <label className={labelCls}>Payment due day (1–31)</label>
-                  <input
-                    className={inputCls}
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={dueDay}
-                    onChange={(e) => setDueDay(e.target.value)}
-                    placeholder="optional"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className={labelCls}>Is active</label>
-                <select
-                  className={inputCls}
-                  value={isActiveAdd ? 'yes' : 'no'}
-                  onChange={(e) => setIsActiveAdd(e.target.value === 'yes')}
-                >
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
-                </select>
-              </div>
-              <button type="submit" disabled={busy} className={btnPrimary}>
-                {busy ? 'Saving…' : 'Save card'}
-              </button>
-            </form>
-            <div className={`${cardCls} space-y-3 p-4 sm:p-5`}>
-              <h2 className="text-base font-bold text-[var(--pf-text)]">Cards summary</h2>
-              <p className="text-xs text-[var(--pf-text-muted)]">Totals reflect filters below.</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {[
-                  ['Total cards', String(cardsTabSummary.n)],
-                  ['Total limit', formatInr(cardsTabSummary.totalLimit)],
-                  ['Total used', formatInr(cardsTabSummary.totalUsed)],
-                  ['Avg utilization', `${cardsTabSummary.avgUtil}%`],
-                  ['Total due (billed)', formatInr(cardsTabSummary.totalDue)],
-                ].map(([k, v]) => (
-                  <div
-                    key={k}
-                    className="rounded-xl border border-[var(--pf-border)] bg-[var(--pf-surface)] px-3 py-2"
-                  >
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">
-                      {k}
-                    </p>
-                    <p className="mt-1 text-lg font-bold tabular-nums text-[var(--pf-text)]">{v}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
+      <section id="cc-cards-manage" className="scroll-mt-8 space-y-6">
+        <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--pf-text-muted)]">Manage cards</h2>
           <div className="flex flex-wrap gap-2">
             {[
               { id: 'all', label: 'All cards' },
@@ -1658,7 +1813,7 @@ export default function PfCreditCardsPage() {
             <h2 className="text-base font-bold text-[var(--pf-text)]">Your cards</h2>
             {!filteredCards.length ? (
               <p className="text-sm text-[var(--pf-text-muted)]">
-                {cards.length ? 'No cards match this filter.' : 'No cards yet — add one above.'}
+                {cards.length ? 'No cards match this filter.' : 'No cards yet — use Add card in the header.'}
               </p>
             ) : (
               <ul className="space-y-4">
@@ -1746,21 +1901,19 @@ export default function PfCreditCardsPage() {
                           className={btnSecondary}
                           onClick={() => {
                             setPendingTxCardId(c.id)
-                            setTab('transactions')
                           }}
                         >
                           Add expense
                         </button>
-                        <button type="button" className={btnSecondary} onClick={() => setTab('bills')}>
+                        <button type="button" className={btnSecondary} onClick={() => setPayModalOpen(true)}>
                           Record payment
                         </button>
                         <button
                           type="button"
                           className={btnSecondary}
-                          onClick={() => {
-                            setPendingTxCardId(c.id)
-                            setTab('transactions')
-                          }}
+                          onClick={() =>
+                            document.getElementById('cc-ledger')?.scrollIntoView({ behavior: 'smooth' })
+                          }
                         >
                           View transactions
                         </button>
@@ -1777,13 +1930,11 @@ export default function PfCreditCardsPage() {
               </ul>
             )}
           </div>
-        </div>
-      ) : null}
+      </section>
 
-      {tab === 'transactions' ? (
-        <div className={`${cardCls} p-0`}>
+      <section id="cc-ledger" className={`${cardCls} scroll-mt-8 p-0`}>
           <div className="border-b border-[var(--pf-border)] px-4 py-3 sm:px-5">
-            <h2 className="text-base font-bold text-[var(--pf-text)]">Credit card ledger</h2>
+            <h2 className="text-base font-bold text-[var(--pf-text)]">Transactions</h2>
             <p className="mt-1 text-xs text-[var(--pf-text-muted)]">
               Swipes, refunds, fees, and interest post here. Statement closing day on the card drives the billing-cycle month.
               Swipe / refund / EMI also create an expense line; fee and interest are ledger-only until booked elsewhere.
@@ -1887,140 +2038,50 @@ export default function PfCreditCardsPage() {
             </div>
           ) : null}
 
-          <div className="flex flex-wrap gap-2 border-b border-[var(--pf-border)] px-4 py-2 sm:px-5">
-            <button type="button" className={btnSecondary} onClick={() => exportLedgerCsv('credit-card-ledger')}>
-              Export CSV
-            </button>
-            <button type="button" className={btnSecondary} onClick={() => exportLedgerCsv('credit-card-ledger')}>
-              Export Excel (CSV)
-            </button>
-            <button
-              type="button"
-              className={btnSecondary}
-              onClick={() => exportLedgerCsv(`cc-statement-${todayISODate()}`)}
-            >
-              Download statement
-            </button>
+          <div className="flex flex-col gap-3 border-b border-[var(--pf-border)] px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-5">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={`${btnPrimary} inline-flex items-center gap-2`} onClick={() => openLedgerModal('swipe')}>
+                <PlusIcon className="h-4 w-4" />
+                Swipe
+              </button>
+              <button type="button" className={btnSecondary} onClick={() => openLedgerModal('emi')}>
+                EMI
+              </button>
+              <button type="button" className={btnSecondary} onClick={() => setPayModalOpen(true)}>
+                Payment
+              </button>
+              <button type="button" className={btnSecondary} onClick={() => setAddCardModalOpen(true)}>
+                Add card
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={btnSecondary} onClick={() => exportLedgerCsv('credit-card-ledger')}>
+                Export CSV
+              </button>
+              <button
+                type="button"
+                className={btnSecondary}
+                onClick={() => exportLedgerCsv(`cc-statement-${todayISODate()}`)}
+              >
+                Download CSV statement
+              </button>
+            </div>
           </div>
-
-          <form onSubmit={handleManualSwipe} className="space-y-3 border-b border-[var(--pf-border)] px-4 py-4 sm:px-5">
-            <h3 className="text-sm font-bold text-[var(--pf-text)]">Add transaction</h3>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <label className={labelCls}>Card</label>
-                <select
-                  className={inputCls}
-                  value={txCardId}
-                  onChange={(e) => setTxCardId(e.target.value)}
-                  required
-                >
-                  <option value="">— Select —</option>
-                  {cards.map((c) => (
-                    <option key={c.id} value={String(c.id)}>
-                      {c.card_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>Transaction type</label>
-                <select className={inputCls} value={txType} onChange={(e) => setTxType(e.target.value)}>
-                  <option value="swipe">Swipe</option>
-                  <option value="refund">Refund</option>
-                  <option value="fee">Fee</option>
-                  <option value="interest">Interest</option>
-                  <option value="emi">EMI</option>
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>Amount (₹)</label>
-                <input
-                  className={inputCls}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={txAmount}
-                  onChange={(e) => setTxAmount(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className={labelCls}>Date</label>
-                <input className={inputCls} type="date" value={txDate} onChange={(e) => setTxDate(e.target.value)} required />
-              </div>
-              <div>
-                <label className={labelCls}>Merchant</label>
-                <input
-                  className={inputCls}
-                  value={txMerchant}
-                  onChange={(e) => setTxMerchant(e.target.value)}
-                  placeholder="Amazon, fuel…"
-                />
-              </div>
-              <div>
-                <label className={labelCls}>Category</label>
-                <select className={inputCls} value={txCategoryId} onChange={(e) => setTxCategoryId(e.target.value)}>
-                  <option value="">— General —</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={String(c.id)}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={labelCls}>Billing cycle (auto)</label>
-                <input className={`${inputCls} opacity-90`} readOnly value={txBillingCyclePreview} />
-              </div>
-              <div>
-                <label className={labelCls}>EMI</label>
-                <select
-                  className={inputCls}
-                  value={txIsEmiForm ? 'yes' : 'no'}
-                  onChange={(e) => setTxIsEmiForm(e.target.value === 'yes')}
-                >
-                  <option value="no">No</option>
-                  <option value="yes">Yes</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className={labelCls}>Notes (optional)</label>
-              <input className={inputCls} value={txNotes} onChange={(e) => setTxNotes(e.target.value)} />
-            </div>
-            <div>
-              <label className={labelCls}>Attachment URL (optional)</label>
-              <input
-                className={inputCls}
-                value={txAttachmentUrl}
-                onChange={(e) => setTxAttachmentUrl(e.target.value)}
-                placeholder="Link to receipt image"
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Description (optional)</label>
-              <input className={inputCls} value={txDesc} onChange={(e) => setTxDesc(e.target.value)} />
-            </div>
-            <button type="submit" disabled={busy || !cards.length} className={btnPrimary}>
-              {busy ? 'Saving…' : 'Add transaction'}
-            </button>
-          </form>
 
           <div className="border-b border-[var(--pf-border)] px-4 py-2 sm:px-5">
-            <h3 className="text-sm font-semibold text-[var(--pf-text)]">Ledger (oldest first, running balance per card)</h3>
+            <h3 className="text-sm font-semibold text-[var(--pf-text)]">Ledger (oldest first · running balance per card)</h3>
           </div>
-          <div className={pfTableWrap}>
-            <table className={pfTable}>
-              <thead>
+          <div className={`${pfTableWrap} max-h-[min(70vh,900px)] overflow-auto`}>
+            <table className={`${pfTable} min-w-[960px]`}>
+              <thead className="sticky top-0 z-10 border-b border-[var(--pf-border)] bg-[var(--pf-surface)] shadow-[0_1px_0_var(--pf-border)]">
                 <tr>
                   <th className={pfTh}>Date</th>
                   <th className={pfTh}>Card</th>
-                  <th className={pfTh}>Merchant</th>
-                  <th className={pfTh}>Category</th>
+                  <th className={pfTh}>Details</th>
                   <th className={pfTh}>Type</th>
-                  <th className={`${pfTh} text-right`}>Amount</th>
-                  <th className={`${pfTh} text-right`}>Balance</th>
-                  <th className={`${pfTh} text-right`}>Status</th>
+                  <th className={pfThRight}>Amount</th>
+                  <th className={`${pfThRight} text-[var(--pf-text-muted)]`}>Balance</th>
+                  <th className={pfThRight}>Status</th>
                   <th className={pfTh}>Bill</th>
                   <th className={pfTh}>Actions</th>
                 </tr>
@@ -2028,15 +2089,32 @@ export default function PfCreditCardsPage() {
               <tbody>
                 {tx.map((r) => (
                   <tr key={r.id} className={`${pfTrHover} ${ledgerRowAccentClass(r.ledger_status)}`}>
-                    <td className={pfTd}>{r.transaction_date}</td>
-                    <td className={pfTd}>{r.card_name ?? cards.find((c) => c.id === r.card_id)?.card_name ?? r.card_id}</td>
-                    <td className={pfTd}>{r.merchant ?? '—'}</td>
-                    <td className={pfTd}>{r.category_name ?? '—'}</td>
-                    <td className={pfTd}>{r.transaction_type ?? '—'}</td>
-                    <td className={`${pfTd} text-right font-medium`}>{formatInr(r.amount)}</td>
-                    <td className={`${pfTd} text-right tabular-nums`}>{formatInr(r.running_balance)}</td>
-                    <td className={`${pfTd} text-right text-xs font-semibold capitalize`}>{r.ledger_status}</td>
-                    <td className={pfTd}>{r.bill_id ?? '—'}</td>
+                    <td className={`${pfTd} whitespace-nowrap text-sm text-[var(--pf-text-muted)]`}>{r.transaction_date}</td>
+                    <td className={`${pfTd} text-sm`}>{r.card_name ?? cards.find((c) => c.id === r.card_id)?.card_name ?? r.card_id}</td>
+                    <td className={pfTd}>
+                      <p className="font-semibold text-[var(--pf-text)]">{r.merchant || r.description || '—'}</p>
+                      <p className="text-xs text-[var(--pf-text-muted)]">{r.category_name ?? 'Uncategorized'}</p>
+                    </td>
+                    <td className={pfTd}>
+                      <span className="inline-flex items-center gap-1.5 capitalize">
+                        {txTypeIcon(r.transaction_type, r.is_emi)}
+                        <span className="text-xs font-medium">{r.transaction_type ?? '—'}</span>
+                      </span>
+                    </td>
+                    <td className={`${pfTdRight} font-mono text-sm font-semibold tabular-nums ${ledgerAmountClass(r)}`}>
+                      {formatInr(r.amount)}
+                    </td>
+                    <td className={`${pfTdRight} font-mono text-xs tabular-nums text-[var(--pf-text-muted)]`}>
+                      {formatInr(r.running_balance)}
+                    </td>
+                    <td className={pfTdRight}>
+                      <span
+                        className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ledgerStatusBadgeClass(r.ledger_status)}`}
+                      >
+                        {r.ledger_status}
+                      </span>
+                    </td>
+                    <td className={`${pfTd} text-xs`}>{r.bill_id ?? '—'}</td>
                     <td className={`${pfTd} text-xs`}>
                       <div className="flex flex-wrap gap-1">
                         <button type="button" className={btnSecondary} onClick={() => openTxEdit(r)}>
@@ -2063,7 +2141,7 @@ export default function PfCreditCardsPage() {
                             className={btnSecondary}
                             onClick={() => {
                               setPayBillId(String(r.bill_id))
-                              setTab('bills')
+                              setPayModalOpen(true)
                             }}
                           >
                             View bill
@@ -2082,16 +2160,24 @@ export default function PfCreditCardsPage() {
             </table>
             {!tx.length ? <p className="p-4 text-sm text-[var(--pf-text-muted)]">No transactions match.</p> : null}
           </div>
-        </div>
-      ) : null}
+      </section>
 
-      {tab === 'bills' ? (
+      <section id="cc-bills-pay" className="scroll-mt-8 space-y-6">
+        <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--pf-text-muted)]">Bills &amp; payments</h2>
         <div className="grid gap-6 lg:grid-cols-2">
-          <form onSubmit={handleGenerateBill} className={`${cardCls} space-y-3 p-4 sm:p-5`}>
-            <h2 className="text-base font-bold text-[var(--pf-text)]">Generate statement</h2>
-            <p className="text-xs text-[var(--pf-text-muted)]">
-              Packs unbilled charges between dates into one bill and books a liability for the total.
-            </p>
+          <form
+            onSubmit={handleGenerateBill}
+            className={`${cardCls} space-y-4 border border-[var(--pf-border)] bg-gradient-to-br from-sky-500/[0.06] to-transparent p-5 shadow-lg sm:p-6`}
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/20 text-sky-600 dark:text-sky-300">
+                <ChartBarIcon className="h-7 w-7" />
+              </span>
+              <div>
+                <h3 className="text-lg font-bold text-[var(--pf-text)]">Generate statement</h3>
+                <p className="text-xs text-[var(--pf-text-muted)]">Unbilled charges in range roll into one bill.</p>
+              </div>
+            </div>
             <div>
               <label className={labelCls}>Card</label>
               <select className={inputCls} value={genCardId} onChange={(e) => setGenCardId(e.target.value)} required>
@@ -2118,56 +2204,29 @@ export default function PfCreditCardsPage() {
             </button>
           </form>
 
-          <form onSubmit={handlePayBill} className={`${cardCls} space-y-3 p-4 sm:p-5`}>
-            <h2 className="text-base font-bold text-[var(--pf-text)]">Pay statement from bank</h2>
-            <div>
-              <label className={labelCls}>Bill</label>
-              <select className={inputCls} value={payBillId} onChange={(e) => setPayBillId(e.target.value)} required>
-                <option value="">— Select —</option>
-                {bills
-                  .filter((b) => b.status !== 'PAID')
-                  .map((b) => (
-                    <option key={b.id} value={String(b.id)}>
-                      #{b.id} · due {b.due_date} · rem {formatInr(b.remaining ?? b.total_amount - b.amount_paid)}
-                    </option>
-                  ))}
-              </select>
+          <div
+            className={`${cardCls} flex flex-col justify-between gap-4 border border-[var(--pf-border)] bg-gradient-to-br from-emerald-500/[0.07] to-transparent p-5 shadow-lg sm:p-6`}
+          >
+            <div className="flex items-start gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-300">
+                <BanknotesIcon className="h-7 w-7" />
+              </span>
+              <div>
+                <h3 className="text-lg font-bold text-[var(--pf-text)]">Pay credit card bill</h3>
+                <p className="mt-1 text-sm text-[var(--pf-text-muted)]">
+                  Record a payment from your bank toward an open statement. Opens a guided form.
+                </p>
+              </div>
             </div>
-            <div>
-              <label className={labelCls}>Amount (₹)</label>
-              <input
-                className={inputCls}
-                type="number"
-                step="0.01"
-                min="0"
-                value={payAmount}
-                onChange={(e) => setPayAmount(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label className={labelCls}>From account</label>
-              <select className={inputCls} value={payFromAcc} onChange={(e) => setPayFromAcc(e.target.value)} required>
-                <option value="">— Select —</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={String(a.id)}>
-                    {a.account_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Reference (optional)</label>
-              <input className={inputCls} value={payRef} onChange={(e) => setPayRef(e.target.value)} />
-            </div>
-            <button type="submit" disabled={busy} className={btnPrimary}>
-              Record payment
+            <button type="button" className={`${btnPrimary} w-full`} onClick={() => setPayModalOpen(true)}>
+              Pay now
             </button>
-          </form>
+          </div>
 
-          <div className={`${cardCls} lg:col-span-2 p-0`}>
-            <div className="border-b border-[var(--pf-border)] px-4 py-3">
-              <h2 className="text-base font-bold text-[var(--pf-text)]">All bills</h2>
+          <div className={`${cardCls} overflow-hidden lg:col-span-2 p-0 shadow-md`}>
+            <div className="border-b border-[var(--pf-border)] px-4 py-3 sm:px-5">
+              <h3 className="text-base font-bold text-[var(--pf-text)]">Statements</h3>
+              <p className="text-xs text-[var(--pf-text-muted)]">Every bill you have generated.</p>
             </div>
             <div className={pfTableWrap}>
               <table className={pfTable}>
@@ -2191,7 +2250,13 @@ export default function PfCreditCardsPage() {
                         {b.bill_start_date} → {b.bill_end_date}
                       </td>
                       <td className={pfTd}>{b.due_date}</td>
-                      <td className={pfTd}>{b.status}</td>
+                      <td className={pfTd}>
+                        <span
+                          className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${billStatusPillClass(b.display_status || b.status)}`}
+                        >
+                          {b.display_status || b.status}
+                        </span>
+                      </td>
                       <td className={`${pfTd} text-right`}>{formatInr(b.total_amount)}</td>
                       <td className={`${pfTd} text-right font-medium`}>
                         {formatInr(b.remaining != null ? b.remaining : Number(b.total_amount) - Number(b.amount_paid))}
@@ -2204,7 +2269,317 @@ export default function PfCreditCardsPage() {
             </div>
           </div>
         </div>
-      ) : null}
+      </section>
+
+      <AppModal
+        open={swipeModalOpen}
+        onClose={() => !busy && setSwipeModalOpen(false)}
+        title={txType === 'emi' || txIsEmiForm ? 'Record EMI / installment' : 'Record swipe'}
+        subtitle="Creates a ledger line and expense (except fee/interest) per your card rules."
+        maxWidthClass="max-w-2xl"
+        footer={
+          <>
+            <AppButton type="button" variant="ghost" disabled={busy} onClick={() => setSwipeModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" variant="primary" disabled={busy || !cards.length} form="cc-swipe-form">
+              {busy ? 'Saving…' : 'Save'}
+            </AppButton>
+          </>
+        }
+      >
+        <form id="cc-swipe-form" onSubmit={handleManualSwipe} className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className={labelCls}>Card</label>
+              <select
+                className={inputCls}
+                value={txCardId}
+                onChange={(e) => setTxCardId(e.target.value)}
+                required
+              >
+                <option value="">— Select —</option>
+                {cards.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.card_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Transaction type</label>
+              <select className={inputCls} value={txType} onChange={(e) => setTxType(e.target.value)}>
+                <option value="swipe">Swipe</option>
+                <option value="refund">Refund</option>
+                <option value="fee">Fee</option>
+                <option value="interest">Interest</option>
+                <option value="emi">EMI</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Amount (₹)</label>
+              <input
+                className={`${inputCls} font-mono tabular-nums`}
+                type="number"
+                min="0"
+                step="0.01"
+                value={txAmount}
+                onChange={(e) => setTxAmount(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Date</label>
+              <input className={inputCls} type="date" value={txDate} onChange={(e) => setTxDate(e.target.value)} required />
+            </div>
+            <div>
+              <label className={labelCls}>Merchant</label>
+              <input
+                className={inputCls}
+                value={txMerchant}
+                onChange={(e) => setTxMerchant(e.target.value)}
+                placeholder="Amazon, fuel…"
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Category</label>
+              <select className={inputCls} value={txCategoryId} onChange={(e) => setTxCategoryId(e.target.value)}>
+                <option value="">— General —</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Billing cycle</label>
+              <input className={`${inputCls} opacity-90`} readOnly value={txBillingCyclePreview} />
+            </div>
+            <div>
+              <label className={labelCls}>Mark as EMI</label>
+              <select
+                className={inputCls}
+                value={txIsEmiForm ? 'yes' : 'no'}
+                onChange={(e) => setTxIsEmiForm(e.target.value === 'yes')}
+              >
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Notes (optional)</label>
+            <input className={inputCls} value={txNotes} onChange={(e) => setTxNotes(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>Attachment URL (optional)</label>
+            <input
+              className={inputCls}
+              value={txAttachmentUrl}
+              onChange={(e) => setTxAttachmentUrl(e.target.value)}
+              placeholder="Receipt link"
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Description (optional)</label>
+            <input className={inputCls} value={txDesc} onChange={(e) => setTxDesc(e.target.value)} />
+          </div>
+        </form>
+      </AppModal>
+
+      <AppModal
+        open={payModalOpen}
+        onClose={() => !busy && setPayModalOpen(false)}
+        title="Pay credit card bill"
+        subtitle="Statement balance is reduced; bank account is debited."
+        maxWidthClass="max-w-lg"
+        footer={
+          <>
+            <AppButton type="button" variant="ghost" disabled={busy} onClick={() => setPayModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" variant="primary" disabled={busy} form="cc-pay-modal-form">
+              {busy ? 'Processing…' : 'Pay now'}
+            </AppButton>
+          </>
+        }
+      >
+        <form id="cc-pay-modal-form" onSubmit={handlePayBill} className="space-y-4">
+          <div>
+            <label className={labelCls}>Bill</label>
+            <select className={inputCls} value={payBillId} onChange={(e) => setPayBillId(e.target.value)} required>
+              <option value="">— Select —</option>
+              {bills
+                .filter((b) => b.status !== 'PAID')
+                .map((b) => (
+                  <option key={b.id} value={String(b.id)}>
+                    #{b.id} · due {b.due_date} · rem {formatInr(b.remaining ?? b.total_amount - b.amount_paid)}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Amount (₹)</label>
+            <input
+              className={`${inputCls} font-mono tabular-nums`}
+              type="number"
+              step="0.01"
+              min="0"
+              value={payAmount}
+              onChange={(e) => setPayAmount(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Payment date</label>
+            <input className={inputCls} type="date" value={payPaymentDate} onChange={(e) => setPayPaymentDate(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>From account</label>
+            <select className={inputCls} value={payFromAcc} onChange={(e) => setPayFromAcc(e.target.value)} required>
+              <option value="">— Select —</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={String(a.id)}>
+                  {a.account_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Reference (optional)</label>
+            <input className={inputCls} value={payRef} onChange={(e) => setPayRef(e.target.value)} />
+          </div>
+        </form>
+      </AppModal>
+
+      <AppModal
+        open={addCardModalOpen}
+        onClose={() => !busy && setAddCardModalOpen(false)}
+        title="Add credit card"
+        subtitle="Limits drive utilization; closing / due days power billing cycles."
+        maxWidthClass="max-w-lg"
+        footer={
+          <>
+            <AppButton type="button" variant="ghost" disabled={busy} onClick={() => setAddCardModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" variant="primary" disabled={busy} form="cc-add-card-form">
+              {busy ? 'Saving…' : 'Save card'}
+            </AppButton>
+          </>
+        }
+      >
+        <form id="cc-add-card-form" onSubmit={handleAddCard} className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+          <div>
+            <label className={labelCls}>Card name</label>
+            <input className={inputCls} value={cardName} onChange={(e) => setCardName(e.target.value)} required />
+          </div>
+          <div>
+            <label className={labelCls}>Bank (optional)</label>
+            <input className={inputCls} value={bankName} onChange={(e) => setBankName(e.target.value)} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Network</label>
+              <select className={inputCls} value={cardNetwork} onChange={(e) => setCardNetwork(e.target.value)}>
+                <option value="">—</option>
+                <option value="Visa">Visa</option>
+                <option value="Mastercard">Mastercard</option>
+                <option value="RuPay">RuPay</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Type</label>
+              <select className={inputCls} value={cardType} onChange={(e) => setCardType(e.target.value)}>
+                <option value="">—</option>
+                <option value="Rewards">Rewards</option>
+                <option value="Cashback">Cashback</option>
+                <option value="Business">Business</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Credit limit (₹)</label>
+            <input
+              className={`${inputCls} font-mono`}
+              type="number"
+              min="0"
+              step="0.01"
+              value={cardLimit}
+              onChange={(e) => setCardLimit(e.target.value)}
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className={labelCls}>Interest %</label>
+              <input
+                className={inputCls}
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={interestRate}
+                onChange={(e) => setInterestRate(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Annual fee</label>
+              <input
+                className={inputCls}
+                type="number"
+                min="0"
+                step="0.01"
+                value={annualFee}
+                onChange={(e) => setAnnualFee(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Currency</label>
+            <input className={inputCls} value={currency} onChange={(e) => setCurrency(e.target.value)} maxLength={8} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Closing day (1–31)</label>
+              <input
+                className={inputCls}
+                type="number"
+                min="1"
+                max="31"
+                value={closingDay}
+                onChange={(e) => setClosingDay(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Due day (1–31)</label>
+              <input
+                className={inputCls}
+                type="number"
+                min="1"
+                max="31"
+                value={dueDay}
+                onChange={(e) => setDueDay(e.target.value)}
+              />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Active</label>
+            <select
+              className={inputCls}
+              value={isActiveAdd ? 'yes' : 'no'}
+              onChange={(e) => setIsActiveAdd(e.target.value === 'yes')}
+            >
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+        </form>
+      </AppModal>
 
       {editForm ? (
         <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8">

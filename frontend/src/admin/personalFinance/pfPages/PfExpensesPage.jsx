@@ -1,6 +1,6 @@
 import { PencilSquareIcon, PlusCircleIcon, TrashIcon } from '@heroicons/react/24/solid'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   createFinanceExpense,
   deleteFinanceExpense,
@@ -17,6 +17,7 @@ import {
 import PfExportMenu from '../PfExportMenu.jsx'
 import { buildIncomeExpenseExportQuery } from '../pfExportRange.js'
 import { PfCategoryIcon, categoryBadgeClass } from '../pfCategoryIcons.jsx'
+import { AppButton, AppDropdown, AppInput, AppModal, AppTextarea } from '../pfDesignSystem/index.js'
 import {
   btnPrimary,
   cardCls,
@@ -168,7 +169,9 @@ function expenseRowToPayWithValue(r, instruments) {
 export default function PfExpensesPage() {
   const { onSessionInvalid } = useOutletContext() || {}
   const { tick, refresh } = usePfRefresh()
-  const [showAddForm, setShowAddForm] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const accountDeepLinkApplied = useRef(false)
+  const [addModalOpen, setAddModalOpen] = useState(false)
   const [categories, setCategories] = useState([])
   const [accounts, setAccounts] = useState([])
   const [instruments, setInstruments] = useState([])
@@ -295,6 +298,18 @@ export default function PfExpensesPage() {
   useEffect(() => {
     load()
   }, [load, tick])
+
+  useEffect(() => {
+    if (accountDeepLinkApplied.current || accounts.length === 0) return
+    const aid = searchParams.get('account_id')
+    if (!aid || !accounts.some((a) => String(a.id) === aid)) return
+    setPayWith(`acc:${aid}`)
+    setAddModalOpen(true)
+    accountDeepLinkApplied.current = true
+    const next = new URLSearchParams(searchParams)
+    next.delete('account_id')
+    setSearchParams(next, { replace: true })
+  }, [accounts, searchParams, setSearchParams])
 
   const payWithSelectedCard = useMemo(() => {
     if (!payWith || !payWith.startsWith('cc:')) return null
@@ -436,6 +451,7 @@ export default function PfExpensesPage() {
       })
       setAmount('')
       setDescription('')
+      setAddModalOpen(false)
       await load()
       refresh()
     } catch (err) {
@@ -450,10 +466,53 @@ export default function PfExpensesPage() {
     }
   }
 
-  const formCardHeader =
-    'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]'
-  const formSection =
-    'border-b border-slate-100 px-4 py-4 sm:px-5 dark:border-[var(--pf-border)]'
+  const expenseCategoryOptions = useMemo(
+    () => categories.map((c) => ({ value: String(c.id), label: c.name })),
+    [categories],
+  )
+  const expensePayWithGroups = useMemo(() => {
+    const groups = []
+    if (paymentStatus === 'PENDING') {
+      groups.push({
+        label: 'While pending',
+        options: [{ value: '', label: 'Not specified', description: 'Optional until paid' }],
+      })
+    }
+    if (accounts.length) {
+      groups.push({
+        label: 'Accounts (cash or bank)',
+        options: accounts.map((a) => ({
+          value: `acc:${a.id}`,
+          label: a.account_name,
+          description: paymentMethodForAccount(a) === 'cash' ? 'Cash' : 'Bank / transfer',
+        })),
+      })
+    }
+    if (creditCards.length) {
+      groups.push({
+        label: 'Credit cards',
+        options: creditCards.map((c) => ({
+          value: `cc:${c.id}`,
+          label: c.card_name,
+          description: c.bank_name || 'Statement balance',
+        })),
+      })
+    }
+    if (groups.length === 0) {
+      groups.push({
+        label: '—',
+        options: [{ value: '', label: 'No accounts or cards', description: 'Add them under Accounts / Credit cards', disabled: true }],
+      })
+    }
+    return groups
+  }, [accounts, creditCards, paymentStatus])
+  const recurringTypeExpenseOptions = useMemo(
+    () => [
+      { value: 'monthly', label: 'Monthly' },
+      { value: 'weekly', label: 'Weekly' },
+    ],
+    [],
+  )
 
   async function handleExpenseExport() {
     setExpenseExportBusy(true)
@@ -484,11 +543,11 @@ export default function PfExpensesPage() {
           />
           <button
             type="button"
-            onClick={() => setShowAddForm((v) => !v)}
-            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-[12px] bg-[#1E3A8A] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#172554] active:scale-[0.98] md:self-start"
+            onClick={() => setAddModalOpen(true)}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-[12px] bg-[#1E3A8A] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#172554] active:scale-[0.98] md:self-start dark:bg-[var(--pf-primary)] dark:hover:bg-[var(--pf-primary-hover)]"
           >
             <PlusCircleIcon className="h-5 w-5" />
-            {showAddForm ? 'Close add form' : 'Add expense'}
+            Add expense
           </button>
         </div>
       </div>
@@ -497,99 +556,73 @@ export default function PfExpensesPage() {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{error}</div>
       ) : null}
 
-      {showAddForm ? (
-      <div className={`${cardCls} overflow-hidden p-0`}>
-        <div className={formCardHeader}>
-          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add expense</h2>
-        </div>
-        <form onSubmit={handleSubmit}>
-          <div className={`${formSection} grid gap-4 sm:grid-cols-3`}>
+      <AppModal
+        open={addModalOpen}
+        onClose={() => !submitting && setAddModalOpen(false)}
+        title="Add expense"
+        subtitle="Record spend — debits the selected account or posts to a card’s unbilled charges."
+        maxWidthClass="max-w-lg"
+        footer={
+          <>
+            <AppButton type="button" variant="secondary" disabled={submitting} onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" variant="primary" disabled={submitting} form="pf-expense-add-form">
+              {submitting ? 'Saving…' : 'Add expense'}
+            </AppButton>
+          </>
+        }
+      >
+        <form id="pf-expense-add-form" onSubmit={handleSubmit} className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <AppInput
+              id="exp-amt"
+              label="Amount (₹)"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0"
+              amount
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
             <div>
-              <label htmlFor="exp-amt" className={labelCls}>
-                Amount (₹)
-              </label>
-              <input
-                id="exp-amt"
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0"
-                className={inputCls}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="exp-cat" className={labelCls}>
+              <label htmlFor="exp-cat-dd" className={labelCls}>
                 Category
               </label>
-              <select
-                id="exp-cat"
-                className={inputCls}
+              <AppDropdown
+                id="exp-cat-dd"
                 value={expenseCategoryId}
-                onChange={(e) => setExpenseCategoryId(e.target.value)}
-                required
-              >
-                <option value="">— Select —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="exp-date" className={labelCls}>
-                Date
-              </label>
-              <input
-                id="exp-date"
-                type="date"
-                className={inputCls}
-                value={entryDate}
-                onChange={(e) => setEntryDate(e.target.value)}
-                required
+                onChange={setExpenseCategoryId}
+                options={expenseCategoryOptions}
+                placeholder="— Select —"
+                aria-label="Expense category"
               />
             </div>
+            <AppInput
+              id="exp-date"
+              label="Date"
+              type="date"
+              variant="boxed"
+              value={entryDate}
+              onChange={(e) => setEntryDate(e.target.value)}
+              required
+            />
           </div>
-          <div className={`${formSection} grid gap-4 sm:grid-cols-3`}>
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="sm:col-span-2">
-              <label htmlFor="exp-paywith" className={labelCls}>
+              <label htmlFor="exp-paywith-dd" className={labelCls}>
                 Pay with
               </label>
-              <select
-                id="exp-paywith"
-                className={inputCls}
+              <AppDropdown
+                id="exp-paywith-dd"
                 value={payWith}
-                onChange={(e) => setPayWith(e.target.value)}
-              >
-                {paymentStatus === 'PENDING' ? (
-                  <option value="">— Optional while pending —</option>
-                ) : null}
-                {accounts.length ? (
-                  <optgroup label="Accounts (cash or bank)">
-                    {accounts.map((a) => {
-                      const sub = paymentMethodForAccount(a) === 'cash' ? 'Cash' : 'Bank / transfer'
-                      return (
-                        <option key={`acc-${a.id}`} value={`acc:${a.id}`}>
-                          {a.account_name} · {sub}
-                        </option>
-                      )
-                    })}
-                  </optgroup>
-                ) : null}
-                {creditCards.length ? (
-                  <optgroup label="Registered credit cards (statement — bank not debited until bill payment)">
-                    {creditCards.map((c) => (
-                      <option key={`cc-${c.id}`} value={`cc:${c.id}`}>
-                        {c.card_name}
-                        {c.bank_name ? ` · ${c.bank_name}` : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-              </select>
+                onChange={setPayWith}
+                groups={expensePayWithGroups}
+                placeholder="Select funding source"
+                aria-label="Pay with"
+              />
               {paymentStatus === 'PAID' && accounts.length === 0 && creditCards.length === 0 ? (
                 <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
                   Add at least one finance account (Accounts) or register a credit card (Credit cards) first.
@@ -613,86 +646,46 @@ export default function PfExpensesPage() {
                 </p>
               ) : null}
             </div>
-            <div>
-              <label htmlFor="exp-paid" className={labelCls}>
-                Paid by
-              </label>
-              <input
-                id="exp-paid"
-                className={inputCls}
-                value={paidBy}
-                onChange={(e) => setPaidBy(e.target.value)}
-                placeholder="e.g. Satya, Brother"
-              />
-            </div>
+            <AppInput id="exp-paid" label="Paid by" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="e.g. Satya, Brother" />
           </div>
-          <div className={formSection}>
-            <label htmlFor="exp-desc" className={labelCls}>
-              Description
-            </label>
-            <input
-              id="exp-desc"
-              className={inputCls}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Notes"
-            />
-          </div>
-          <div className={`${formSection} flex flex-wrap items-center gap-4`}>
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+          <AppTextarea id="exp-desc" label="Description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Notes" rows={2} />
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-[var(--pf-text)]">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-slate-300"
+                className="h-4 w-4 rounded border-[var(--pf-border)] text-[var(--pf-primary)]"
                 checked={isRecurring}
                 onChange={(e) => setIsRecurring(e.target.checked)}
               />
               Recurring expense
             </label>
             {isRecurring ? (
-              <select
-                className={`${inputCls} max-w-[12rem]`}
-                value={recurringType}
-                onChange={(e) => setRecurringType(e.target.value)}
-                aria-label="Recurring type"
-              >
-                <option value="monthly">Monthly</option>
-                <option value="weekly">Weekly</option>
-              </select>
+              <div className="min-w-[12rem] flex-1">
+                <span className={labelCls}>Cadence</span>
+                <AppDropdown
+                  value={recurringType}
+                  onChange={setRecurringType}
+                  options={recurringTypeExpenseOptions}
+                  aria-label="Recurring type"
+                />
+              </div>
             ) : null}
           </div>
-          <div className={`${formSection} flex flex-wrap items-center gap-4`}>
-            <div>
-              <span className={labelCls}>Status</span>
-              <div className="mt-1 flex gap-3 text-sm">
-                <label className="flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="pay-st"
-                    checked={paymentStatus === 'PAID'}
-                    onChange={() => setPaymentStatus('PAID')}
-                  />
-                  Paid
-                </label>
-                <label className="flex items-center gap-1.5">
-                  <input
-                    type="radio"
-                    name="pay-st"
-                    checked={paymentStatus === 'PENDING'}
-                    onChange={() => setPaymentStatus('PENDING')}
-                  />
-                  Pending
-                </label>
-              </div>
+          <div>
+            <span className={labelCls}>Status</span>
+            <div className="mt-2 flex gap-4 text-sm text-[var(--pf-text)]">
+              <label className="flex items-center gap-2">
+                <input type="radio" name="pay-st" checked={paymentStatus === 'PAID'} onChange={() => setPaymentStatus('PAID')} />
+                Paid
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="radio" name="pay-st" checked={paymentStatus === 'PENDING'} onChange={() => setPaymentStatus('PENDING')} />
+                Pending
+              </label>
             </div>
           </div>
-          <div className="px-4 py-4 sm:px-5">
-            <button type="submit" disabled={submitting} className={btnPrimary}>
-              {submitting ? 'Saving…' : 'Add expense'}
-            </button>
-          </div>
         </form>
-      </div>
-      ) : null}
+      </AppModal>
 
       <div className={cardCls}>
         <h2 className="text-base font-bold text-slate-900">Transactions</h2>

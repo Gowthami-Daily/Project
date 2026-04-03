@@ -217,6 +217,8 @@ class FinanceAccount(Base):
     account_name: Mapped[str] = mapped_column(String(200), nullable=False)
     account_type: Mapped[str] = mapped_column(String(40), nullable=False)
     balance: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    include_in_networth: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    include_in_liquid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -287,6 +289,8 @@ class FinanceInvestment(Base):
     investment_type: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False, default='')
     invested_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    current_value: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    sip_monthly_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     investment_date: Mapped[date] = mapped_column(Date, nullable=False)
     platform: Mapped[str | None] = mapped_column(String(120), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

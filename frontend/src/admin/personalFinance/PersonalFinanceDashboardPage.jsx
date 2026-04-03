@@ -10,6 +10,7 @@ import {
   ChartPieIcon,
   CheckCircleIcon,
   CreditCardIcon,
+  DevicePhoneMobileIcon,
   ExclamationTriangleIcon,
   InformationCircleIcon,
   ReceiptPercentIcon,
@@ -386,8 +387,25 @@ export default function PersonalFinanceDashboardPage() {
   const emiM = Number(cashflowMonth?.emi_expense_month) || 0
   const savingsRateFormula = incomeM > 0.01 ? (incomeM - expenseM - emiM) / incomeM : null
 
-  const cashBankTotal =
-    (Number(summary?.balance_cash ?? summary?.cash_balance) || 0) + (Number(summary?.balance_bank) || 0)
+  const liquidBankKpi = Number(summary?.liquid_bank ?? summary?.balance_bank) || 0
+  const liquidCashKpi =
+    summary?.liquid_cash != null && !Number.isNaN(Number(summary.liquid_cash))
+      ? Number(summary.liquid_cash)
+      : null
+  const liquidWalletKpi =
+    summary?.liquid_wallet != null && !Number.isNaN(Number(summary.liquid_wallet))
+      ? Number(summary.liquid_wallet)
+      : null
+  const legacyCashBucket = Number(summary?.balance_cash ?? summary?.cash_balance) || 0
+  const hasLiquidSplit = liquidCashKpi != null && liquidWalletKpi != null
+  const liquidTotalKpi = hasLiquidSplit
+    ? liquidBankKpi + liquidCashKpi + liquidWalletKpi
+    : summary?.liquid_total != null && !Number.isNaN(Number(summary.liquid_total))
+      ? Number(summary.liquid_total)
+      : liquidBankKpi + legacyCashBucket
+
+  const cashBankTotal = liquidTotalKpi
+
   const totalAssetsBook =
     cashBankTotal +
     (Number(summary?.total_investment) || 0) +
@@ -395,18 +413,33 @@ export default function PersonalFinanceDashboardPage() {
     (Number(summary?.loan_receivable) || 0)
 
   const compositionPieData = useMemo(() => {
-    const cash = Number(summary?.balance_cash ?? summary?.cash_balance) || 0
-    const bank = Number(summary?.balance_bank) || 0
     const inv = Number(summary?.total_investment) || 0
     const fixed = Number(summary?.total_assets) || 0
     const lent = Number(summary?.loan_receivable ?? summary?.loan_outstanding) || 0
-    return [
-      { name: 'Cash', value: cash },
-      { name: 'Bank', value: bank },
+    const bank = Number(summary?.liquid_bank ?? summary?.balance_bank) || 0
+    const cashPart =
+      summary?.liquid_cash != null && !Number.isNaN(Number(summary.liquid_cash))
+        ? Number(summary.liquid_cash)
+        : null
+    const walletPart =
+      summary?.liquid_wallet != null && !Number.isNaN(Number(summary.liquid_wallet))
+        ? Number(summary.liquid_wallet)
+        : null
+    const legacy = Number(summary?.balance_cash ?? summary?.cash_balance) || 0
+    const rows = []
+    if (bank > 0.01) rows.push({ name: 'Bank', value: bank })
+    if (cashPart != null && walletPart != null) {
+      if (cashPart > 0.01) rows.push({ name: 'Cash', value: cashPart })
+      if (walletPart > 0.01) rows.push({ name: 'Wallet', value: walletPart })
+    } else if (legacy > 0.01) {
+      rows.push({ name: 'Cash & wallet', value: legacy })
+    }
+    rows.push(
       { name: 'Investments', value: inv },
       { name: 'Fixed assets', value: fixed },
       { name: 'Loans given', value: lent },
-    ].filter((x) => x.value > 0.01)
+    )
+    return rows.filter((x) => x.value > 0.01)
   }, [summary])
 
   /** Overview insight charts (derived only — no new API). */
@@ -503,17 +536,16 @@ export default function PersonalFinanceDashboardPage() {
     const lim = Number(creditCardsSummary?.total_credit_limit) || 0
     const util = lim > 0.01 ? (Number(creditCardsSummary?.used_limit) || 0) / lim : null
     const invRatio = totalAssetsBook > 0.01 ? (Number(summary?.total_investment) || 0) / totalAssetsBook : null
-    const cashOnly = Number(summary?.balance_cash ?? summary?.cash_balance) || 0
-    const liq = exp > 0.01 ? cashOnly / exp : null
+    const liq = exp > 0.01 ? cashBankTotal / exp : null
     const pct = (x) => (x == null || Number.isNaN(x) ? '—' : `${(x * 100).toFixed(1)}%`)
     return [
       { label: 'Savings rate', value: pct(savingsRate), hint: '(Income − expense − EMI) / income' },
       { label: 'Debt to income', value: pct(debtToInc), hint: 'EMI / income' },
       { label: 'Credit utilization', value: pct(util), hint: 'Used / limit' },
       { label: 'Investment / assets', value: pct(invRatio), hint: 'Investments / total assets' },
-      { label: 'Liquidity', value: pct(liq), hint: 'Cash / monthly expense' },
+      { label: 'Liquidity', value: pct(liq), hint: 'Liquid cash / monthly expense' },
     ]
-  }, [incomeM, expenseM, emiM, creditCardsSummary, totalAssetsBook, summary])
+  }, [incomeM, expenseM, emiM, creditCardsSummary, totalAssetsBook, summary, cashBankTotal])
 
   const netWorthMomLabel = useMemo(() => {
     if (networthData.length < 2) return null
@@ -942,9 +974,42 @@ export default function PersonalFinanceDashboardPage() {
               tint="violet"
             />
           </motion.div>
-          <div className="col-span-12 grid grid-cols-2 gap-6 md:grid-cols-2 xl:col-span-8 xl:grid-cols-2">
+          <div className="col-span-12 grid grid-cols-2 gap-4 md:gap-6 xl:col-span-8 xl:grid-cols-2">
             <motion.div variants={bentoItem} className="col-span-1 min-w-0">
-              <KpiCard title="Cash balance" value={formatInr(cashBankTotal)} subtitle="Cash + bank accounts" icon={BanknotesIcon} tint="blue" />
+              <KpiCard
+                title="Bank balance"
+                value={formatInr(liquidBankKpi)}
+                subtitle="Checking & savings (liquid)"
+                icon={BuildingLibraryIcon}
+                tint="blue"
+              />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Cash balance"
+                value={formatInr(hasLiquidSplit ? liquidCashKpi : legacyCashBucket)}
+                subtitle={hasLiquidSplit ? 'Physical cash' : 'Cash & wallet (legacy bucket)'}
+                icon={BanknotesIcon}
+                tint="sky"
+              />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Wallet balance"
+                value={formatInr(hasLiquidSplit ? liquidWalletKpi : null)}
+                subtitle={hasLiquidSplit ? 'UPI / Paytm / PhonePe' : 'Split appears when type = Wallet'}
+                icon={DevicePhoneMobileIcon}
+                tint="cyan"
+              />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Total liquid"
+                value={formatInr(liquidTotalKpi)}
+                subtitle="Bank + cash + wallet"
+                icon={BanknotesIcon}
+                tint="blue"
+              />
             </motion.div>
             <motion.div variants={bentoItem} className="col-span-1 min-w-0">
               <KpiCard
@@ -962,6 +1027,24 @@ export default function PersonalFinanceDashboardPage() {
                 subtitle="Loans & cards outstanding"
                 icon={ReceiptPercentIcon}
                 tint="rose"
+              />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Loans given (acct)"
+                value={formatInr(summary?.finance_loans_given_balance)}
+                subtitle="LOAN_GIVEN finance accounts"
+                icon={UsersIcon}
+                tint="violet"
+              />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Loans taken (acct)"
+                value={formatInr(summary?.finance_loans_taken_balance)}
+                subtitle="LOAN_TAKEN book balances"
+                icon={ReceiptPercentIcon}
+                tint="orange"
               />
             </motion.div>
             <motion.div variants={bentoItem} className="col-span-1 min-w-0">
@@ -1013,7 +1096,7 @@ export default function PersonalFinanceDashboardPage() {
         <section className="grid min-w-0 gap-6 lg:grid-cols-2">
           <div className={`min-w-0 ${DASH_CHART_CARD}`}>
             <h2 className={chartTitle}>Net worth composition</h2>
-          <p className={chartSub}>Cash, bank, investments, fixed assets, and loans you lent</p>
+          <p className={chartSub}>Liquid (bank, cash, wallet), investments, fixed assets, loans you lent</p>
           <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
             {compositionPieData.length === 0 ? (
               <p className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">

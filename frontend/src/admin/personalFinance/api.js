@@ -226,7 +226,7 @@ export function getExpenseAnalytics(startDate, endDate) {
 
 /** Full analytics dashboard payload (KPIs, trends, breakdowns, monthly series). */
 export function getReportsSummary(params) {
-  const { from, to, accountId, expenseCategoryId, person } = params || {}
+  const { from, to, accountId, expenseCategoryId, person, expenseAccountType } = params || {}
   const q = new URLSearchParams()
   q.set('from', String(from))
   q.set('to', String(to))
@@ -239,6 +239,9 @@ export function getReportsSummary(params) {
     if (cid && !Number.isNaN(cid)) q.set('expense_category_id', String(cid))
   }
   if (person && String(person).trim()) q.set('person', String(person).trim())
+  if (expenseAccountType != null && String(expenseAccountType).trim() !== '') {
+    q.set('expense_account_type', String(expenseAccountType).trim())
+  }
   return pfFetch(`/pf/reports/summary?${q}`)
 }
 
@@ -285,8 +288,13 @@ export function createFinanceAccount(body) {
   return fin('/accounts', { method: 'POST', body: JSON.stringify(body) })
 }
 
-export function patchFinanceAccountBalance(accountId, body) {
+/** @param {Record<string, unknown>} body — balance, account_type, account_name, include_in_networth, include_in_liquid */
+export function patchFinanceAccount(accountId, body) {
   return fin(`/accounts/${accountId}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function patchFinanceAccountBalance(accountId, body) {
+  return patchFinanceAccount(accountId, body)
 }
 
 export function deleteFinanceAccount(accountId) {
@@ -303,12 +311,34 @@ export function postAccountMovement(body) {
   return fin('/accounts/movements', { method: 'POST', body: JSON.stringify(body) })
 }
 
-export function listAccountTransferHistory(params = {}) {
+/** @returns {Promise<{ items: unknown[], total: number }>} — total from X-Total-Count when present */
+export async function listAccountTransferHistory(params = {}) {
   const q = new URLSearchParams({
     skip: String(params.skip ?? 0),
-    limit: String(params.limit ?? 100),
+    limit: String(params.limit ?? 10),
   })
-  return fin(`/accounts/movements?${q}`)
+  const res = await fetch(`${BASE}/pf/finance/accounts/movements?${q}`, {
+    headers: { ...authHeaders() },
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    let detail = text
+    try {
+      const j = JSON.parse(text)
+      detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail ?? j)
+    } catch {
+      /* ignore */
+    }
+    const err = new Error(detail || res.statusText)
+    err.status = res.status
+    throw err
+  }
+  const raw = text ? JSON.parse(text) : []
+  const items = Array.isArray(raw) ? raw : []
+  const th = res.headers.get('X-Total-Count')
+  const totalParsed = th != null ? Number(th) : NaN
+  const total = Number.isFinite(totalParsed) ? totalParsed : items.length
+  return { items, total }
 }
 
 /** @param {{ year?: number, month?: number, start_date?: string, end_date?: string }} params */
