@@ -67,6 +67,12 @@ class CreditCard(Base):
     due_days: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     closing_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     due_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interest_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
+    annual_fee: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+    card_network: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    card_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default='INR')
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

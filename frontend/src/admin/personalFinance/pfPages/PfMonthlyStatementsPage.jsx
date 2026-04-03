@@ -251,9 +251,6 @@ export default function PfMonthlyStatementsPage() {
     else loadMonthlyTables()
   }
 
-  const statCard =
-    'rounded-[16px] border border-slate-100 bg-white p-4 shadow-[0_4px_12px_rgba(0,0,0,0.06)] transition hover:shadow-[0_6px_16px_rgba(0,0,0,0.08)]'
-
   const dailyRangeLabel = useMemo(() => {
     const a = new Date(`${dailyFrom}T12:00:00`)
     const b = new Date(`${dailyTo}T12:00:00`)
@@ -344,7 +341,7 @@ export default function PfMonthlyStatementsPage() {
           type="button"
           onClick={handleReload}
           disabled={loading}
-          className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+          className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-[var(--pf-border)] dark:text-[var(--pf-text)] dark:hover:bg-[var(--pf-card-hover)]"
         >
           {loading ? '…' : 'Reload'}
         </button>
@@ -360,9 +357,9 @@ export default function PfMonthlyStatementsPage() {
       </div>
 
       {activeTab === 'daily' ? (
-        <div className="flex flex-col gap-3 rounded-[16px] border border-slate-200/80 bg-white p-4 shadow-[0_4px_12px_rgba(0,0,0,0.06)] sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-          <p className="text-xs text-slate-600 sm:text-sm">
-            <span className="font-semibold text-slate-800">Range:</span> {dailyRangeLabel}
+        <div className="flex flex-col gap-3 rounded-[16px] border border-slate-200/80 bg-white p-4 shadow-[var(--pf-shadow)] sm:flex-row sm:flex-wrap sm:items-end sm:justify-between dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]">
+          <p className="text-xs text-slate-600 sm:text-sm dark:text-[var(--pf-text-muted)]">
+            <span className="font-semibold text-slate-800 dark:text-[var(--pf-text)]">Range:</span> {dailyRangeLabel}
             {bankFilter ? ` · ${filterName || 'filtered'}` : ''}
           </p>
           <div className="flex flex-wrap items-end gap-2 sm:gap-3">
@@ -404,50 +401,72 @@ export default function PfMonthlyStatementsPage() {
 
       {activeTab === 'daily' && !dailyLoading && mergedDaily.length > 0 ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className={statCard}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total income</p>
-            <p className="mt-1 font-mono text-lg font-bold tabular-nums text-emerald-600">{formatInr(dailyTotals.inc)}</p>
+          <div className={cardCls}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Total income
+            </p>
+            <p className="mt-1 font-mono text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+              {formatInr(dailyTotals.inc)}
+            </p>
           </div>
-          <div className={statCard}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total expense</p>
-            <p className="mt-1 font-mono text-lg font-bold tabular-nums text-[#EF4444]">{formatInr(dailyTotals.exp)}</p>
+          <div className={cardCls}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Total expense
+            </p>
+            <p className="mt-1 font-mono text-lg font-bold tabular-nums text-[#EF4444] dark:text-red-400">
+              {formatInr(dailyTotals.exp)}
+            </p>
           </div>
-          <div className={`${statCard} col-span-2 sm:col-span-2`}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Net</p>
-            <p className="mt-1 font-mono text-lg font-bold tabular-nums text-slate-900">{formatInr(dailyTotals.net)}</p>
+          <div className={`${cardCls} col-span-2 sm:col-span-2`}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">Net</p>
+            <p className="mt-1 font-mono text-lg font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)]">
+              {formatInr(dailyTotals.net)}
+            </p>
           </div>
         </div>
       ) : null}
 
       {activeTab === 'monthly' && monthlyYtd && rows.length > 0 ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          <div className={statCard}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total income</p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-emerald-600 sm:text-lg">
+          <div className={cardCls}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Total income
+            </p>
+            <p className="mt-1 font-mono text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400 sm:text-lg">
               {formatInr(monthlyYtd.inc)}
             </p>
           </div>
-          <div className={statCard}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total expense</p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-[#EF4444] sm:text-lg">
+          <div className={cardCls}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Total expense
+            </p>
+            <p className="mt-1 font-mono text-base font-bold tabular-nums text-[#EF4444] dark:text-red-400 sm:text-lg">
               {formatInr(monthlyYtd.exp)}
             </p>
           </div>
-          <div className={statCard}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Net profit</p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-slate-900 sm:text-lg">
+          <div className={cardCls}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Net profit
+            </p>
+            <p className="mt-1 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)] sm:text-lg">
               {formatInr(monthlyYtd.net)}
             </p>
           </div>
-          <div className={statCard}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Loan receivable</p>
-            <p className="mt-1 font-mono text-base font-bold tabular-nums text-slate-900 sm:text-lg">
+          <div className={cardCls}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Loan receivable
+            </p>
+            <p className="mt-1 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-[var(--pf-text)] sm:text-lg">
               {formatInr(monthlyYtd.loanRecv)}
             </p>
           </div>
-          <div className={`${statCard} col-span-2 text-slate-500 lg:col-span-1`}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide">Loan received</p>
-            <p className="mt-1 text-sm">Tracked via loan payments · see Loans</p>
+          <div className={`${cardCls} col-span-2 lg:col-span-1`}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+              Loan received
+            </p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-[var(--pf-text-muted)]">
+              Tracked via loan payments · see Loans
+            </p>
           </div>
         </div>
       ) : null}
@@ -458,43 +477,49 @@ export default function PfMonthlyStatementsPage() {
 
       {activeTab === 'daily' ? (
         <section className={cardCls} aria-labelledby="pf-daily-heading">
-          <h2 id="pf-daily-heading" className="text-base font-bold text-slate-900">
+          <h2 id="pf-daily-heading" className="text-base font-bold text-slate-900 dark:text-[var(--pf-text)]">
             Daily transactions
           </h2>
-          <p className="mt-0.5 hidden text-xs text-slate-500 md:block">
+          <p className="mt-0.5 hidden text-xs text-slate-500 md:block dark:text-[var(--pf-text-muted)]">
             Newest days first. Pending expenses are included with a note.
           </p>
           {dailyLoading && !dailyData ? (
-            <p className="mt-4 text-sm text-slate-500">Loading…</p>
+            <p className="mt-4 text-sm text-slate-500 dark:text-[var(--pf-text-muted)]">Loading…</p>
           ) : byDay.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-500">No income or expense rows in this month for the current filter.</p>
+            <p className="mt-4 text-sm text-slate-500 dark:text-[var(--pf-text-muted)]">
+              No income or expense rows in this month for the current filter.
+            </p>
           ) : (
             <div className="mt-4 space-y-6">
               {byDay.map(([dayIso, dayRows]) => (
                 <div key={dayIso}>
-                  <h3 className="mb-2 border-b border-slate-200/90 pb-1 text-sm font-bold text-slate-900">
+                  <h3 className="mb-2 border-b border-slate-200/90 pb-1 text-sm font-bold text-slate-900 dark:border-[var(--pf-border)] dark:text-[var(--pf-text)]">
                     {formatDayHeading(dayIso)}
                   </h3>
                   <div className="space-y-2 md:hidden">
                     {dayRows.map((r) => (
                       <div
                         key={`${r.kind}-${r.id}`}
-                        className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition active:scale-[0.99]"
+                        className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition active:scale-[0.99] dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)] dark:shadow-none"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <span className="min-w-0 flex-1 font-semibold text-slate-900">{r.category}</span>
+                          <span className="min-w-0 flex-1 font-semibold text-slate-900 dark:text-[var(--pf-text)]">
+                            {r.category}
+                          </span>
                           <span
                             className={`shrink-0 font-mono text-base font-bold tabular-nums ${
-                              r.kind === 'income' ? 'text-emerald-600' : 'text-[#EF4444]'
+                              r.kind === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-[#EF4444] dark:text-red-400'
                             }`}
                           >
                             {r.kind === 'income' ? '+' : '−'}
                             {formatInr(r.amount)}
                           </span>
                         </div>
-                        <p className="mt-1 text-xs text-slate-500">{rowDetail(r)}</p>
-                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize">{r.kind}</span>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">{rowDetail(r)}</p>
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-[var(--pf-text-muted)]">
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize dark:bg-slate-700 dark:text-slate-200">
+                            {r.kind}
+                          </span>
                           <span>{r.account_id != null ? accountNameById.get(r.account_id) ?? '' : '—'}</span>
                         </div>
                       </div>
@@ -553,14 +578,18 @@ export default function PfMonthlyStatementsPage() {
       {activeTab === 'monthly' ? (
         <>
           {monthlyData?.opening_cash_estimate != null && rows.length > 0 ? (
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-[var(--pf-text-muted)]">
               Opening cash (1 Jan {year}
               {bankFilter ? ` · ${filterName || 'filtered account'}` : ''}):{' '}
-              <span className="font-mono font-semibold text-slate-900">{formatInr(monthlyData.opening_cash_estimate)}</span>
+              <span className="font-mono font-semibold text-slate-900 dark:text-[var(--pf-text)]">
+                {formatInr(monthlyData.opening_cash_estimate)}
+              </span>
             </p>
           ) : null}
 
-          {monthlyData?.note ? <p className="text-sm text-slate-500">{monthlyData.note}</p> : null}
+          {monthlyData?.note ? (
+            <p className="text-sm text-slate-500 dark:text-[var(--pf-text-muted)]">{monthlyData.note}</p>
+          ) : null}
 
           {monthlyLoading && !monthlyData ? (
             <p className="text-sm text-slate-500">Loading…</p>
@@ -573,10 +602,10 @@ export default function PfMonthlyStatementsPage() {
           {rows.length > 0 ? (
             <>
               <section className={cardCls} aria-labelledby="pf-is-heading">
-            <h2 id="pf-is-heading" className="text-base font-bold text-sky-950">
+            <h2 id="pf-is-heading" className="text-base font-bold text-sky-950 dark:text-[var(--pf-text)]">
               Income statement (monthly)
             </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">
                   Recognized income and expenses{bankFilter ? ` · ${filterName || 'selected bank'}` : ''}.
                 </p>
                 <div className={tableShell}>
@@ -630,10 +659,10 @@ export default function PfMonthlyStatementsPage() {
               </section>
 
               <section className={cardCls} aria-labelledby="pf-cf-heading">
-            <h2 id="pf-cf-heading" className="text-base font-bold text-sky-950">
+            <h2 id="pf-cf-heading" className="text-base font-bold text-sky-950 dark:text-[var(--pf-text)]">
               Cash flow (monthly, operating)
             </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">
                   Cash-in from income, cash-out from expenses; closing cash is the rolled-forward estimate.
                 </p>
                 <div className={tableShell}>
@@ -697,12 +726,13 @@ export default function PfMonthlyStatementsPage() {
               </section>
 
               <section className={cardCls} aria-labelledby="pf-bs-heading">
-                <h2 id="pf-bs-heading" className="text-base font-bold text-sky-950">
+                <h2 id="pf-bs-heading" className="text-base font-bold text-sky-950 dark:text-[var(--pf-text)]">
                   Balance sheet (monthly, simplified)
                 </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]">
                   Cash follows the month-end estimate. Investments, fixed assets, liabilities, and loans use{' '}
-                  <strong className="font-medium text-slate-600">current</strong> profile totals in every column.
+                  <strong className="font-medium text-slate-600 dark:text-[var(--pf-text)]">current</strong> profile
+                  totals in every column.
                 </p>
                 <div className={tableShell}>
                   <table className="w-full min-w-max border-collapse text-left">

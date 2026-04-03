@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 from datetime import date, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, desc, func, literal, select
 from sqlalchemy.orm import Session, selectinload
 
 from fastapi_service.models_extended import (
@@ -16,6 +16,7 @@ from fastapi_service.models_extended import (
     CreditCardTransaction,
     FinanceExpense,
     FinanceLiability,
+    PfExpenseCategory,
 )
 from fastapi_service.repositories.pf_finance_repo import _bump_account_balance, get_account_for_profile
 
@@ -65,6 +66,17 @@ def sum_unbilled_for_profile(db: Session, profile_id: int) -> float:
 
 def _bill_remaining(bill: CreditCardBill) -> float:
     return max(0.0, float(bill.total_amount) - float(bill.amount_paid))
+
+
+def sum_billed_outstanding_for_card(db: Session, card_id: int) -> float:
+    stmt = (
+        select(func.coalesce(func.sum(CreditCardBill.total_amount - CreditCardBill.amount_paid), 0))
+        .where(
+            CreditCardBill.card_id == card_id,
+            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+        )
+    )
+    return max(0.0, float(db.scalar(stmt) or 0))
 
 
 def sum_billed_outstanding_for_profile(db: Session, profile_id: int) -> float:
@@ -286,6 +298,239 @@ def sync_expense_cc_transaction(
     db.refresh(expense)
 
 
+def yearly_spend_per_card(db: Session, profile_id: int) -> list[dict]:
+    """Total spend per card per year, based on transaction date."""
+    stmt = (
+        select(
+            CreditCard.card_name.label('card_name'),
+            func.extract('year', CreditCardTransaction.transaction_date).label('year'),
+            func.coalesce(func.sum(CreditCardTransaction.amount), 0).label('total_spent'),
+        )
+        .select_from(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(CreditCard.profile_id == profile_id)
+        .group_by('card_name', 'year')
+        .order_by('year', 'card_name')
+    )
+    rows = db.execute(stmt).all()
+    return [
+        {
+            'card_name': card_name,
+            'year': int(year),
+            'total_spent': float(total_spent),
+        }
+        for card_name, year, total_spent in rows
+    ]
+
+
+def monthly_spend_for_card(
+    db: Session,
+    profile_id: int,
+    *,
+    card_id: int,
+    year: int,
+    category_id: int | None = None,
+) -> list[dict]:
+    """Month-wise spend for a single card in a given year."""
+    stmt = (
+        select(
+            func.date_trunc('month', CreditCardTransaction.transaction_date).label('month'),
+            func.coalesce(func.sum(CreditCardTransaction.amount), 0).label('total_spent'),
+        )
+        .select_from(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardTransaction.card_id == card_id,
+            func.extract('year', CreditCardTransaction.transaction_date) == year,
+        )
+    )
+    if category_id is not None:
+        stmt = stmt.where(CreditCardTransaction.category_id == category_id)
+    stmt = stmt.group_by('month').order_by('month')
+    rows = db.execute(stmt).all()
+    return [
+        {
+            'month': month.date().isoformat(),
+            'total_spent': float(total_spent),
+        }
+        for month, total_spent in rows
+    ]
+
+
+def spend_by_category_year(db: Session, profile_id: int, year: int) -> list[dict]:
+    """CC swipe totals by expense category name for a calendar year."""
+    cat_label = func.coalesce(PfExpenseCategory.name, literal('Uncategorized'))
+    stmt = (
+        select(
+            cat_label.label('category'),
+            func.coalesce(func.sum(CreditCardTransaction.amount), 0).label('total_spent'),
+        )
+        .select_from(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .outerjoin(PfExpenseCategory, PfExpenseCategory.id == CreditCardTransaction.category_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            func.extract('year', CreditCardTransaction.transaction_date) == year,
+        )
+        .group_by(cat_label)
+        .order_by(desc(func.sum(CreditCardTransaction.amount)))
+    )
+    rows = db.execute(stmt).all()
+    return [{'category': c, 'total_spent': float(t)} for c, t in rows]
+
+
+def _utilization_status_label(pct: float) -> str:
+    if pct < 30:
+        return 'Good'
+    if pct < 50:
+        return 'Normal'
+    if pct < 75:
+        return 'Warning'
+    return 'Danger'
+
+
+def _card_next_due_and_overdue(db: Session, card_id: int, *, today: date) -> tuple[date | None, float]:
+    """Earliest due date among open bills with balance; total overdue remaining."""
+    stmt = (
+        select(CreditCardBill)
+        .where(
+            CreditCardBill.card_id == card_id,
+            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+        )
+        .order_by(CreditCardBill.due_date.asc(), CreditCardBill.id.asc())
+    )
+    next_due: date | None = None
+    overdue = 0.0
+    for bill in db.scalars(stmt).all():
+        rem = _bill_remaining(bill)
+        if rem <= 0.01:
+            continue
+        if next_due is None:
+            next_due = bill.due_date
+        if bill.due_date < today:
+            overdue += rem
+    return next_due, round(overdue, 2)
+
+
+def card_utilization_rows(db: Session, profile_id: int, *, today: date | None = None) -> list[dict]:
+    """Per-card limits, unbilled/billed split, utilization, due dates, status label."""
+    d = today or date.today()
+    cards = list_cards(db, profile_id, 0, 500)
+    out: list[dict] = []
+    for c in cards:
+        lim = float(c.card_limit or 0)
+        unbilled = sum_unbilled_for_card(db, c.id)
+        billed = sum_billed_outstanding_for_card(db, c.id)
+        used = unbilled + billed
+        avail = max(0.0, lim - used)
+        pct = round((used / lim) * 100.0, 2) if lim > 0.01 else 0.0
+        next_due, overdue_amt = _card_next_due_and_overdue(db, c.id, today=d)
+        out.append(
+            {
+                'card_id': c.id,
+                'card_name': c.card_name,
+                'card_limit': round(lim, 2),
+                'used_amount': round(used, 2),
+                'available_credit': round(avail, 2),
+                'unbilled_charges': round(unbilled, 2),
+                'billed_outstanding': round(billed, 2),
+                'utilization_pct': pct,
+                'utilization_status': _utilization_status_label(pct),
+                'next_due_date': next_due.isoformat() if next_due else None,
+                'overdue_amount': overdue_amt,
+            }
+        )
+    return out
+
+
+_CC_PATCHABLE = frozenset(
+    {
+        'card_name',
+        'bank_name',
+        'card_limit',
+        'billing_cycle_start',
+        'billing_cycle_end',
+        'due_days',
+        'closing_day',
+        'due_day',
+        'interest_rate',
+        'annual_fee',
+        'card_network',
+        'card_type',
+        'currency',
+        'is_active',
+    }
+)
+
+
+def patch_credit_card_row(db: Session, card: CreditCard, patch: dict) -> CreditCard:
+    for key, val in patch.items():
+        if key not in _CC_PATCHABLE:
+            continue
+        setattr(card, key, val)
+    db.commit()
+    db.refresh(card)
+    return card
+
+
+def delete_card_for_profile(db: Session, card_id: int, profile_id: int) -> bool:
+    row = get_card_for_profile(db, card_id, profile_id)
+    if row is None:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
+
+
+def billed_vs_paid_monthly(
+    db: Session, profile_id: int, *, end_year: int, end_month: int, months: int = 12
+) -> list[dict]:
+    """Per calendar month: statement totals (by bill_end_date) vs payments (by payment_date)."""
+    out: list[dict] = []
+    y, m = end_year, end_month
+    for _ in range(months):
+        ms = date(y, m, 1)
+        me_m = date(y, m, calendar.monthrange(y, m)[1])
+        stmt_billed = (
+            select(func.coalesce(func.sum(CreditCardBill.total_amount), 0))
+            .select_from(CreditCardBill)
+            .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
+            .where(
+                CreditCard.profile_id == profile_id,
+                CreditCardBill.bill_end_date >= ms,
+                CreditCardBill.bill_end_date <= me_m,
+            )
+        )
+        stmt_paid = (
+            select(func.coalesce(func.sum(CreditCardPayment.amount), 0))
+            .select_from(CreditCardPayment)
+            .join(CreditCard, CreditCard.id == CreditCardPayment.card_id)
+            .where(
+                CreditCard.profile_id == profile_id,
+                CreditCardPayment.payment_date >= ms,
+                CreditCardPayment.payment_date <= me_m,
+            )
+        )
+        billed_amt = float(db.scalar(stmt_billed) or 0)
+        paid_amt = float(db.scalar(stmt_paid) or 0)
+        out.append(
+            {
+                'year': y,
+                'month': m,
+                'month_start': ms.isoformat(),
+                'billed': round(billed_amt, 2),
+                'paid': round(paid_amt, 2),
+            }
+        )
+        if m == 1:
+            y -= 1
+            m = 12
+        else:
+            m -= 1
+    return list(reversed(out))
+
+
 def generate_bill(
     db: Session,
     profile_id: int,
@@ -498,10 +743,106 @@ def dashboard_summary(
     )
     overdue = max(0.0, float(db.scalar(stmt_overdue) or 0))
 
+    utilization_pct = round((used / total_limit) * 100.0, 2) if total_limit > 0.01 else 0.0
+
+    stmt_paid_month = (
+        select(func.coalesce(func.sum(CreditCardPayment.amount), 0))
+        .select_from(CreditCardPayment)
+        .join(CreditCard, CreditCard.id == CreditCardPayment.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardPayment.payment_date >= ms,
+            CreditCardPayment.payment_date <= me,
+        )
+    )
+    paid_this_month = round(float(db.scalar(stmt_paid_month) or 0), 2)
+
+    stmt_interest_fees_month = (
+        select(
+            func.coalesce(func.sum(CreditCardBill.interest + CreditCardBill.late_fee), 0),
+        )
+        .select_from(CreditCardBill)
+        .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardBill.due_date >= ms,
+            CreditCardBill.due_date <= me,
+            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+        )
+    )
+    interest_fees_due_month = round(float(db.scalar(stmt_interest_fees_month) or 0), 2)
+
+    if period_month == 1:
+        py_lm, pm_lm = period_year - 1, 12
+    else:
+        py_lm, pm_lm = period_year, period_month - 1
+    lms = date(py_lm, pm_lm, 1)
+    lme_lm = date(py_lm, pm_lm, calendar.monthrange(py_lm, pm_lm)[1])
+    stmt_last_month_tx = (
+        select(func.coalesce(func.sum(CreditCardTransaction.amount), 0))
+        .select_from(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardTransaction.transaction_date >= lms,
+            CreditCardTransaction.transaction_date <= lme_lm,
+        )
+    )
+    last_month_spend = round(float(db.scalar(stmt_last_month_tx) or 0), 2)
+
+    y12, m12 = period_year, period_month
+    for _ in range(11):
+        if m12 == 1:
+            y12 -= 1
+            m12 = 12
+        else:
+            m12 -= 1
+    start_12m = date(y12, m12, 1)
+    stmt_tx_12m = (
+        select(func.coalesce(func.sum(CreditCardTransaction.amount), 0))
+        .select_from(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardTransaction.transaction_date >= start_12m,
+            CreditCardTransaction.transaction_date <= me,
+        )
+    )
+    total_12m_spend = float(db.scalar(stmt_tx_12m) or 0)
+    avg_monthly_spend = round(total_12m_spend / 12.0, 2)
+
+    stmt_hi_card = (
+        select(CreditCard.card_name, func.coalesce(func.sum(CreditCardTransaction.amount), 0).label('tot'))
+        .select_from(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardTransaction.transaction_date >= ms,
+            CreditCardTransaction.transaction_date <= me,
+        )
+        .group_by(CreditCard.id, CreditCard.card_name)
+        .order_by(desc(func.sum(CreditCardTransaction.amount)))
+        .limit(1)
+    )
+    hi_row = db.execute(stmt_hi_card).first()
+    highest_spend_card_this_month = hi_row[0] if hi_row else None
+    highest_spend_amount_this_month = round(float(hi_row[1]), 2) if hi_row else 0.0
+
+    if utilization_pct < 30:
+        credit_health = 'EXCELLENT'
+    elif utilization_pct < 50:
+        credit_health = 'GOOD'
+    elif utilization_pct < 75:
+        credit_health = 'WARNING'
+    else:
+        credit_health = 'DANGER'
+
     current_bill = None
     nb = nearest_open_bill(db, profile_id)
+    next_due_date = None
     if nb is not None:
         bill, ccard = nb
+        next_due_date = bill.due_date.isoformat()
         current_bill = {
             'bill_id': bill.id,
             'card_id': ccard.id,
@@ -526,6 +867,15 @@ def dashboard_summary(
         'due_this_month': round(due_month, 2),
         'due_this_week': round(due_week, 2),
         'overdue_amount': round(overdue, 2),
+        'utilization_pct': utilization_pct,
+        'paid_this_month': paid_this_month,
+        'interest_fees_due_month': interest_fees_due_month,
+        'last_month_spend': last_month_spend,
+        'avg_monthly_spend': avg_monthly_spend,
+        'highest_spend_card_this_month': highest_spend_card_this_month,
+        'highest_spend_amount_this_month': highest_spend_amount_this_month,
+        'next_due_date': next_due_date,
+        'credit_health': credit_health,
         'card_count': len(cards),
         'current_bill': current_bill,
         'alerts': alerts,

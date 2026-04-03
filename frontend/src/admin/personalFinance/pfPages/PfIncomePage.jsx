@@ -293,8 +293,10 @@ export default function PfIncomePage() {
     }
   }
 
-  const formCardHeader = 'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5'
-  const formSection = 'border-b border-slate-100 px-4 py-4 sm:px-5'
+  const formCardHeader =
+    'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]'
+  const formSection =
+    'border-b border-slate-100 px-4 py-4 sm:px-5 dark:border-[var(--pf-border)]'
 
   async function handleIncomeExport() {
     setIncomeExportBusy(true)

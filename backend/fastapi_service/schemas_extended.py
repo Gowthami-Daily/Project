@@ -83,6 +83,29 @@ class CreditCardCreate(BaseModel):
     due_days: int = Field(15, ge=0, le=120)
     closing_day: int | None = Field(None, ge=1, le=31)
     due_day: int | None = Field(None, ge=1, le=31)
+    interest_rate: float = Field(0.0, ge=0, le=100)
+    annual_fee: float = Field(0.0, ge=0)
+    card_network: str | None = Field(None, max_length=20)
+    card_type: str | None = Field(None, max_length=20)
+    currency: str = Field('INR', min_length=3, max_length=8)
+    is_active: bool = True
+
+
+class CreditCardUpdate(BaseModel):
+    card_name: str | None = Field(None, min_length=1, max_length=100)
+    bank_name: str | None = Field(None, max_length=100)
+    card_limit: float | None = Field(None, ge=0)
+    billing_cycle_start: int | None = Field(None, ge=1, le=31)
+    billing_cycle_end: int | None = Field(None, ge=1, le=31)
+    due_days: int | None = Field(None, ge=0, le=120)
+    closing_day: int | None = Field(None, ge=1, le=31)
+    due_day: int | None = Field(None, ge=1, le=31)
+    interest_rate: float | None = Field(None, ge=0, le=100)
+    annual_fee: float | None = Field(None, ge=0)
+    card_network: str | None = Field(None, max_length=20)
+    card_type: str | None = Field(None, max_length=20)
+    currency: str | None = Field(None, min_length=3, max_length=8)
+    is_active: bool | None = None
 
 
 class CreditCardOut(BaseModel):
@@ -98,6 +121,12 @@ class CreditCardOut(BaseModel):
     due_days: int
     closing_day: int | None = None
     due_day: int | None = None
+    interest_rate: Decimal = Decimal('0')
+    annual_fee: Decimal = Decimal('0')
+    card_network: str | None = None
+    card_type: str | None = None
+    currency: str = 'INR'
+    is_active: bool = True
     created_at: object
 
 

@@ -309,6 +309,8 @@ export default function PfLiabilitiesPage() {
       notes: form.notes.trim() || null,
       status: form.status || 'ACTIVE',
     }
+    // For new liabilities, optionally build an EMI schedule.
+    // For edits, we never send `build_emi_schedule` (backend update schema forbids this field).
     if (!editId && form.build_emi_schedule) {
       const tm = Number(form.term_months)
       if (!form.emi_schedule_start_date) {
@@ -337,8 +339,6 @@ export default function PfLiabilitiesPage() {
           : Math.max(0, Math.floor(Number(form.interest_free_days)))
       body.installment_amount = null
       body.due_date = null
-    } else {
-      body.build_emi_schedule = false
     }
     try {
       if (editId) {

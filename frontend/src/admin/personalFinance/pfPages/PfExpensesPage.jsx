@@ -450,8 +450,10 @@ export default function PfExpensesPage() {
     }
   }
 
-  const formCardHeader = 'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5'
-  const formSection = 'border-b border-slate-100 px-4 py-4 sm:px-5'
+  const formCardHeader =
+    'border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-5 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]'
+  const formSection =
+    'border-b border-slate-100 px-4 py-4 sm:px-5 dark:border-[var(--pf-border)]'
 
   async function handleExpenseExport() {
     setExpenseExportBusy(true)
@@ -499,12 +501,6 @@ export default function PfExpensesPage() {
       <div className={`${cardCls} overflow-hidden p-0`}>
         <div className={formCardHeader}>
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Add expense</h2>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            <strong className="font-medium text-slate-700 dark:text-slate-300">Pay with</strong> — only{' '}
-            <span className="font-medium">accounts you already added</span> or <span className="font-medium">credit cards you registered</span> under
-            Credit cards. Bank/cash: balance drops now. Credit card: adds to unbilled usage (limit available goes down); bank is debited when you pay the
-            statement.
-          </p>
         </div>
         <form onSubmit={handleSubmit}>
           <div className={`${formSection} grid gap-4 sm:grid-cols-3`}>

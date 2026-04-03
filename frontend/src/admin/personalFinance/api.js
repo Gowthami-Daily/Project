@@ -405,6 +405,14 @@ export function createCreditCard(body) {
   return fin('/credit-cards', { method: 'POST', body: JSON.stringify(body) })
 }
 
+export function updateCreditCard(cardId, body) {
+  return fin(`/credit-cards/${cardId}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function deleteCreditCard(cardId) {
+  return fin(`/credit-cards/${cardId}`, { method: 'DELETE' })
+}
+
 export function getCreditCardDashboardSummary(periodYear, periodMonth) {
   const q = new URLSearchParams({
     period_year: String(periodYear),
@@ -440,6 +448,37 @@ export function payCreditCardBill(body) {
 
 export function getCreditCardOutstanding() {
   return fin('/credit-cards/outstanding')
+}
+
+export function getCreditCardYearlySpend() {
+  return fin('/credit-cards/analytics/yearly-spend')
+}
+
+export function getCreditCardMonthlySpend(cardId, year, categoryId) {
+  const q = new URLSearchParams({
+    card_id: String(cardId),
+    year: String(year),
+  })
+  if (categoryId != null && categoryId !== '') q.set('category_id', String(categoryId))
+  return fin(`/credit-cards/analytics/monthly-spend?${q}`)
+}
+
+export function getCreditCardSpendByCategory(year) {
+  const q = new URLSearchParams({ year: String(year) })
+  return fin(`/credit-cards/analytics/spend-by-category?${q}`)
+}
+
+export function getCreditCardBilledVsPaid(periodYear, periodMonth, months = 12) {
+  const q = new URLSearchParams({
+    period_year: String(periodYear),
+    period_month: String(periodMonth),
+    months: String(months),
+  })
+  return fin(`/credit-cards/analytics/billed-vs-paid?${q}`)
+}
+
+export function getCreditCardCardUtilization() {
+  return fin('/credit-cards/analytics/card-utilization')
 }
 
 export function listFinanceInvestments(params = {}) {

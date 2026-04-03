@@ -11,6 +11,7 @@ from fastapi_service.schemas_extended import (
     CreditCardBillPay,
     CreditCardCreate,
     CreditCardOut,
+    CreditCardUpdate,
     CreditCardStandaloneTx,
     CreditCardTransactionOut,
     FinanceExpenseOut,
@@ -61,6 +62,12 @@ def add_credit_card(
         due_days=body.due_days,
         closing_day=body.closing_day,
         due_day=body.due_day,
+        interest_rate=body.interest_rate,
+        annual_fee=body.annual_fee,
+        card_network=(body.card_network or '').strip() or None,
+        card_type=(body.card_type or '').strip() or None,
+        currency=(body.currency or 'INR').strip().upper()[:8] or 'INR',
+        is_active=body.is_active,
     )
     return pf_credit_card_repo.create_card(db, row)
 
@@ -85,6 +92,67 @@ def credit_card_dashboard_summary(
 ) -> dict:
     return pf_credit_card_repo.dashboard_summary(
         db, profile_id, period_year=period_year, period_month=period_month
+    )
+
+
+@router.get('/analytics/yearly-spend')
+def credit_card_yearly_spend(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> list[dict]:
+    """Yearly spend per card for the active profile."""
+    return pf_credit_card_repo.yearly_spend_per_card(db, profile_id)
+
+
+@router.get('/analytics/monthly-spend')
+def credit_card_monthly_spend(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    card_id: int = Query(..., ge=1),
+    year: int = Query(..., ge=2000, le=2100),
+    category_id: int | None = Query(None),
+) -> list[dict]:
+    """Month-wise spend for a given card and year."""
+    # Optional: ensure card belongs to profile (reuses existing helper)
+    if pf_credit_card_repo.get_card_for_profile(db, card_id, profile_id) is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Credit card not found')
+    return pf_credit_card_repo.monthly_spend_for_card(
+        db, profile_id, card_id=card_id, year=year, category_id=category_id
+    )
+
+
+@router.get('/analytics/spend-by-category')
+def credit_card_spend_by_category(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    year: int = Query(..., ge=2000, le=2100),
+) -> list[dict]:
+    return pf_credit_card_repo.spend_by_category_year(db, profile_id, year)
+
+
+@router.get('/analytics/card-utilization')
+def credit_card_utilization(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> list[dict]:
+    return pf_credit_card_repo.card_utilization_rows(db, profile_id)
+
+
+@router.get('/analytics/billed-vs-paid')
+def credit_card_billed_vs_paid(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+    months: int = Query(12, ge=1, le=24),
+) -> list[dict]:
+    return pf_credit_card_repo.billed_vs_paid_monthly(
+        db, profile_id, end_year=period_year, end_month=period_month, months=months
     )
 
 
@@ -231,3 +299,44 @@ def cc_outstanding(
         'billed_outstanding': round(billed, 2),
         'total': round(unbilled + billed, 2),
     }
+
+
+@router.patch('/{card_id}', response_model=CreditCardOut)
+def patch_credit_card(
+    _: FinanceParticipant,
+    card_id: int,
+    body: CreditCardUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> CreditCard:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    row = pf_credit_card_repo.get_card_for_profile(db, card_id, profile_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Credit card not found')
+    data = body.model_dump(exclude_unset=True)
+    if 'card_name' in data and data['card_name'] is not None:
+        data['card_name'] = data['card_name'].strip()
+    if 'bank_name' in data:
+        data['bank_name'] = (data['bank_name'] or '').strip() or None
+    if 'card_network' in data:
+        data['card_network'] = (data['card_network'] or '').strip() or None
+    if 'card_type' in data:
+        data['card_type'] = (data['card_type'] or '').strip() or None
+    if 'currency' in data and data['currency'] is not None:
+        data['currency'] = data['currency'].strip().upper()[:8] or 'INR'
+    return pf_credit_card_repo.patch_credit_card_row(db, row, data)
+
+
+@router.delete('/{card_id}', status_code=204)
+def delete_credit_card(
+    _: FinanceParticipant,
+    card_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> None:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    ok = pf_credit_card_repo.delete_card_for_profile(db, card_id, profile_id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Credit card not found')

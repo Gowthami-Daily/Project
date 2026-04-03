@@ -271,7 +271,7 @@ def ensure_finance_expense_credit_card_id_column(engine: Engine) -> None:
 
 
 def ensure_credit_card_extra_columns(engine: Engine) -> None:
-    """Add ``closing_day``, ``due_day`` on ``credit_cards``."""
+    """Add optional billing + management columns on ``credit_cards``."""
     dialect = engine.dialect.name
     if dialect not in ('sqlite', 'postgresql'):
         return
@@ -279,11 +279,26 @@ def ensure_credit_card_extra_columns(engine: Engine) -> None:
     if not insp.has_table('credit_cards'):
         return
     cols = {c['name'] for c in insp.get_columns('credit_cards')}
+    ir = 'REAL NOT NULL DEFAULT 0' if dialect == 'sqlite' else 'NUMERIC(5, 2) NOT NULL DEFAULT 0'
+    fee = 'REAL NOT NULL DEFAULT 0' if dialect == 'sqlite' else 'NUMERIC(10, 2) NOT NULL DEFAULT 0'
+    active = 'INTEGER NOT NULL DEFAULT 1' if dialect == 'sqlite' else 'BOOLEAN NOT NULL DEFAULT TRUE'
     with engine.begin() as conn:
         if 'closing_day' not in cols:
             conn.execute(text('ALTER TABLE credit_cards ADD COLUMN closing_day INTEGER'))
         if 'due_day' not in cols:
             conn.execute(text('ALTER TABLE credit_cards ADD COLUMN due_day INTEGER'))
+        if 'interest_rate' not in cols:
+            conn.execute(text(f'ALTER TABLE credit_cards ADD COLUMN interest_rate {ir}'))
+        if 'annual_fee' not in cols:
+            conn.execute(text(f'ALTER TABLE credit_cards ADD COLUMN annual_fee {fee}'))
+        if 'card_network' not in cols:
+            conn.execute(text('ALTER TABLE credit_cards ADD COLUMN card_network VARCHAR(20)'))
+        if 'card_type' not in cols:
+            conn.execute(text('ALTER TABLE credit_cards ADD COLUMN card_type VARCHAR(20)'))
+        if 'currency' not in cols:
+            conn.execute(text("ALTER TABLE credit_cards ADD COLUMN currency VARCHAR(8) NOT NULL DEFAULT 'INR'"))
+        if 'is_active' not in cols:
+            conn.execute(text(f'ALTER TABLE credit_cards ADD COLUMN is_active {active}'))
 
 
 def ensure_credit_card_bill_extra_columns(engine: Engine) -> None:
