@@ -68,6 +68,33 @@ function topCategoriesForPie(rows, max = 8) {
   return [...head.map((r) => ({ name: r.category, value: Number(r.amount) || 0 })), { name: 'Other', value: rest }]
 }
 
+function SectionTitle({ id, children }) {
+  return (
+    <h2 id={id} className="text-lg font-bold text-slate-900 dark:text-slate-50">
+      {children}
+    </h2>
+  )
+}
+
+function RatioGauge({ label, valuePct, goodMax = 100 }) {
+  const v = valuePct == null || Number.isNaN(valuePct) ? null : Math.min(100, Math.max(0, valuePct))
+  const width = v == null ? 0 : v
+  return (
+    <div className="rounded-xl border border-slate-200/80 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+        {v == null ? '—' : `${v.toFixed(1)}%`}
+      </p>
+      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+        <div
+          className="h-full rounded-full bg-sky-500 transition-all dark:bg-sky-400"
+          style={{ width: `${goodMax ? Math.min(100, width) : width}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 function KpiTile({ title, subtitle, block, higherIsBetter }) {
   const v = block?.current
   const pct = block?.trend_pct
@@ -245,14 +272,38 @@ export default function PfReportsHubPage() {
   }
 
   const k = data?.kpis || {}
+  const adv = data?.advanced_metrics || {}
+  const gauges = data?.ratio_gauges || {}
+  const cashflowTrend = Array.isArray(data?.cashflow_trend_monthly) ? data.cashflow_trend_monthly : []
+  const cumulativeDaily = Array.isArray(data?.cumulative_daily_cashflow) ? data.cumulative_daily_cashflow : []
+  const stackedExpense = Array.isArray(data?.expense_category_stacked_monthly) ? data.expense_category_stacked_monthly : []
+  const top5Bar = Array.isArray(data?.top5_expense_categories_bar) ? data.top5_expense_categories_bar : []
+  const bsTrend = Array.isArray(data?.balance_sheet_trend) ? data.balance_sheet_trend : []
+  const interestMo = Array.isArray(data?.interest_collected_monthly) ? data.interest_collected_monthly : []
+  const ccUtilTrend = Array.isArray(data?.credit_utilization_trend) ? data.credit_utilization_trend : []
+  const accSnap = Array.isArray(data?.account_balances_snapshot) ? data.account_balances_snapshot : []
+  const loanBar = Array.isArray(data?.loan_activity_bar) ? data.loan_activity_bar : []
+  const mom = data?.month_over_month
+  const forecast = data?.forecast
+
+  const stackKeys = useMemo(() => {
+    const s = new Set()
+    for (const r of stackedExpense) {
+      Object.keys(r || {}).forEach((key) => {
+        if (key !== 'label') s.add(key)
+      })
+    }
+    return [...s]
+  }, [stackedExpense])
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">Reports & analytics</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            KPIs, trends vs the prior window of the same length, charts, and breakdowns for the selected filters.
+          <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+            Business-intelligence style analytics: a clear cashflow story (income, spend, EMI, savings), book-keeping trends
+            (net worth, cards, loans), and drill-downs — scoped by your filters and compared to the prior window of equal length.
           </p>
         </div>
         <PfExportMenu
@@ -349,7 +400,8 @@ export default function PfReportsHubPage() {
         {error ? <p className="mt-3 text-sm text-amber-800 dark:text-amber-200">{error}</p> : null}
       </div>
 
-      <section aria-label="KPI summary" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <SectionTitle id="rep-kpi">KPI summary</SectionTitle>
+      <section aria-labelledby="rep-kpi" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
         <KpiTile title="Total income" block={k.total_income} higherIsBetter />
         <KpiTile title="Total expense" block={k.total_expense} higherIsBetter={false} />
         <KpiTile title="Net savings" subtitle="Income − expense" block={k.net_savings} higherIsBetter />
@@ -368,14 +420,98 @@ export default function PfReportsHubPage() {
         />
         <KpiTile title="Loan received" subtitle="Collections on loans you gave" block={k.loan_received} higherIsBetter />
         <KpiTile title="Investments added" subtitle="By investment date" block={k.investments_added} higherIsBetter />
+        <div className={pfChartCard}>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Savings (after EMI)</p>
+          <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-xl">
+            {formatInr(adv.savings_after_emi)}
+          </p>
+          <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">Income − expense − ledger EMI</p>
+        </div>
+        <div className={pfChartCard}>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Savings rate</p>
+          <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-xl">
+            {adv.savings_rate_after_emi != null ? `${(Number(adv.savings_rate_after_emi) * 100).toFixed(1)}%` : '—'}
+          </p>
+          <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">After ledger EMI</p>
+        </div>
+        <div className={pfChartCard}>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Credit utilization</p>
+          <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-xl">
+            {adv.credit_utilization_pct != null ? `${Number(adv.credit_utilization_pct).toFixed(1)}%` : '—'}
+          </p>
+          <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">Cards tracked in app</p>
+        </div>
+        <div className={pfChartCard}>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Runway</p>
+          <p className="mt-1 text-lg font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-xl">
+            {adv.runway_months != null ? `${adv.runway_months} mo` : '—'}
+          </p>
+          <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">Cash ÷ monthlyized expense</p>
+        </div>
       </section>
 
-      <section className="space-y-4" aria-label="Charts">
-        <h2 className="text-lg font-bold text-slate-900 dark:text-slate-50">Charts</h2>
+      <div className="space-y-2">
+        <SectionTitle id="rep-ratios">Financial ratios</SectionTitle>
+        <p className="text-xs text-slate-500 dark:text-slate-400">Quick gauges (percent of income or limits where noted).</p>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <RatioGauge label="Savings rate (after EMI)" valuePct={gauges.savings_rate_pct} />
+          <RatioGauge label="Expense ÷ income" valuePct={gauges.expense_ratio_pct} />
+          <RatioGauge label="EMI ÷ income" valuePct={gauges.debt_to_income_emi_pct} />
+          <RatioGauge label="Credit utilization" valuePct={gauges.credit_utilization_pct} />
+          <RatioGauge label="Investments ÷ assets (est.)" valuePct={gauges.investment_ratio_pct} />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <SectionTitle id="rep-cashflow">Cashflow &amp; income vs expense</SectionTitle>
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className={`${cardCls} min-h-[320px]`}>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Income vs expense (by month)</h3>
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Grouped bars · amounts in ₹</p>
+          <div className={`${cardCls} min-h-[300px] lg:col-span-2`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Cashflow trend (by month in range)</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Income, expense, ledger EMI, and savings after EMI</p>
+            <div className="mt-2 h-[280px] w-full min-w-0">
+              {cashflowTrend.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">No monthly slices in range.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={cashflowTrend} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisStroke }} interval={0} angle={-18} textAnchor="end" height={52} />
+                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => (v >= 100000 ? `${(v / 100000).toFixed(1)}L` : `${(v / 1000).toFixed(0)}k`)} />
+                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="income" name="Income" stroke="#22c55e" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="expense" name="Expense" stroke="#f43f5e" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="emi" name="EMI (ledger)" stroke="#a855f7" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="savings" name="Savings" stroke="#0ea5e9" strokeWidth={2} dot />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          <div className={`${cardCls} min-h-[300px] lg:col-span-2`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Cumulative cashflow (daily)</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Running sum of scoped income − expense per day</p>
+            <div className="mt-2 h-[260px] w-full min-w-0">
+              {cumulativeDaily.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">No days in range.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={cumulativeDaily} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: axisStroke }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="cumulative" name="Cumulative" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          <div className={`${cardCls} min-h-[300px]`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Income vs expense (bars)</h3>
             <div className="mt-2 h-[260px] w-full min-w-0">
               {monthly.length === 0 ? (
                 <p className="py-12 text-center text-sm text-slate-500">No data in range.</p>
@@ -385,38 +521,70 @@ export default function PfReportsHubPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
                     <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisStroke }} interval={0} angle={-22} textAnchor="end" height={56} />
                     <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => (v >= 100000 ? `${(v / 100000).toFixed(1)}L` : `${(v / 1000).toFixed(0)}k`)} />
-                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} animationDuration={200} />
+                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="income" name="Income" fill="#0ea5e9" radius={[6, 6, 0, 0]} animationDuration={600} />
-                    <Bar dataKey="expense" name="Expense" fill="#f43f5e" radius={[6, 6, 0, 0]} animationDuration={600} />
+                    <Bar dataKey="income" name="Income" fill="#0ea5e9" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="expense" name="Expense" fill="#f43f5e" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
           </div>
 
-          <div className={`${cardCls} min-h-[320px]`}>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Monthly trend</h3>
+          <div className={`${cardCls} min-h-[300px]`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Expense by category (stacked)</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Top categories per month + Other</p>
             <div className="mt-2 h-[260px] w-full min-w-0">
-              {monthly.length === 0 ? (
-                <p className="py-12 text-center text-sm text-slate-500">No data in range.</p>
+              {stackedExpense.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">No data.</p>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={monthly} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                  <BarChart data={stackedExpense} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
-                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisStroke }} interval={0} angle={-22} textAnchor="end" height={56} />
-                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => (v >= 100000 ? `${(v / 100000).toFixed(1)}L` : `${(v / 1000).toFixed(0)}k`)} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisStroke }} interval={0} angle={-20} textAnchor="end" height={52} />
+                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                     <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="income" name="Income" stroke="#0ea5e9" strokeWidth={2.5} dot={false} animationDuration={600} />
-                    <Line type="monotone" dataKey="expense" name="Expense" stroke="#f43f5e" strokeWidth={2.5} dot={false} animationDuration={600} />
-                  </LineChart>
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    {stackKeys.map((key, i) => (
+                      <Bar
+                        key={key}
+                        dataKey={key}
+                        stackId="exp"
+                        fill={PIE_COLORS[i % PIE_COLORS.length]}
+                        radius={[0, 0, 0, 0]}
+                      />
+                    ))}
+                  </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
           </div>
 
-          <div className={`${cardCls} min-h-[320px]`}>
+          <div className={`${cardCls} min-h-[280px] lg:col-span-2`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Top 5 expense categories</h3>
+            <div className="mt-2 h-[240px] w-full min-w-0">
+              {top5Bar.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">No expense data.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={top5Bar} layout="vertical" margin={{ left: 8, right: 16 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                    <XAxis type="number" tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => formatInr(v)} />
+                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 10, fill: axisStroke }} />
+                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                    <Bar dataKey="amount" fill="#f97316" radius={[0, 6, 6, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <SectionTitle id="rep-expense">Expense analysis</SectionTitle>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className={`${cardCls} min-h-[300px]`}>
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Expense by category</h3>
             <div className="mt-2 h-[260px] w-full min-w-0">
               {pieCat.length === 0 ? (
@@ -433,7 +601,6 @@ export default function PfReportsHubPage() {
                       innerRadius={58}
                       outerRadius={88}
                       paddingAngle={2}
-                      animationDuration={600}
                     >
                       {pieCat.map((_, i) => (
                         <Cell key={`c-${i}`} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="transparent" />
@@ -446,8 +613,7 @@ export default function PfReportsHubPage() {
               )}
             </div>
           </div>
-
-          <div className={`${cardCls} min-h-[320px]`}>
+          <div className={`${cardCls} min-h-[300px]`}>
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Expense by account</h3>
             <div className="mt-2 h-[260px] w-full min-w-0">
               {pieAcc.length === 0 ? (
@@ -464,7 +630,6 @@ export default function PfReportsHubPage() {
                       innerRadius={0}
                       outerRadius={88}
                       paddingAngle={1}
-                      animationDuration={600}
                     >
                       {pieAcc.map((_, i) => (
                         <Cell key={`a-${i}`} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="transparent" />
@@ -477,8 +642,7 @@ export default function PfReportsHubPage() {
               )}
             </div>
           </div>
-
-          <div className={`${cardCls} min-h-[320px]`}>
+          <div className={`${cardCls} min-h-[300px]`}>
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Expense by person</h3>
             <div className="mt-2 h-[260px] w-full min-w-0">
               {barPerson.length === 0 ? (
@@ -490,16 +654,15 @@ export default function PfReportsHubPage() {
                     <XAxis type="number" tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
                     <YAxis type="category" dataKey="person" width={100} tick={{ fontSize: 10, fill: axisStroke }} />
                     <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
-                    <Bar dataKey="amount" name="Amount" fill="#8b5cf6" radius={[0, 6, 6, 0]} animationDuration={600} />
+                    <Bar dataKey="amount" name="Amount" fill="#8b5cf6" radius={[0, 6, 6, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
           </div>
-
-          <div className={`${cardCls} min-h-[320px]`}>
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">EMI vs other expense (ledger split)</h3>
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Excludes liability repayments from “other” slice.</p>
+          <div className={`${cardCls} min-h-[280px]`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">EMI vs other expense</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Ledger split · excludes liability slice from “other”</p>
             <div className="mt-2 h-[240px] w-full min-w-0">
               {emiPieData.length === 0 ? (
                 <p className="py-12 text-center text-sm text-slate-500">No data.</p>
@@ -515,7 +678,6 @@ export default function PfReportsHubPage() {
                       innerRadius={48}
                       outerRadius={84}
                       paddingAngle={2}
-                      animationDuration={600}
                     >
                       {emiPieData.map((_, i) => (
                         <Cell key={`e-${i}`} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="transparent" />
@@ -529,7 +691,160 @@ export default function PfReportsHubPage() {
             </div>
           </div>
         </div>
-      </section>
+      </div>
+
+      <div className="space-y-3">
+        <SectionTitle id="rep-accounts">Account balances &amp; payment mix</SectionTitle>
+        <div className={`${cardCls} min-h-[280px]`}>
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Current account balances (snapshot)</h3>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Not a historical trend — books as of now</p>
+          <div className="mt-2 h-[260px] w-full min-w-0">
+            {accSnap.length === 0 ? (
+              <p className="py-12 text-center text-sm text-slate-500">No accounts.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={accSnap} layout="vertical" margin={{ left: 4, right: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => formatInr(v)} />
+                  <YAxis
+                    type="category"
+                    dataKey="account_name"
+                    width={140}
+                    tick={{ fontSize: 9, fill: axisStroke }}
+                  />
+                  <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                  <Bar dataKey="balance" fill="#38bdf8" radius={[0, 6, 6, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <SectionTitle id="rep-loans">Loan &amp; credit analysis</SectionTitle>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className={`${cardCls} min-h-[260px]`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Loan activity</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">New loans booked vs collections received</p>
+            <div className="mt-2 h-[220px] w-full min-w-0">
+              {loanBar.every((x) => !x.value) ? (
+                <p className="py-12 text-center text-sm text-slate-500">No activity in range.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={loanBar} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: axisStroke }} interval={0} angle={-12} textAnchor="end" height={48} />
+                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => formatInr(v)} />
+                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                    <Bar dataKey="value" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+          <div className={`${cardCls} min-h-[260px]`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">EMI ÷ income (period)</h3>
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-50">
+              {data?.emi_vs_income_pct != null ? `${data.emi_vs_income_pct}%` : '—'}
+            </p>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Ledger EMI categories only ÷ total income in filters</p>
+          </div>
+          <div className={`${cardCls} min-h-[260px]`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Interest collected (loans you gave)</h3>
+            <div className="mt-2 h-[220px] w-full min-w-0">
+              {interestMo.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">No months.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={interestMo} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisStroke }} />
+                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => formatInr(v)} />
+                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                    <Line type="monotone" dataKey="interest" name="Interest" stroke="#10b981" strokeWidth={2} dot />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+          <div className={`${cardCls} min-h-[260px]`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Credit utilization (book series)</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Outstanding ÷ limits — non-cash lines repeat current book</p>
+            <div className="mt-2 h-[220px] w-full min-w-0">
+              {ccUtilTrend.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">No trend rows.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={ccUtilTrend} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisStroke }} />
+                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} unit="%" />
+                    <Tooltip formatter={(v) => `${v}%`} contentStyle={tooltipBox} />
+                    <Line type="monotone" dataKey="utilization_pct" name="Util %" stroke="#f59e0b" strokeWidth={2} dot />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+          <div className={`${cardCls} min-h-[280px] lg:col-span-2`}>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Net worth trend (accounting series)</h3>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">From monthly financial tables · cash rolls month to month</p>
+            <div className="mt-2 h-[260px] w-full min-w-0">
+              {bsTrend.length === 0 ? (
+                <p className="py-12 text-center text-sm text-slate-500">No rows (try a longer range spanning full months).</p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={bsTrend} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} opacity={0.5} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: axisStroke }} interval={0} angle={-16} textAnchor="end" height={48} />
+                    <YAxis tick={{ fontSize: 10, fill: axisStroke }} tickFormatter={(v) => formatInr(v)} />
+                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                    <Line type="monotone" dataKey="net_worth" name="Net worth" stroke="#0ea5e9" strokeWidth={2} dot />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {mom ? (
+        <div className={cardCls}>
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Month-over-month</h3>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            Last month in window vs previous: {mom.this_label} vs {mom.prev_label}
+          </p>
+          <div className={`mt-3 ${pfTableWrap} overflow-x-auto`}>
+            <table className={`${pfTable} min-w-[28rem]`}>
+              <thead>
+                <tr>
+                  <th className={pfTh}>Metric</th>
+                  <th className={pfThRight}>This</th>
+                  <th className={pfThRight}>Prior</th>
+                  <th className={pfThRight}>Δ %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['Income', mom.income_this, mom.income_prev, mom.income_change_pct],
+                  ['Expense', mom.expense_this, mom.expense_prev, mom.expense_change_pct],
+                  ['EMI (ledger)', mom.emi_this, mom.emi_prev, mom.emi_change_pct],
+                  ['Savings after EMI', mom.savings_this, mom.savings_prev, mom.savings_change_pct],
+                  ['Net worth (series)', mom.net_worth_this, mom.net_worth_prev, mom.net_worth_change_pct],
+                ].map(([label, a, b, pct]) => (
+                  <tr key={label} className={pfTrHover}>
+                    <td className={pfTd}>{label}</td>
+                    <td className={pfTdRight}>{a == null ? '—' : formatInr(a)}</td>
+                    <td className={pfTdRight}>{b == null ? '—' : formatInr(b)}</td>
+                    <td className={pfTdRight}>{pct == null ? '—' : `${pct > 0 ? '+' : ''}${pct}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className={cardCls}>
@@ -659,6 +974,21 @@ export default function PfReportsHubPage() {
         </div>
       </div>
 
+      {forecast ? (
+        <div className={cardCls}>
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Simple forecast</h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{forecast.note}</p>
+          <ul className="mt-3 space-y-1 text-sm text-slate-700 dark:text-slate-300">
+            <li>Avg income (recent months in window): {formatInr(forecast.avg_income)}</li>
+            <li>Avg expense: {formatInr(forecast.avg_expense)}</li>
+            <li>Avg ledger EMI: {formatInr(forecast.avg_emi_ledger)}</li>
+            <li className="font-semibold text-slate-900 dark:text-slate-100">
+              Projected savings (avg income − avg expense − avg EMI): {formatInr(forecast.projected_savings)}
+            </li>
+          </ul>
+        </div>
+      ) : null}
+
       <div className={cardCls}>
         <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Monthly comparison</h3>
         <div className={`mt-2 ${pfTableWrap} overflow-x-auto`}>
@@ -696,7 +1026,7 @@ export default function PfReportsHubPage() {
       </div>
 
       <div className={cardCls}>
-        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Insights</h3>
+        <SectionTitle id="rep-insights">Insights & observations</SectionTitle>
         <ul className="mt-3 list-inside list-disc space-y-2 text-sm text-slate-700 dark:text-slate-300">
           {(Array.isArray(data?.insights) ? data.insights : []).length === 0 ? (
             <li className="list-none text-slate-500">No insights for this period.</li>

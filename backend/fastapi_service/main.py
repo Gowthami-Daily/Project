@@ -33,6 +33,8 @@ async def lifespan(app: FastAPI):
         ensure_finance_expense_credit_card_id_column,
         ensure_credit_card_extra_columns,
         ensure_credit_card_bill_extra_columns,
+        ensure_credit_card_payment_notes_column,
+        ensure_credit_card_transaction_extra_columns,
         ensure_users_last_login_column,
         ensure_users_role_id_column,
     )
@@ -53,6 +55,8 @@ async def lifespan(app: FastAPI):
     ensure_finance_expense_credit_card_id_column(engine)
     ensure_credit_card_extra_columns(engine)
     ensure_credit_card_bill_extra_columns(engine)
+    ensure_credit_card_payment_notes_column(engine)
+    ensure_credit_card_transaction_extra_columns(engine)
 
     import init_db as _init_db
 

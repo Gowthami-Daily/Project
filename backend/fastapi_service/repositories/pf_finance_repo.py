@@ -781,8 +781,8 @@ def list_recent_mixed(
     end: date | None = None,
 ) -> list[dict]:
     fetch_n = max(limit * 5, 100)
-    inc = list_income(db, profile_id, 0, fetch_n, start, end, account_id)
-    exp = list_expenses(db, profile_id, 0, fetch_n, start, end, account_id)
+    inc = list_income(db, profile_id, 0, fetch_n, start, end, account_id, None)
+    exp = list_expenses(db, profile_id, 0, fetch_n, start, end, account_id, None)
     merged: list[dict] = []
     for i in inc:
         merged.append(
@@ -1062,6 +1062,7 @@ def list_income(
     start: date | None,
     end: date | None,
     account_id: int | None = None,
+    category: str | None = None,
 ) -> list[FinanceIncome]:
     stmt = (
         select(FinanceIncome)
@@ -1070,6 +1071,8 @@ def list_income(
     )
     if account_id is not None:
         stmt = stmt.where(FinanceIncome.account_id == account_id)
+    if category is not None and str(category).strip():
+        stmt = stmt.where(FinanceIncome.category == str(category).strip())
     if start:
         stmt = stmt.where(FinanceIncome.entry_date >= start)
     if end:
@@ -1098,6 +1101,7 @@ def list_expenses(
     start: date | None,
     end: date | None,
     account_id: int | None = None,
+    category: str | None = None,
 ) -> list[FinanceExpense]:
     stmt = (
         select(FinanceExpense)
@@ -1110,6 +1114,8 @@ def list_expenses(
     )
     if account_id is not None:
         stmt = stmt.where(FinanceExpense.account_id == account_id)
+    if category is not None and str(category).strip():
+        stmt = stmt.where(FinanceExpense.category == str(category).strip())
     if start:
         stmt = stmt.where(FinanceExpense.entry_date >= start)
     if end:
@@ -1226,6 +1232,15 @@ def sum_liabilities(db: Session, profile_id: int) -> float:
     return sum_liabilities_outstanding_active(db, profile_id)
 
 
+def sum_liabilities_cc_statement_outstanding(db: Session, profile_id: int) -> float:
+    stmt = select(func.coalesce(func.sum(FinanceLiability.outstanding_amount), 0)).where(
+        FinanceLiability.profile_id == profile_id,
+        func.upper(FinanceLiability.status) == 'ACTIVE',
+        FinanceLiability.liability_type == 'CREDIT_CARD_STATEMENT',
+    )
+    return float(db.scalar(stmt) or 0)
+
+
 def sum_account_balances(db: Session, profile_id: int) -> float:
     stmt = select(func.coalesce(func.sum(FinanceAccount.balance), 0)).where(
         FinanceAccount.profile_id == profile_id
@@ -1293,6 +1308,26 @@ def expense_by_category(
     if end:
         stmt = stmt.where(FinanceExpense.entry_date <= end)
     stmt = stmt.group_by(FinanceExpense.category)
+    return [(r[0], float(r[1])) for r in db.execute(stmt).all()]
+
+
+def income_by_category(
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    account_id: int | None = None,
+) -> list[tuple[str, float]]:
+    stmt = select(FinanceIncome.category, func.sum(FinanceIncome.amount)).where(
+        FinanceIncome.profile_id == profile_id
+    )
+    if account_id is not None:
+        stmt = stmt.where(FinanceIncome.account_id == account_id)
+    if start:
+        stmt = stmt.where(FinanceIncome.entry_date >= start)
+    if end:
+        stmt = stmt.where(FinanceIncome.entry_date <= end)
+    stmt = stmt.group_by(FinanceIncome.category)
     return [(r[0], float(r[1])) for r in db.execute(stmt).all()]
 
 
@@ -1458,7 +1493,11 @@ def sum_expense_categories_exact(
 
 
 def sum_expense_emi_categories(
-    db: Session, profile_id: int, start: date | None, end: date | None
+    db: Session,
+    profile_id: int,
+    start: date | None,
+    end: date | None,
+    account_id: int | None = None,
 ) -> float:
     emi_exact = ('EMI – Loans', 'EMI – Credit Card')
     stmt = select(func.coalesce(func.sum(FinanceExpense.amount), 0)).where(
@@ -1468,6 +1507,8 @@ def sum_expense_emi_categories(
             FinanceExpense.category.ilike('%EMI%'),
         ),
     )
+    if account_id is not None:
+        stmt = stmt.where(FinanceExpense.account_id == account_id)
     if start:
         stmt = stmt.where(FinanceExpense.entry_date >= start)
     if end:
@@ -1658,6 +1699,44 @@ def expense_by_account_scoped(
         .order_by(func.sum(FinanceExpense.amount).desc())
     )
     return [(r[0], str(r[1]), float(r[2])) for r in db.execute(stmt).all()]
+
+
+def income_by_day_scoped(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    *,
+    account_id: int | None = None,
+    income_category_id: int | None = None,
+    person_contains: str | None = None,
+) -> list[tuple[date, float]]:
+    stmt = (
+        select(FinanceIncome.entry_date, func.sum(FinanceIncome.amount))
+        .where(_income_scope(profile_id, start, end, account_id, income_category_id, person_contains))
+        .group_by(FinanceIncome.entry_date)
+        .order_by(FinanceIncome.entry_date)
+    )
+    return [(r[0], float(r[1])) for r in db.execute(stmt).all()]
+
+
+def expense_by_day_scoped(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    *,
+    account_id: int | None = None,
+    expense_category_id: int | None = None,
+    paid_by_contains: str | None = None,
+) -> list[tuple[date, float]]:
+    stmt = (
+        select(FinanceExpense.entry_date, func.sum(FinanceExpense.amount))
+        .where(_expense_scope(profile_id, start, end, account_id, expense_category_id, paid_by_contains))
+        .group_by(FinanceExpense.entry_date)
+        .order_by(FinanceExpense.entry_date)
+    )
+    return [(r[0], float(r[1])) for r in db.execute(stmt).all()]
 
 
 def sum_expense_emi_scoped(

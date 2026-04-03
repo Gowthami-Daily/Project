@@ -662,7 +662,7 @@ def reports_pdf_bytes(ctx: dict[str, Any]) -> bytes:
 
 
 def income_list_excel_bytes(db: Session, profile_id: int, start: date | None, end: date | None) -> bytes:
-    rows = pf_finance_repo.list_income(db, profile_id, 0, 10000, start, end, None)
+    rows = pf_finance_repo.list_income(db, profile_id, 0, 10000, start, end, None, None)
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as writer:
         if not rows:
@@ -675,7 +675,7 @@ def income_list_excel_bytes(db: Session, profile_id: int, start: date | None, en
 
 
 def expenses_list_excel_bytes(db: Session, profile_id: int, start: date | None, end: date | None) -> bytes:
-    rows = pf_finance_repo.list_expenses(db, profile_id, 0, 10000, start, end, None)
+    rows = pf_finance_repo.list_expenses(db, profile_id, 0, 10000, start, end, None, None)
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='openpyxl') as writer:
         if not rows:

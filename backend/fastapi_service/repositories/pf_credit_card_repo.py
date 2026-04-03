@@ -20,6 +20,11 @@ from fastapi_service.models_extended import (
 )
 from fastapi_service.repositories.pf_finance_repo import _bump_account_balance, get_account_for_profile
 
+# Issued statement not fully paid (includes legacy PENDING = billed unpaid)
+_CC_BILL_UNPAID_STATUSES: tuple[str, ...] = ('PENDING', 'BILLED', 'PARTIAL', 'OVERDUE')
+
+MINIMUM_DUE_FLOOR = 100.0
+
 
 def get_card_for_profile(db: Session, card_id: int, profile_id: int) -> CreditCard | None:
     row = db.get(CreditCard, card_id)
@@ -73,7 +78,7 @@ def sum_billed_outstanding_for_card(db: Session, card_id: int) -> float:
         select(func.coalesce(func.sum(CreditCardBill.total_amount - CreditCardBill.amount_paid), 0))
         .where(
             CreditCardBill.card_id == card_id,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
     )
     return max(0.0, float(db.scalar(stmt) or 0))
@@ -86,7 +91,7 @@ def sum_billed_outstanding_for_profile(db: Session, profile_id: int) -> float:
         .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
         .where(
             CreditCard.profile_id == profile_id,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
     )
     raw = db.scalar(stmt)
@@ -100,7 +105,7 @@ def used_amount_for_card(db: Session, card_id: int) -> float:
             db.scalar(
                 select(func.coalesce(func.sum(CreditCardBill.total_amount - CreditCardBill.amount_paid), 0)).where(
                     CreditCardBill.card_id == card_id,
-                    CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+                    CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
                 )
             )
             or 0
@@ -131,7 +136,7 @@ def nearest_open_bill(db: Session, profile_id: int) -> tuple[CreditCardBill, Cre
         .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
         .where(
             CreditCard.profile_id == profile_id,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
         .order_by(CreditCardBill.due_date.asc(), CreditCardBill.id.asc())
     )
@@ -149,7 +154,7 @@ def build_credit_card_alerts(db: Session, profile_id: int, cards: list[CreditCar
         .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
         .where(
             CreditCard.profile_id == profile_id,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
         .order_by(CreditCardBill.due_date.asc())
     )
@@ -210,6 +215,9 @@ def list_transactions(
     profile_id: int,
     *,
     card_id: int | None = None,
+    category_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     unbilled_only: bool = False,
     skip: int = 0,
     limit: int = 200,
@@ -218,10 +226,16 @@ def list_transactions(
         select(CreditCardTransaction)
         .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
         .where(CreditCard.profile_id == profile_id)
-        .options(selectinload(CreditCardTransaction.bill))
+        .options(selectinload(CreditCardTransaction.bill), selectinload(CreditCardTransaction.card))
     )
     if card_id is not None:
         stmt = stmt.where(CreditCardTransaction.card_id == card_id)
+    if category_id is not None:
+        stmt = stmt.where(CreditCardTransaction.category_id == category_id)
+    if date_from is not None:
+        stmt = stmt.where(CreditCardTransaction.transaction_date >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(CreditCardTransaction.transaction_date <= date_to)
     if unbilled_only:
         stmt = stmt.where(CreditCardTransaction.bill_id.is_(None))
     stmt = stmt.order_by(CreditCardTransaction.transaction_date.desc(), CreditCardTransaction.id.desc())
@@ -229,7 +243,314 @@ def list_transactions(
     return list(db.scalars(stmt).all())
 
 
-def create_transaction_from_expense(db: Session, expense: FinanceExpense, card_id: int) -> CreditCardTransaction:
+def statement_cycle_month_start(tx_date: date, closing_day: int | None) -> date:
+    """Statement / bill cycle month (first day), from card closing day."""
+    if closing_day is None:
+        return date(tx_date.year, tx_date.month, 1)
+    if tx_date.day <= int(closing_day):
+        return date(tx_date.year, tx_date.month, 1)
+    if tx_date.month == 12:
+        return date(tx_date.year + 1, 1, 1)
+    return date(tx_date.year, tx_date.month + 1, 1)
+
+
+def transaction_ledger_status(
+    tx: CreditCardTransaction, bill: CreditCardBill | None, *, today: date
+) -> str:
+    ttype = (getattr(tx, 'transaction_type', None) or 'swipe').strip().lower()
+    if ttype == 'refund':
+        return 'refunded'
+    if bool(getattr(tx, 'is_emi', False)) or ttype == 'emi':
+        return 'emi'
+    if bill is None:
+        return 'unbilled'
+    rem = _bill_remaining(bill)
+    if bill.status == 'PAID' or rem <= 0.01:
+        return 'paid'
+    if bill.due_date < today and rem > 0.01:
+        return 'overdue'
+    return 'billed'
+
+
+def _category_name_map(db: Session, ids: set[int]) -> dict[int, str]:
+    if not ids:
+        return {}
+    stmt = select(PfExpenseCategory.id, PfExpenseCategory.name).where(PfExpenseCategory.id.in_(ids))
+    return {int(i): str(n) for i, n in db.execute(stmt).all()}
+
+
+def fetch_ledger_transaction_candidates(
+    db: Session,
+    profile_id: int,
+    *,
+    card_id: int | None = None,
+    category_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    unbilled_only: bool = False,
+    max_rows: int = 4000,
+) -> list[CreditCardTransaction]:
+    stmt = (
+        select(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(CreditCard.profile_id == profile_id)
+        .options(selectinload(CreditCardTransaction.bill), selectinload(CreditCardTransaction.card))
+    )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardTransaction.card_id == card_id)
+    if category_id is not None:
+        stmt = stmt.where(CreditCardTransaction.category_id == category_id)
+    if date_from is not None:
+        stmt = stmt.where(CreditCardTransaction.transaction_date >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(CreditCardTransaction.transaction_date <= date_to)
+    if unbilled_only:
+        stmt = stmt.where(CreditCardTransaction.bill_id.is_(None))
+    stmt = stmt.order_by(
+        CreditCardTransaction.transaction_date.asc(),
+        CreditCardTransaction.id.asc(),
+    )
+    stmt = stmt.limit(max_rows)
+    return list(db.scalars(stmt).all())
+
+
+def build_ledger_page(
+    db: Session,
+    profile_id: int,
+    *,
+    card_id: int | None = None,
+    category_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    unbilled_only: bool = False,
+    status_filter: str | None = None,
+    skip: int = 0,
+    limit: int = 500,
+) -> dict:
+    rows = fetch_ledger_transaction_candidates(
+        db,
+        profile_id,
+        card_id=card_id,
+        category_id=category_id,
+        date_from=date_from,
+        date_to=date_to,
+        unbilled_only=unbilled_only,
+    )
+    today = date.today()
+    cat_ids = {int(tx.category_id) for tx in rows if tx.category_id is not None}
+    cat_map = _category_name_map(db, cat_ids)
+    items: list[dict] = []
+    for tx in rows:
+        card = tx.card
+        bill = tx.bill
+        st = transaction_ledger_status(tx, bill, today=today)
+        closing = int(card.closing_day) if card and card.closing_day is not None else None
+        cycle = statement_cycle_month_start(tx.transaction_date, closing)
+        items.append(
+            {
+                'tx': tx,
+                'card_name': card.card_name if card else '',
+                'category_name': cat_map.get(int(tx.category_id)) if tx.category_id else None,
+                'ledger_status': st,
+                'billing_cycle_month': cycle,
+                'running_balance': 0.0,
+            }
+        )
+    if status_filter and str(status_filter).strip().lower() not in ('', 'all'):
+        sf = str(status_filter).strip().lower()
+        items = [it for it in items if it['ledger_status'] == sf]
+    items.sort(key=lambda it: (it['tx'].card_id, it['tx'].transaction_date, it['tx'].id))
+    cum: dict[int, float] = {}
+    for it in items:
+        tx = it['tx']
+        cid = tx.card_id
+        cum[cid] = cum.get(cid, 0.0) + float(tx.amount)
+        it['running_balance'] = round(cum[cid], 2)
+    summary = _ledger_summary_metrics(items)
+    page = items[skip : skip + limit]
+    ser = [_serialize_ledger_row(it) for it in page]
+    return {'summary': summary, 'transactions': ser}
+
+
+def _ledger_summary_metrics(items: list[dict]) -> dict:
+    def ssum(status: str) -> float:
+        return round(
+            sum(float(it['tx'].amount) for it in items if it['ledger_status'] == status),
+            2,
+        )
+
+    return {
+        'transaction_count': len(items),
+        'unbilled_amount': ssum('unbilled'),
+        'billed_amount': ssum('billed'),
+        'paid_amount': ssum('paid'),
+        'overdue_amount': ssum('overdue'),
+        'refunded_amount': ssum('refunded'),
+        'emi_amount': ssum('emi'),
+    }
+
+
+def _serialize_ledger_row(it: dict) -> dict:
+    tx = it['tx']
+    return {
+        'id': tx.id,
+        'card_id': tx.card_id,
+        'card_name': it['card_name'],
+        'amount': float(tx.amount),
+        'transaction_date': tx.transaction_date.isoformat(),
+        'transaction_type': (getattr(tx, 'transaction_type', None) or 'swipe').strip().lower(),
+        'merchant': getattr(tx, 'merchant', None),
+        'category_id': tx.category_id,
+        'category_name': it['category_name'],
+        'description': tx.description,
+        'notes': getattr(tx, 'notes', None),
+        'attachment_url': getattr(tx, 'attachment_url', None),
+        'expense_id': tx.expense_id,
+        'bill_id': tx.bill_id,
+        'is_emi': bool(getattr(tx, 'is_emi', False)),
+        'emi_id': getattr(tx, 'emi_id', None),
+        'billing_cycle_month': it['billing_cycle_month'].isoformat(),
+        'ledger_status': it['ledger_status'],
+        'running_balance': it['running_balance'],
+        'created_at': tx.created_at.isoformat() if tx.created_at else None,
+    }
+
+
+def running_balance_after_tx(db: Session, tx: CreditCardTransaction) -> float:
+    stmt = (
+        select(CreditCardTransaction)
+        .where(CreditCardTransaction.card_id == tx.card_id)
+        .order_by(CreditCardTransaction.transaction_date.asc(), CreditCardTransaction.id.asc())
+    )
+    total = 0.0
+    for t in db.scalars(stmt).all():
+        total += float(t.amount)
+        if t.id == tx.id:
+            return round(total, 2)
+    return round(total, 2)
+
+
+def single_ledger_row_dict(db: Session, profile_id: int, tx_id: int) -> dict | None:
+    tx = get_cc_transaction_for_profile(db, tx_id, profile_id)
+    if tx is None:
+        return None
+    today = date.today()
+    cat_name = None
+    if tx.category_id:
+        pc = db.get(PfExpenseCategory, tx.category_id)
+        cat_name = pc.name if pc else None
+    card = tx.card if tx.card is not None else db.get(CreditCard, tx.card_id)
+    card_name = card.card_name if card else ''
+    bill = tx.bill
+    st = transaction_ledger_status(tx, bill, today=today)
+    closing = int(card.closing_day) if card and card.closing_day is not None else None
+    cycle = statement_cycle_month_start(tx.transaction_date, closing)
+    rb = running_balance_after_tx(db, tx)
+    fake = {
+        'tx': tx,
+        'card_name': card_name,
+        'category_name': cat_name,
+        'ledger_status': st,
+        'billing_cycle_month': cycle,
+        'running_balance': rb,
+    }
+    return _serialize_ledger_row(fake)
+
+
+def get_cc_transaction_for_profile(
+    db: Session, tx_id: int, profile_id: int
+) -> CreditCardTransaction | None:
+    stmt = (
+        select(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(CreditCardTransaction.id == tx_id, CreditCard.profile_id == profile_id)
+        .options(selectinload(CreditCardTransaction.bill), selectinload(CreditCardTransaction.card))
+    )
+    return db.scalars(stmt).first()
+
+
+_CC_TX_PATCHABLE = frozenset(
+    {
+        'transaction_date',
+        'amount',
+        'category_id',
+        'description',
+        'merchant',
+        'notes',
+        'attachment_url',
+        'transaction_type',
+        'is_emi',
+    }
+)
+
+
+def patch_cc_transaction(db: Session, tx: CreditCardTransaction, patch: dict) -> CreditCardTransaction:
+    for key, val in patch.items():
+        if key not in _CC_TX_PATCHABLE:
+            continue
+        setattr(tx, key, val)
+    db.commit()
+    db.refresh(tx)
+    return tx
+
+
+def delete_cc_transaction(db: Session, profile_id: int, tx_id: int) -> bool:
+    tx = get_cc_transaction_for_profile(db, tx_id, profile_id)
+    if tx is None:
+        return False
+    if tx.bill_id is not None:
+        raise ValueError('Remove this line from the statement before deleting')
+    if tx.expense_id is not None:
+        from fastapi_service.repositories import pf_finance_repo
+
+        ex = pf_finance_repo.get_expense_for_profile(db, tx.expense_id, profile_id)
+        if ex is not None:
+            pf_finance_repo.delete_expense(db, profile_id, ex)
+            return True
+    db.delete(tx)
+    db.commit()
+    return True
+
+
+def attach_transaction_to_bill(
+    db: Session, profile_id: int, tx_id: int, bill_id: int
+) -> CreditCardTransaction:
+    tx = get_cc_transaction_for_profile(db, tx_id, profile_id)
+    if tx is None:
+        raise ValueError('Transaction not found')
+    bill = get_bill_for_profile(db, bill_id, profile_id)
+    if bill is None:
+        raise ValueError('Bill not found')
+    if tx.card_id != bill.card_id:
+        raise ValueError('Bill belongs to a different card')
+    if tx.bill_id is not None:
+        raise ValueError('Transaction is already on a bill')
+    if bill.status == 'PAID':
+        raise ValueError('Cannot add to a paid bill')
+    add = float(tx.amount)
+    bill.total_amount = round(float(bill.total_amount) + add, 2)
+    if bill.liability_id is not None:
+        liab = db.get(FinanceLiability, bill.liability_id)
+        if liab is not None and liab.profile_id == profile_id:
+            liab.total_amount = round(float(liab.total_amount) + add, 2)
+            liab.outstanding_amount = round(float(liab.outstanding_amount) + add, 2)
+    tx.bill_id = bill_id
+    db.commit()
+    db.refresh(tx)
+    return tx
+
+
+def create_transaction_from_expense(
+    db: Session,
+    expense: FinanceExpense,
+    card_id: int,
+    *,
+    transaction_type: str = 'swipe',
+    merchant: str | None = None,
+    notes: str | None = None,
+    attachment_url: str | None = None,
+    is_emi: bool = False,
+) -> CreditCardTransaction:
     """Link a posted expense to a card swipe row (caller commits expense first)."""
     tx = CreditCardTransaction(
         card_id=card_id,
@@ -239,12 +560,102 @@ def create_transaction_from_expense(db: Session, expense: FinanceExpense, card_i
         description=expense.description,
         expense_id=expense.id,
         bill_id=None,
+        transaction_type=(transaction_type or 'swipe').strip().lower()[:20],
+        merchant=(merchant or '').strip()[:200] or None,
+        notes=(notes or '').strip() or None,
+        attachment_url=(attachment_url or '').strip() or None,
+        is_emi=bool(is_emi),
+        emi_id=None,
     )
     expense.credit_card_id = card_id
     db.add(tx)
     db.commit()
     db.refresh(tx)
     db.refresh(expense)
+    return tx
+
+
+def create_standalone_cc_ledger_row(
+    db: Session,
+    profile_id: int,
+    *,
+    card_id: int,
+    transaction_type: str,
+    amount_in: float,
+    transaction_date: date,
+    expense_category_id: int | None,
+    category_label: str,
+    description: str | None,
+    merchant: str | None,
+    notes: str | None,
+    attachment_url: str | None,
+    is_emi: bool,
+    paid_by: str | None,
+) -> CreditCardTransaction:
+    """Standalone ledger line: swipe/refund/emi via expense + row; fee/interest row only."""
+    ttype = (transaction_type or 'swipe').strip().lower()
+    if ttype not in ('swipe', 'refund', 'fee', 'interest', 'emi'):
+        raise ValueError('Invalid transaction_type')
+    if get_card_for_profile(db, card_id, profile_id) is None:
+        raise ValueError('Credit card not found')
+    if ttype == 'refund':
+        amt = -abs(float(amount_in))
+    else:
+        amt = abs(float(amount_in))
+    from fastapi_service.repositories import pf_finance_repo
+
+    if ttype in ('swipe', 'emi', 'refund'):
+        cat = (category_label or 'general').strip() or 'general'
+        ecid = expense_category_id
+        if ecid is not None:
+            pc = db.get(PfExpenseCategory, ecid)
+            if pc:
+                cat = pc.name
+        row = FinanceExpense(
+            profile_id=profile_id,
+            account_id=None,
+            amount=amt,
+            category=cat,
+            entry_date=transaction_date,
+            description=description or merchant,
+            expense_category_id=ecid,
+            paid_by=paid_by,
+            payment_method='credit_card',
+            payment_instrument_id=None,
+            credit_card_id=card_id,
+            is_recurring=False,
+            payment_status='PAID',
+        )
+        saved = pf_finance_repo.create_expense(db, row)
+        tt = 'emi' if ttype == 'emi' else ('refund' if ttype == 'refund' else 'swipe')
+        return create_transaction_from_expense(
+            db,
+            saved,
+            card_id,
+            transaction_type=tt,
+            merchant=merchant,
+            notes=notes,
+            attachment_url=attachment_url,
+            is_emi=is_emi or ttype == 'emi',
+        )
+    tx = CreditCardTransaction(
+        card_id=card_id,
+        amount=amt,
+        transaction_date=transaction_date,
+        category_id=expense_category_id,
+        description=description or merchant,
+        expense_id=None,
+        bill_id=None,
+        transaction_type=ttype,
+        merchant=(merchant or '').strip()[:200] or None,
+        notes=(notes or '').strip() or None,
+        attachment_url=(attachment_url or '').strip() or None,
+        is_emi=False,
+        emi_id=None,
+    )
+    db.add(tx)
+    db.commit()
+    db.refresh(tx)
     return tx
 
 
@@ -291,6 +702,12 @@ def sync_expense_cc_transaction(
         description=expense.description,
         expense_id=expense.id,
         bill_id=None,
+        transaction_type='swipe',
+        merchant=None,
+        notes=None,
+        attachment_url=None,
+        is_emi=False,
+        emi_id=None,
     )
     expense.credit_card_id = card_id
     db.add(tx)
@@ -396,7 +813,7 @@ def _card_next_due_and_overdue(db: Session, card_id: int, *, today: date) -> tup
         select(CreditCardBill)
         .where(
             CreditCardBill.card_id == card_id,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
         .order_by(CreditCardBill.due_date.asc(), CreditCardBill.id.asc())
     )
@@ -483,6 +900,284 @@ def delete_card_for_profile(db: Session, card_id: int, profile_id: int) -> bool:
     return True
 
 
+def _previous_statement_closing_balance(db: Session, card_id: int, before_date: date) -> float:
+    stmt = (
+        select(CreditCardBill)
+        .where(
+            CreditCardBill.card_id == card_id,
+            CreditCardBill.bill_end_date < before_date,
+        )
+        .order_by(CreditCardBill.bill_end_date.desc(), CreditCardBill.id.desc())
+        .limit(1)
+    )
+    prev = db.scalars(stmt).first()
+    if prev is None:
+        return 0.0
+    return max(0.0, round(float(prev.total_amount) - float(prev.amount_paid), 2))
+
+
+def _payments_on_card_in_period(db: Session, card_id: int, start: date, end: date) -> float:
+    q = select(func.coalesce(func.sum(CreditCardPayment.amount), 0)).where(
+        CreditCardPayment.card_id == card_id,
+        CreditCardPayment.payment_date >= start,
+        CreditCardPayment.payment_date <= end,
+    )
+    return round(float(db.scalar(q) or 0), 2)
+
+
+def _aggregate_unbilled_period_tx(tx_rows: list[CreditCardTransaction]) -> dict:
+    purchases = 0.0
+    fees = 0.0
+    interest = 0.0
+    emi_component = 0.0
+    for r in tx_rows:
+        t = (getattr(r, 'transaction_type', None) or 'swipe').strip().lower()
+        amt = float(r.amount)
+        if t == 'fee':
+            fees += amt
+        elif t == 'interest':
+            interest += amt
+        elif t == 'emi':
+            purchases += amt
+            emi_component += amt
+        elif t == 'refund':
+            purchases += amt
+        else:
+            purchases += amt
+    return {
+        'purchases': round(purchases, 2),
+        'fees': round(fees, 2),
+        'interest': round(interest, 2),
+        'emi_component': round(emi_component, 2),
+    }
+
+
+def compute_minimum_due_amount(
+    *,
+    interest: float,
+    fees: float,
+    emi_component: float,
+    new_balance: float,
+    floor: float = MINIMUM_DUE_FLOOR,
+) -> float:
+    if new_balance <= 0.01:
+        return 0.0
+    base = float(interest) + float(fees) + float(emi_component) + 0.05 * float(new_balance)
+    pct_floor = max(0.01 * float(new_balance), 0.0)
+    return round(max(base, floor, pct_floor), 2)
+
+
+def preview_statement_for_card(
+    db: Session,
+    profile_id: int,
+    *,
+    card_id: int,
+    bill_start_date: date,
+    bill_end_date: date,
+) -> dict:
+    if bill_end_date < bill_start_date:
+        raise ValueError('bill_end_date must be on or after bill_start_date')
+    card = get_card_for_profile(db, card_id, profile_id)
+    if card is None:
+        raise ValueError('Credit card not found')
+    stmt = select(CreditCardTransaction).where(
+        CreditCardTransaction.card_id == card_id,
+        CreditCardTransaction.bill_id.is_(None),
+        CreditCardTransaction.transaction_date >= bill_start_date,
+        CreditCardTransaction.transaction_date <= bill_end_date,
+    )
+    tx_rows = list(db.scalars(stmt).all())
+    if not tx_rows:
+        raise ValueError('No unbilled charges in this period')
+    opening = round(_previous_statement_closing_balance(db, card_id, bill_start_date), 2)
+    payments = _payments_on_card_in_period(db, card_id, bill_start_date, bill_end_date)
+    agg = _aggregate_unbilled_period_tx(tx_rows)
+    new_balance = round(
+        opening - payments + agg['purchases'] + agg['fees'] + agg['interest'],
+        2,
+    )
+    if new_balance <= 0.01:
+        raise ValueError('Net statement amount must be greater than zero')
+    due = bill_end_date + timedelta(days=int(card.due_days))
+    minimum_due = compute_minimum_due_amount(
+        interest=agg['interest'],
+        fees=agg['fees'],
+        emi_component=agg['emi_component'],
+        new_balance=new_balance,
+    )
+    return {
+        'card_id': card_id,
+        'card_name': card.card_name,
+        'bill_start_date': bill_start_date.isoformat(),
+        'bill_end_date': bill_end_date.isoformat(),
+        'due_date': due.isoformat(),
+        'opening_balance': opening,
+        'payments': payments,
+        'purchases': agg['purchases'],
+        'fees': agg['fees'],
+        'interest': agg['interest'],
+        'new_balance': new_balance,
+        'minimum_due': minimum_due,
+        'unbilled_transaction_count': len(tx_rows),
+    }
+
+
+def month_end_outstanding_for_profile(db: Session, profile_id: int, year: int, month: int) -> float:
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    stmt = (
+        select(CreditCardBill)
+        .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardBill.bill_end_date <= month_end,
+        )
+    )
+    total = 0.0
+    for bill in db.scalars(stmt).all():
+        paid_q = select(func.coalesce(func.sum(CreditCardPayment.amount), 0)).where(
+            CreditCardPayment.bill_id == bill.id,
+            CreditCardPayment.payment_date <= month_end,
+        )
+        paid = float(db.scalar(paid_q) or 0)
+        total += max(0.0, float(bill.total_amount) - paid)
+    return round(total, 2)
+
+
+def outstanding_balance_trend(
+    db: Session, profile_id: int, *, end_year: int, end_month: int, months: int = 12
+) -> list[dict]:
+    out: list[dict] = []
+    y, m = end_year, end_month
+    for _ in range(months):
+        bal = month_end_outstanding_for_profile(db, profile_id, y, m)
+        out.append(
+            {
+                'year': y,
+                'month': m,
+                'month_label': f'{y}-{m:02d}',
+                'outstanding': bal,
+            }
+        )
+        if m == 1:
+            y -= 1
+            m = 12
+        else:
+            m -= 1
+    return list(reversed(out))
+
+
+def interest_charges_by_bill_month(
+    db: Session, profile_id: int, *, end_year: int, end_month: int, months: int = 12
+) -> list[dict]:
+    out: list[dict] = []
+    y, m = end_year, end_month
+    for _ in range(months):
+        ms = date(y, m, 1)
+        me_m = date(y, m, calendar.monthrange(y, m)[1])
+        stmt = (
+            select(func.coalesce(func.sum(CreditCardBill.interest + CreditCardBill.late_fee), 0))
+            .select_from(CreditCardBill)
+            .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
+            .where(
+                CreditCard.profile_id == profile_id,
+                CreditCardBill.bill_end_date >= ms,
+                CreditCardBill.bill_end_date <= me_m,
+            )
+        )
+        amt = round(float(db.scalar(stmt) or 0), 2)
+        out.append({'year': y, 'month': m, 'month_label': f'{y}-{m:02d}', 'interest_and_fees': amt})
+        if m == 1:
+            y -= 1
+            m = 12
+        else:
+            m -= 1
+    return list(reversed(out))
+
+
+def statement_detail_for_bill(db: Session, profile_id: int, bill_id: int) -> dict | None:
+    bill = get_bill_for_profile(db, bill_id, profile_id)
+    if bill is None:
+        return None
+    card = get_card_for_profile(db, bill.card_id, profile_id)
+    stmt = (
+        select(CreditCardTransaction)
+        .where(CreditCardTransaction.bill_id == bill_id)
+        .order_by(CreditCardTransaction.transaction_date.asc(), CreditCardTransaction.id.asc())
+    )
+    tx_rows = list(db.scalars(stmt).all())
+    lines: list[dict] = []
+    if float(bill.opening_balance or 0) > 0.01:
+        lines.append(
+            {
+                'date': bill.bill_start_date.isoformat(),
+                'description': 'Opening / previous balance',
+                'type': 'opening',
+                'amount': float(bill.opening_balance or 0),
+            }
+        )
+    for r in tx_rows:
+        t = (r.transaction_type or 'swipe').strip().lower()
+        lines.append(
+            {
+                'date': r.transaction_date.isoformat(),
+                'description': (r.description or r.merchant or t).strip() or t,
+                'type': t,
+                'amount': float(r.amount),
+                'transaction_id': r.id,
+            }
+        )
+    rem = _bill_remaining(bill)
+    return {
+        'bill': {
+            'id': bill.id,
+            'card_id': bill.card_id,
+            'card_name': card.card_name if card else '',
+            'bill_start_date': bill.bill_start_date.isoformat(),
+            'bill_end_date': bill.bill_end_date.isoformat(),
+            'due_date': bill.due_date.isoformat(),
+            'status': bill.status,
+            'opening_balance': float(bill.opening_balance or 0),
+            'total_amount': float(bill.total_amount),
+            'amount_paid': float(bill.amount_paid),
+            'minimum_due': float(bill.minimum_due or 0),
+            'interest': float(bill.interest or 0),
+            'late_fee': float(bill.late_fee or 0),
+            'remaining': round(rem, 2),
+        },
+        'lines': lines,
+    }
+
+
+def mark_bill_overdue_with_late_fee(
+    db: Session,
+    profile_id: int,
+    *,
+    bill_id: int,
+    late_fee_amount: float = 500.0,
+) -> CreditCardBill:
+    bill = get_bill_for_profile(db, bill_id, profile_id)
+    if bill is None:
+        raise ValueError('Bill not found')
+    if bill.status == 'PAID':
+        raise ValueError('Bill is already paid')
+    if _bill_remaining(bill) <= 0.01:
+        raise ValueError('Nothing due on this bill')
+    fee = max(0.0, round(float(late_fee_amount), 2))
+    if float(bill.late_fee or 0) < 0.01 and fee > 0.01:
+        bill.late_fee = fee
+        bill.total_amount = round(float(bill.total_amount) + fee, 2)
+        bill.minimum_due = round(float(bill.minimum_due) + fee, 2)
+        if bill.liability_id is not None:
+            liab = db.get(FinanceLiability, bill.liability_id)
+            if liab is not None and liab.profile_id == profile_id:
+                liab.total_amount = round(float(liab.total_amount) + fee, 2)
+                liab.outstanding_amount = round(float(liab.outstanding_amount) + fee, 2)
+    bill.status = 'OVERDUE'
+    db.commit()
+    db.refresh(bill)
+    return bill
+
+
 def billed_vs_paid_monthly(
     db: Session, profile_id: int, *, end_year: int, end_month: int, months: int = 12
 ) -> list[dict]:
@@ -539,8 +1234,13 @@ def generate_bill(
     bill_start_date: date,
     bill_end_date: date,
 ) -> CreditCardBill:
-    if bill_end_date < bill_start_date:
-        raise ValueError('bill_end_date must be on or after bill_start_date')
+    preview = preview_statement_for_card(
+        db,
+        profile_id,
+        card_id=card_id,
+        bill_start_date=bill_start_date,
+        bill_end_date=bill_end_date,
+    )
     card = get_card_for_profile(db, card_id, profile_id)
     if card is None:
         raise ValueError('Credit card not found')
@@ -552,21 +1252,25 @@ def generate_bill(
         CreditCardTransaction.transaction_date <= bill_end_date,
     )
     tx_rows = list(db.scalars(stmt).all())
-    total = round(sum(float(r.amount) for r in tx_rows), 2)
-    if total <= 0:
+    if not tx_rows:
         raise ValueError('No unbilled charges in this period')
 
-    due = bill_end_date + timedelta(days=int(card.due_days))
+    new_balance = float(preview['new_balance'])
+    opening = float(preview['opening_balance'])
+    agg_interest = float(preview['interest'])
+    min_due = float(preview['minimum_due'])
+    due = date.fromisoformat(preview['due_date'])
+
     liab = FinanceLiability(
         profile_id=profile_id,
         liability_name=f'CC statement · {card.card_name} · {bill_start_date}–{bill_end_date}',
         liability_type='CREDIT_CARD_STATEMENT',
-        total_amount=total,
-        outstanding_amount=total,
+        total_amount=new_balance,
+        outstanding_amount=new_balance,
         due_date=due,
         billing_cycle_day=card.billing_cycle_start,
         lender_name=card.bank_name,
-        notes=f'credit_card_bill_pending card_id={card_id}',
+        notes=f'credit_card_bill_billed card_id={card_id}',
         status='ACTIVE',
     )
     db.add(liab)
@@ -576,11 +1280,15 @@ def generate_bill(
         card_id=card_id,
         bill_start_date=bill_start_date,
         bill_end_date=bill_end_date,
-        total_amount=total,
+        total_amount=new_balance,
         due_date=due,
-        status='PENDING',
+        status='BILLED',
         liability_id=liab.id,
         amount_paid=0,
+        opening_balance=opening,
+        minimum_due=min_due,
+        interest=agg_interest,
+        late_fee=0,
     )
     db.add(bill)
     db.flush()
@@ -612,16 +1320,36 @@ def get_bill_for_profile(db: Session, bill_id: int, profile_id: int) -> CreditCa
     return db.scalars(stmt).first()
 
 
+def _resolve_payment_amount(
+    bill: CreditCardBill,
+    *,
+    amount: float | None,
+    payment_type: str | None,
+) -> float:
+    rem = _bill_remaining(bill)
+    pt = (payment_type or 'custom').strip().lower()
+    if pt == 'full':
+        return round(rem, 2)
+    if pt == 'minimum':
+        md = max(float(bill.minimum_due or 0), MINIMUM_DUE_FLOOR)
+        return round(min(rem, md), 2)
+    if amount is None or float(amount) <= 0:
+        raise ValueError('Amount is required for custom payments')
+    return round(float(amount), 2)
+
+
 def pay_bill(
     db: Session,
     profile_id: int,
     user_id: int | None,
     *,
     bill_id: int,
-    amount: float,
+    amount: float | None,
     payment_date: date,
     from_account_id: int,
     reference_number: str | None,
+    payment_type: str | None = None,
+    notes: str | None = None,
     movement_id: int | None = None,
 ) -> CreditCardPayment:
     bill = get_bill_for_profile(db, bill_id, profile_id)
@@ -632,7 +1360,7 @@ def pay_bill(
     rem = _bill_remaining(bill)
     if rem <= 0.005:
         raise ValueError('Nothing due on this bill')
-    amt = float(amount)
+    amt = _resolve_payment_amount(bill, amount=amount, payment_type=payment_type)
     if amt <= 0:
         raise ValueError('Amount must be positive')
     if amt > rem + 0.01:
@@ -653,6 +1381,7 @@ def pay_bill(
         payment_date=payment_date,
         from_account_id=from_account_id,
         reference_number=(reference_number or '').strip()[:100] or None,
+        notes=(notes or '').strip() or None,
     )
     db.add(pay)
     db.flush()
@@ -675,6 +1404,8 @@ def pay_bill(
     bill.amount_paid = new_paid
     if new_paid + 0.01 >= float(bill.total_amount):
         bill.status = 'PAID'
+    elif payment_date > bill.due_date:
+        bill.status = 'OVERDUE'
     else:
         bill.status = 'PARTIAL'
 
@@ -712,7 +1443,7 @@ def dashboard_summary(
             CreditCard.profile_id == profile_id,
             CreditCardBill.due_date >= ms,
             CreditCardBill.due_date <= me,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
     )
     due_month = max(0.0, float(db.scalar(stmt_month_due) or 0))
@@ -726,7 +1457,7 @@ def dashboard_summary(
             CreditCard.profile_id == profile_id,
             CreditCardBill.due_date >= today,
             CreditCardBill.due_date <= week_end,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
     )
     due_week = max(0.0, float(db.scalar(stmt_week) or 0))
@@ -738,7 +1469,7 @@ def dashboard_summary(
         .where(
             CreditCard.profile_id == profile_id,
             CreditCardBill.due_date < today,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
     )
     overdue = max(0.0, float(db.scalar(stmt_overdue) or 0))
@@ -767,7 +1498,7 @@ def dashboard_summary(
             CreditCard.profile_id == profile_id,
             CreditCardBill.due_date >= ms,
             CreditCardBill.due_date <= me,
-            CreditCardBill.status.in_(('PENDING', 'PARTIAL')),
+            CreditCardBill.status.in_(_CC_BILL_UNPAID_STATUSES),
         )
     )
     interest_fees_due_month = round(float(db.scalar(stmt_interest_fees_month) or 0), 2)

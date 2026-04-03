@@ -31,7 +31,7 @@ def _seed_demo_transactions(db: Session, user_id: int) -> None:
     pid = profile_repo.first_profile_id_for_user(db, user_id)
     if pid is None:
         return
-    if pf_finance_repo.list_income(db, pid, 0, 1, None, None):
+    if pf_finance_repo.list_income(db, pid, 0, 1, None, None, None, None):
         return
 
     acc = FinanceAccount(

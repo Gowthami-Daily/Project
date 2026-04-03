@@ -411,8 +411,14 @@ def list_income(
     db: DbSession,
     profile_id: ActiveProfileId,
     page: Pagination,
+    date_from: date_type | None = Query(None),
+    date_to: date_type | None = Query(None),
+    account_id: int | None = Query(None, ge=1),
+    category: str | None = Query(None, max_length=120),
 ) -> list[FinanceIncomeOut]:
-    rows = pf_finance_repo.list_income(db, profile_id, page.skip, page.limit, None, None)
+    rows = pf_finance_repo.list_income(
+        db, profile_id, page.skip, page.limit, date_from, date_to, account_id, category
+    )
     return [finance_income_to_out(r) for r in rows]
 
 
@@ -498,8 +504,14 @@ def list_expenses(
     db: DbSession,
     profile_id: ActiveProfileId,
     page: Pagination,
+    date_from: date_type | None = Query(None),
+    date_to: date_type | None = Query(None),
+    account_id: int | None = Query(None, ge=1),
+    category: str | None = Query(None, max_length=120),
 ) -> list[FinanceExpenseOut]:
-    rows = pf_finance_repo.list_expenses(db, profile_id, page.skip, page.limit, None, None)
+    rows = pf_finance_repo.list_expenses(
+        db, profile_id, page.skip, page.limit, date_from, date_to, account_id, category
+    )
     return [finance_expense_to_out(r) for r in rows]
 
 

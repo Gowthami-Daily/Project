@@ -1,21 +1,27 @@
+from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Path, Query, status
 
 from fastapi_service.core.dependencies import ActiveProfileId, CurrentUser, DbSession, Pagination
-from fastapi_service.models_extended import CreditCard, FinanceExpense, PfExpenseCategory
-from fastapi_service.repositories import pf_credit_card_repo
+from fastapi_service.models_extended import CreditCard, PfExpenseCategory
+from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
 from fastapi_service.schemas_extended import (
     CreditCardBillGenerate,
+    CreditCardBillLineOut,
     CreditCardBillOut,
     CreditCardBillPay,
+    CreditCardBillPreviewOut,
+    CreditCardBillStatementOut,
     CreditCardCreate,
+    CreditCardLedgerPageOut,
+    CreditCardLedgerSummaryOut,
     CreditCardOut,
-    CreditCardUpdate,
     CreditCardStandaloneTx,
-    CreditCardTransactionOut,
-    FinanceExpenseOut,
-    finance_expense_to_out,
+    CreditCardTransactionLedgerRow,
+    CreditCardTransactionUpdate,
+    CreditCardTxAssignBill,
+    CreditCardUpdate,
 )
 from fastapi_service.services import pf_profile_service
 from fastapi_service.services.rbac_service import FinanceParticipant
@@ -23,7 +29,26 @@ from fastapi_service.services.rbac_service import FinanceParticipant
 router = APIRouter(prefix='/credit-cards', tags=['personal-finance-credit-cards'])
 
 
-def _bill_out(b) -> CreditCardBillOut:
+def _bill_display_label(b: object, *, today: date) -> str:
+    rem_f = max(0.0, float(getattr(b, 'total_amount', 0) or 0) - float(getattr(b, 'amount_paid', 0) or 0))
+    if rem_f <= 0.01:
+        return 'Paid'
+    st = (getattr(b, 'status', None) or '').upper()
+    due: date = getattr(b, 'due_date')
+    if st == 'PAID':
+        return 'Paid'
+    if due < today and rem_f > 0.01:
+        return 'Overdue'
+    if st == 'OVERDUE':
+        return 'Overdue'
+    if st == 'PARTIAL':
+        return 'Partial'
+    if st in ('PENDING', 'BILLED'):
+        return 'Billed'
+    return st.title() if st else 'Billed'
+
+
+def _bill_out(b: object, *, today: date) -> CreditCardBillOut:
     rem = max(Decimal('0'), Decimal(str(b.total_amount)) - Decimal(str(b.amount_paid)))
     return CreditCardBillOut(
         id=b.id,
@@ -35,11 +60,13 @@ def _bill_out(b) -> CreditCardBillOut:
         status=b.status,
         liability_id=b.liability_id,
         amount_paid=Decimal(str(b.amount_paid)),
+        opening_balance=Decimal(str(getattr(b, 'opening_balance', 0) or 0)),
         minimum_due=Decimal(str(getattr(b, 'minimum_due', 0) or 0)),
         interest=Decimal(str(getattr(b, 'interest', 0) or 0)),
         late_fee=Decimal(str(getattr(b, 'late_fee', 0) or 0)),
         created_at=b.created_at,
         remaining=rem,
+        display_status=_bill_display_label(b, today=today),
     )
 
 
@@ -156,75 +183,173 @@ def credit_card_billed_vs_paid(
     )
 
 
-@router.get('/transactions', response_model=list[CreditCardTransactionOut])
+@router.get('/transactions', response_model=CreditCardLedgerPageOut)
 def list_cc_transactions(
     _: FinanceParticipant,
     db: DbSession,
     profile_id: ActiveProfileId,
+    page: Pagination,
     card_id: int | None = Query(None),
+    category_id: int | None = Query(None),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    status: str | None = Query(
+        None,
+        description='Filter: unbilled | billed | paid | overdue | refunded | emi (omit = all)',
+    ),
     unbilled_only: bool = Query(False),
-    page: Pagination = None,
-):
-    pg = page or Pagination(skip=0, limit=200)
-    rows = pf_credit_card_repo.list_transactions(
-        db, profile_id, card_id=card_id, unbilled_only=unbilled_only, skip=pg.skip, limit=pg.limit
+) -> CreditCardLedgerPageOut:
+    pg = page
+    sf = None if not status or str(status).strip().lower() in ('all', '') else str(status).strip().lower()
+    data = pf_credit_card_repo.build_ledger_page(
+        db,
+        profile_id,
+        card_id=card_id,
+        category_id=category_id,
+        date_from=date_from,
+        date_to=date_to,
+        unbilled_only=unbilled_only,
+        status_filter=sf,
+        skip=pg.skip,
+        limit=min(pg.limit, 500),
     )
-    return [
-        CreditCardTransactionOut(
-            id=r.id,
-            card_id=r.card_id,
-            amount=Decimal(str(r.amount)),
-            transaction_date=r.transaction_date,
-            category_id=r.category_id,
-            description=r.description,
-            expense_id=r.expense_id,
-            bill_id=r.bill_id,
-            created_at=r.created_at,
-        )
-        for r in rows
-    ]
+    return CreditCardLedgerPageOut(
+        summary=CreditCardLedgerSummaryOut(**data['summary']),
+        transactions=[CreditCardTransactionLedgerRow(**r) for r in data['transactions']],
+    )
 
 
-@router.post('/transactions', response_model=FinanceExpenseOut, status_code=201)
+@router.post('/transactions', response_model=CreditCardTransactionLedgerRow, status_code=201)
 def add_cc_transaction_standalone(
     _: FinanceParticipant,
     body: CreditCardStandaloneTx,
     user: CurrentUser,
     db: DbSession,
     profile_id: ActiveProfileId,
-) -> FinanceExpenseOut:
-    """Create expense + swipe line (payment_method = credit_card) without debiting bank."""
+) -> CreditCardTransactionLedgerRow:
+    """Create a credit card ledger line (and linked expense when type is swipe, refund, or emi)."""
     pf_profile_service.assert_can_write(db, user.id, profile_id)
-    if pf_credit_card_repo.get_card_for_profile(db, body.card_id, profile_id) is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Credit card not found')
-    cat = (body.category or 'general').strip() or 'general'
-    ecid = body.expense_category_id
-    if ecid is not None:
-        pc = db.get(PfExpenseCategory, ecid)
-        if pc:
-            cat = pc.name
-    row = FinanceExpense(
-        profile_id=profile_id,
-        account_id=None,
-        amount=body.amount,
-        category=cat,
-        entry_date=body.transaction_date,
-        description=body.description,
-        expense_category_id=ecid,
-        paid_by=body.paid_by,
-        payment_method='credit_card',
-        payment_instrument_id=None,
-        credit_card_id=body.card_id,
-        is_recurring=False,
-        payment_status='PAID',
-    )
-    from fastapi_service.repositories import pf_finance_repo
+    try:
+        tx = pf_credit_card_repo.create_standalone_cc_ledger_row(
+            db,
+            profile_id,
+            card_id=int(body.card_id),
+            transaction_type=body.transaction_type,
+            amount_in=float(body.amount),
+            transaction_date=body.transaction_date,
+            expense_category_id=body.expense_category_id,
+            category_label=body.category,
+            description=body.description,
+            merchant=body.merchant,
+            notes=body.notes,
+            attachment_url=body.attachment_url,
+            is_emi=body.is_emi,
+            paid_by=body.paid_by,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    row = pf_credit_card_repo.single_ledger_row_dict(db, profile_id, tx.id)
+    if row is None:
+        raise HTTPException(status_code=500, detail='Could not load transaction')
+    return CreditCardTransactionLedgerRow(**row)
 
-    saved = pf_finance_repo.create_expense(db, row)
-    pf_credit_card_repo.create_transaction_from_expense(db, saved, int(body.card_id))
-    saved2 = pf_finance_repo.get_expense_for_profile(db, saved.id, profile_id)
-    assert saved2 is not None
-    return finance_expense_to_out(saved2)
+
+@router.patch('/transactions/{tx_id}', response_model=CreditCardTransactionLedgerRow)
+def patch_cc_transaction_route(
+    _: FinanceParticipant,
+    tx_id: int,
+    body: CreditCardTransactionUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> CreditCardTransactionLedgerRow:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    tx = pf_credit_card_repo.get_cc_transaction_for_profile(db, tx_id, profile_id)
+    if tx is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Transaction not found')
+    if tx.bill_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Cannot edit a transaction that is already on a statement',
+        )
+    patch_data = body.model_dump(exclude_unset=True)
+    if 'merchant' in patch_data and patch_data['merchant'] is not None:
+        patch_data['merchant'] = patch_data['merchant'].strip()[:200] or None
+    if 'notes' in patch_data and patch_data['notes'] is not None:
+        patch_data['notes'] = patch_data['notes'].strip() or None
+    if 'attachment_url' in patch_data and patch_data['attachment_url'] is not None:
+        patch_data['attachment_url'] = patch_data['attachment_url'].strip() or None
+    if 'transaction_type' in patch_data and patch_data['transaction_type']:
+        t = patch_data['transaction_type'].strip().lower()
+        if t not in ('swipe', 'refund', 'fee', 'interest', 'emi'):
+            raise HTTPException(status_code=400, detail='Invalid transaction_type')
+        patch_data['transaction_type'] = t[:20]
+    eff_type = (
+        patch_data.get('transaction_type')
+        or (getattr(tx, 'transaction_type', None) or 'swipe')
+    ).lower()
+    if 'amount' in patch_data and patch_data['amount'] is not None:
+        patch_data['amount'] = (
+            -abs(float(patch_data['amount'])) if eff_type == 'refund' else float(patch_data['amount'])
+        )
+        if eff_type != 'refund':
+            patch_data['amount'] = abs(float(patch_data['amount']))
+    pf_credit_card_repo.patch_cc_transaction(db, tx, patch_data)
+    tx2 = pf_credit_card_repo.get_cc_transaction_for_profile(db, tx_id, profile_id)
+    if tx2 and tx2.expense_id is not None:
+        ex = pf_finance_repo.get_expense_for_profile(db, tx2.expense_id, profile_id)
+        if ex is not None:
+            eup: dict = {}
+            if 'amount' in patch_data or 'transaction_date' in patch_data:
+                eup['amount'] = float(tx2.amount)
+                eup['entry_date'] = tx2.transaction_date
+            if 'category_id' in patch_data:
+                eup['expense_category_id'] = tx2.category_id
+            if 'description' in patch_data:
+                eup['description'] = tx2.description
+            if eup:
+                pf_finance_repo.update_expense(db, profile_id, ex, eup)
+    row = pf_credit_card_repo.single_ledger_row_dict(db, profile_id, tx_id)
+    if row is None:
+        raise HTTPException(status_code=500, detail='Could not load transaction')
+    return CreditCardTransactionLedgerRow(**row)
+
+
+@router.delete('/transactions/{tx_id}', status_code=204)
+def delete_cc_transaction_route(
+    _: FinanceParticipant,
+    tx_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> None:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    try:
+        ok = pf_credit_card_repo.delete_cc_transaction(db, profile_id, tx_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Transaction not found')
+
+
+@router.post('/transactions/{tx_id}/assign-bill', response_model=CreditCardTransactionLedgerRow)
+def assign_cc_tx_to_bill(
+    _: FinanceParticipant,
+    tx_id: int,
+    body: CreditCardTxAssignBill,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> CreditCardTransactionLedgerRow:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    try:
+        pf_credit_card_repo.attach_transaction_to_bill(db, profile_id, tx_id, body.bill_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    row = pf_credit_card_repo.single_ledger_row_dict(db, profile_id, tx_id)
+    if row is None:
+        raise HTTPException(status_code=500, detail='Could not load transaction')
+    return CreditCardTransactionLedgerRow(**row)
 
 
 @router.get('/bills', response_model=list[CreditCardBillOut])
@@ -236,7 +361,8 @@ def list_cc_bills(
     card_id: int | None = Query(None),
 ) -> list[CreditCardBillOut]:
     rows = pf_credit_card_repo.list_bills(db, profile_id, card_id, page.skip, page.limit)
-    return [_bill_out(b) for b in rows]
+    today = date.today()
+    return [_bill_out(b, today=today) for b in rows]
 
 
 @router.post('/generate-bill', response_model=CreditCardBillOut, status_code=201)
@@ -256,7 +382,29 @@ def generate_cc_bill(
             bill_start_date=body.bill_start_date,
             bill_end_date=body.bill_end_date,
         )
-        return _bill_out(bill)
+        return _bill_out(bill, today=date.today())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.get('/bill-preview', response_model=CreditCardBillPreviewOut)
+def preview_cc_bill(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    card_id: int = Query(..., ge=1),
+    bill_start_date: date = Query(...),
+    bill_end_date: date = Query(...),
+) -> CreditCardBillPreviewOut:
+    try:
+        data = pf_credit_card_repo.preview_statement_for_card(
+            db,
+            profile_id,
+            card_id=card_id,
+            bill_start_date=bill_start_date,
+            bill_end_date=bill_end_date,
+        )
+        return CreditCardBillPreviewOut(**data)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
@@ -280,10 +428,80 @@ def pay_cc_bill(
             payment_date=body.payment_date,
             from_account_id=body.from_account_id,
             reference_number=body.reference_number,
+            payment_type=body.payment_type,
+            notes=body.notes,
         )
-        return {'id': pay.id, 'bill_id': pay.bill_id, 'amount': float(pay.amount)}
+        return {
+            'id': pay.id,
+            'bill_id': pay.bill_id,
+            'amount': float(pay.amount),
+            'payment_type': body.payment_type,
+        }
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.get('/bills/{bill_id}/statement', response_model=CreditCardBillStatementOut)
+def get_cc_bill_statement(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    bill_id: int = Path(..., ge=1),
+) -> CreditCardBillStatementOut:
+    data = pf_credit_card_repo.statement_detail_for_bill(db, profile_id, bill_id)
+    if data is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Bill not found')
+    return CreditCardBillStatementOut(
+        bill=data['bill'],
+        lines=[CreditCardBillLineOut(**row) for row in data['lines']],
+    )
+
+
+@router.post('/bills/{bill_id}/mark-overdue', response_model=CreditCardBillOut)
+def mark_cc_bill_overdue(
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    bill_id: int = Path(..., ge=1),
+    late_fee: float = Query(500.0, ge=0, le=50000),
+) -> CreditCardBillOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    try:
+        bill = pf_credit_card_repo.mark_bill_overdue_with_late_fee(
+            db, profile_id, bill_id=bill_id, late_fee_amount=late_fee
+        )
+        return _bill_out(bill, today=date.today())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.get('/analytics/outstanding-trend')
+def credit_card_outstanding_trend(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+    months: int = Query(12, ge=1, le=36),
+) -> list[dict]:
+    return pf_credit_card_repo.outstanding_balance_trend(
+        db, profile_id, end_year=period_year, end_month=period_month, months=months
+    )
+
+
+@router.get('/analytics/interest-trend')
+def credit_card_interest_trend(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    period_year: int = Query(..., ge=2000, le=2100),
+    period_month: int = Query(..., ge=1, le=12),
+    months: int = Query(12, ge=1, le=36),
+) -> list[dict]:
+    return pf_credit_card_repo.interest_charges_by_bill_month(
+        db, profile_id, end_year=period_year, end_month=period_month, months=months
+    )
 
 
 @router.get('/outstanding')

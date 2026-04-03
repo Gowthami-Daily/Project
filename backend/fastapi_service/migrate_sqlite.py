@@ -318,6 +318,54 @@ def ensure_credit_card_bill_extra_columns(engine: Engine) -> None:
             conn.execute(text(f'ALTER TABLE credit_card_bills ADD COLUMN interest {amt}'))
         if 'late_fee' not in cols:
             conn.execute(text(f'ALTER TABLE credit_card_bills ADD COLUMN late_fee {amt}'))
+        if 'opening_balance' not in cols:
+            conn.execute(text(f'ALTER TABLE credit_card_bills ADD COLUMN opening_balance {amt}'))
+
+
+def ensure_credit_card_payment_notes_column(engine: Engine) -> None:
+    dialect = engine.dialect.name
+    if dialect not in ('sqlite', 'postgresql'):
+        return
+    insp = inspect(engine)
+    if not insp.has_table('credit_card_payments'):
+        return
+    cols = {c['name'] for c in insp.get_columns('credit_card_payments')}
+    note_col = 'TEXT' if dialect == 'sqlite' else 'TEXT'
+    with engine.begin() as conn:
+        if 'notes' not in cols:
+            conn.execute(text(f'ALTER TABLE credit_card_payments ADD COLUMN notes {note_col}'))
+
+
+def ensure_credit_card_transaction_extra_columns(engine: Engine) -> None:
+    """Ledger fields on ``credit_card_transactions`` (type, merchant, EMI, attachment)."""
+    dialect = engine.dialect.name
+    if dialect not in ('sqlite', 'postgresql'):
+        return
+    insp = inspect(engine)
+    if not insp.has_table('credit_card_transactions'):
+        return
+    cols = {c['name'] for c in insp.get_columns('credit_card_transactions')}
+    tt = (
+        "VARCHAR(20) NOT NULL DEFAULT 'swipe'"
+        if dialect == 'postgresql'
+        else "TEXT NOT NULL DEFAULT 'swipe'"
+    )
+    emi_flag = 'BOOLEAN NOT NULL DEFAULT FALSE' if dialect == 'postgresql' else 'INTEGER NOT NULL DEFAULT 0'
+    with engine.begin() as conn:
+        if 'transaction_type' not in cols:
+            conn.execute(text(f'ALTER TABLE credit_card_transactions ADD COLUMN transaction_type {tt}'))
+        if 'merchant' not in cols:
+            merc = 'VARCHAR(200)' if dialect == 'postgresql' else 'TEXT'
+            conn.execute(text(f'ALTER TABLE credit_card_transactions ADD COLUMN merchant {merc}'))
+        if 'notes' not in cols:
+            notes = 'TEXT'
+            conn.execute(text(f'ALTER TABLE credit_card_transactions ADD COLUMN notes {notes}'))
+        if 'attachment_url' not in cols:
+            conn.execute(text('ALTER TABLE credit_card_transactions ADD COLUMN attachment_url TEXT'))
+        if 'is_emi' not in cols:
+            conn.execute(text(f'ALTER TABLE credit_card_transactions ADD COLUMN is_emi {emi_flag}'))
+        if 'emi_id' not in cols:
+            conn.execute(text('ALTER TABLE credit_card_transactions ADD COLUMN emi_id INTEGER'))
 
 
 MOVEMENT_INTERNAL = 'internal_transfer'

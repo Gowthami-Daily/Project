@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
   Bar,
@@ -17,22 +17,30 @@ import {
   YAxis,
 } from 'recharts'
 import {
+  assignCreditCardTransactionToBill,
   createCreditCard,
   createCreditCardStandaloneTransaction,
   deleteCreditCard,
+  deleteCreditCardTransaction,
   generateCreditCardBill,
   getCreditCardBilledVsPaid,
+  getCreditCardBillPreview,
+  getCreditCardBillStatement,
   getCreditCardCardUtilization,
   getCreditCardDashboardSummary,
+  getCreditCardInterestTrend,
   getCreditCardMonthlySpend,
   getCreditCardOutstanding,
+  getCreditCardOutstandingTrend,
   getCreditCardSpendByCategory,
   getCreditCardYearlySpend,
   listCreditCardBills,
   listCreditCardTransactions,
   listCreditCards,
   listFinanceAccounts,
+  markCreditCardBillOverdue,
   listPfExpenseCategories,
+  patchCreditCardTransaction,
   payCreditCardBill,
   setPfToken,
   updateCreditCard,
@@ -86,6 +94,65 @@ function utilizationBarColorClass(pct) {
   return 'bg-red-500'
 }
 
+function ledgerRowAccentClass(status) {
+  const s = String(status || '').toLowerCase()
+  if (s === 'unbilled') return 'border-l-4 border-sky-500 bg-sky-500/5'
+  if (s === 'billed') return 'border-l-4 border-amber-500 bg-amber-500/5'
+  if (s === 'paid') return 'border-l-4 border-emerald-500 bg-emerald-500/5'
+  if (s === 'overdue') return 'border-l-4 border-red-500 bg-red-500/5'
+  if (s === 'refunded') return 'border-l-4 border-violet-500 bg-violet-500/5'
+  if (s === 'emi') return 'border-l-4 border-fuchsia-500 bg-fuchsia-500/5'
+  return 'border-l-4 border-transparent'
+}
+
+/** Pill styling for `display_status` on statements (Bills & pay table). */
+function billStatusPillClass(displayStatus) {
+  const s = String(displayStatus || '').toLowerCase()
+  if (s === 'unbilled') return 'text-sky-800 dark:text-sky-200 bg-sky-500/15 border-sky-500/40'
+  if (s === 'billed') return 'text-amber-900 dark:text-amber-200 bg-amber-500/15 border-amber-500/40'
+  if (s === 'partial') return 'text-yellow-900 dark:text-yellow-100 bg-yellow-400/20 border-yellow-500/40'
+  if (s === 'paid' || s === 'closed') return 'text-emerald-900 dark:text-emerald-200 bg-emerald-500/15 border-emerald-500/40'
+  if (s === 'overdue') return 'text-red-900 dark:text-red-200 bg-red-500/15 border-red-500/40'
+  return 'text-[var(--pf-text-muted)] bg-[var(--pf-card-hover)] border-[var(--pf-border)]'
+}
+
+function formatShortDate(iso) {
+  if (!iso) return '—'
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function billingCycleLabelFromInputs(isoDate, closingDay) {
+  if (!isoDate) return '—'
+  const cd = closingDay == null || closingDay === '' ? null : Number(closingDay)
+  const d = new Date(`${isoDate}T12:00:00`)
+  const y = d.getFullYear()
+  const m = d.getMonth()
+  const day = d.getDate()
+  let cy = y
+  let cm = m
+  if (cd != null && !Number.isNaN(cd) && day > cd) {
+    if (m === 11) {
+      cy = y + 1
+      cm = 0
+    } else {
+      cm = m + 1
+    }
+  }
+  return new Date(cy, cm, 1).toLocaleString(undefined, { month: 'short', year: 'numeric' })
+}
+
+function downloadCsv(filename, content) {
+  const text = Array.isArray(content) ? content.join('\n') : content
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 function creditHealthBadgeClass(health) {
   const h = String(health || '').toUpperCase()
   if (h === 'EXCELLENT') return 'border-emerald-500/60 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
@@ -106,6 +173,12 @@ export default function PfCreditCardsPage() {
   const [outstanding, setOutstanding] = useState(null)
   const [dash, setDash] = useState(null)
   const [tx, setTx] = useState([])
+  const [txSummary, setTxSummary] = useState(null)
+  const [txFilterStatus, setTxFilterStatus] = useState('')
+  const [txFilterDateFrom, setTxFilterDateFrom] = useState('')
+  const [txFilterDateTo, setTxFilterDateTo] = useState('')
+  const [txFilterCardId, setTxFilterCardId] = useState('')
+  const [txFilterCategoryId, setTxFilterCategoryId] = useState('')
   const [bills, setBills] = useState([])
 
   const [cardName, setCardName] = useState('')
@@ -125,6 +198,14 @@ export default function PfCreditCardsPage() {
   const [txDate, setTxDate] = useState(() => todayISODate())
   const [txCategoryId, setTxCategoryId] = useState('')
   const [txDesc, setTxDesc] = useState('')
+  const [txType, setTxType] = useState('swipe')
+  const [txMerchant, setTxMerchant] = useState('')
+  const [txNotes, setTxNotes] = useState('')
+  const [txAttachmentUrl, setTxAttachmentUrl] = useState('')
+  const [txIsEmiForm, setTxIsEmiForm] = useState(false)
+  const [txEdit, setTxEdit] = useState(null)
+  const [txAssign, setTxAssign] = useState(null)
+  const [txAssignBillPick, setTxAssignBillPick] = useState('')
   const [closingDay, setClosingDay] = useState('')
   const [dueDay, setDueDay] = useState('')
   const [cardNetwork, setCardNetwork] = useState('')
@@ -145,6 +226,17 @@ export default function PfCreditCardsPage() {
   const [cardUtilization, setCardUtilization] = useState([])
   const [spendByCategory, setSpendByCategory] = useState([])
   const [billedVsPaid, setBilledVsPaid] = useState([])
+  const [outstandingTrend, setOutstandingTrend] = useState([])
+  const [interestTrend, setInterestTrend] = useState([])
+  const [billPreview, setBillPreview] = useState(null)
+  const [billPreviewErr, setBillPreviewErr] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [statementDetail, setStatementDetail] = useState(null)
+  const previewTimerRef = useRef(null)
+
+  const [payPaymentDate, setPayPaymentDate] = useState(() => todayISODate())
+  const [payPaymentType, setPayPaymentType] = useState('custom')
+  const [payNotes, setPayNotes] = useState('')
 
   const period = useMemo(() => {
     const d = new Date()
@@ -236,6 +328,88 @@ export default function PfCreditCardsPage() {
       }),
     [billedVsPaid],
   )
+
+  const outstandingBalanceChart = useMemo(
+    () =>
+      (outstandingTrend || []).map((row) => ({
+        label: row.month_label || `${row.year}-${String(row.month).padStart(2, '0')}`,
+        outstanding: Number(row.outstanding) || 0,
+      })),
+    [outstandingTrend],
+  )
+
+  const interestTrendChart = useMemo(
+    () =>
+      (interestTrend || []).map((row) => ({
+        label: row.month_label || `${row.year}-${String(row.month).padStart(2, '0')}`,
+        interest: Number(row.interest_and_fees) || 0,
+      })),
+    [interestTrend],
+  )
+
+  const billsPageSummary = useMemo(() => {
+    const list = bills || []
+    let totalBilled = 0
+    let totalPaid = 0
+    let totalOutstanding = 0
+    let totalInterest = 0
+    let totalLateFees = 0
+    for (const b of list) {
+      totalBilled += Number(b.total_amount) || 0
+      totalPaid += Number(b.amount_paid) || 0
+      const rem =
+        b.remaining != null ? Number(b.remaining) : Number(b.total_amount) - Number(b.amount_paid)
+      totalOutstanding += Math.max(0, rem)
+      totalInterest += Number(b.interest) || 0
+      totalLateFees += Number(b.late_fee) || 0
+    }
+    return { totalBilled, totalPaid, totalOutstanding, totalInterest, totalLateFees }
+  }, [bills])
+
+  const billsPageAlerts = useMemo(() => {
+    const alerts = []
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const msDay = 86400000
+
+    for (const b of bills || []) {
+      const st = String(b.display_status || b.status || '').toLowerCase()
+      if (st === 'paid') continue
+      const dueRaw = b.due_date
+      if (!dueRaw) continue
+      const due = new Date(`${String(dueRaw).slice(0, 10)}T12:00:00`)
+      due.setHours(0, 0, 0, 0)
+      const days = Math.round((due.getTime() - today.getTime()) / msDay)
+      const cardName = cards.find((c) => c.id === b.card_id)?.card_name || `Card #${b.card_id}`
+      if (days >= 0 && days <= 3) {
+        alerts.push({
+          key: `due-${b.id}`,
+          level: 'warn',
+          text: `${cardName} bill due in ${days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'}`}`,
+        })
+      }
+      const minDue = Number(b.minimum_due) || 0
+      const paid = Number(b.amount_paid) || 0
+      if (minDue > 0.01 && paid + 0.01 < minDue && days >= 0) {
+        alerts.push({
+          key: `min-${b.id}`,
+          level: 'warn',
+          text: `${cardName} minimum due not yet covered (min ${formatInr(minDue)}, paid ${formatInr(paid)})`,
+        })
+      }
+    }
+
+    const utilPct = Number(dash?.utilization_pct)
+    if (!Number.isNaN(utilPct) && utilPct > 50) {
+      alerts.push({
+        key: 'util',
+        level: 'warn',
+        text: `Credit utilization is ${utilPct}% (> 50%)`,
+      })
+    }
+
+    return alerts
+  }, [bills, cards, dash])
 
   const insights = useMemo(() => {
     if (!dash) return []
@@ -331,6 +505,9 @@ export default function PfCreditCardsPage() {
     return { n, totalLimit, totalUsed, avgUtil, totalDue }
   }, [filteredCards])
 
+  const txFormCard = useMemo(() => cards.find((c) => String(c.id) === String(txCardId)), [cards, txCardId])
+  const txBillingCyclePreview = billingCycleLabelFromInputs(txDate, txFormCard?.closing_day)
+
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -339,7 +516,6 @@ export default function PfCreditCardsPage() {
         c,
         a,
         o,
-        txR,
         billR,
         dsum,
         cats,
@@ -347,11 +523,12 @@ export default function PfCreditCardsPage() {
         utilRows,
         catSpend,
         billPay,
+        outTrend,
+        intTrend,
       ] = await Promise.all([
         listCreditCards(),
         listFinanceAccounts(),
         getCreditCardOutstanding(),
-        listCreditCardTransactions({ limit: 100 }),
         listCreditCardBills({ limit: 100 }),
         getCreditCardDashboardSummary(period.y, period.m),
         listPfExpenseCategories(),
@@ -359,18 +536,37 @@ export default function PfCreditCardsPage() {
         getCreditCardCardUtilization(),
         getCreditCardSpendByCategory(yearlyChartYear),
         getCreditCardBilledVsPaid(period.y, period.m, 12),
+        getCreditCardOutstandingTrend(period.y, period.m, 12),
+        getCreditCardInterestTrend(period.y, period.m, 12),
       ])
+      const txR = await listCreditCardTransactions({
+        limit: 500,
+        skip: 0,
+        cardId: txFilterCardId || undefined,
+        categoryId: txFilterCategoryId || undefined,
+        dateFrom: txFilterDateFrom || undefined,
+        dateTo: txFilterDateTo || undefined,
+        status: txFilterStatus || undefined,
+      })
       setCards(Array.isArray(c) ? c : [])
       setCategories(Array.isArray(cats) ? cats : [])
       setAccounts(Array.isArray(a) ? a : [])
       setOutstanding(o && typeof o === 'object' ? o : null)
-      setTx(Array.isArray(txR) ? txR : [])
+      if (txR && typeof txR === 'object' && Array.isArray(txR.transactions)) {
+        setTx(txR.transactions)
+        setTxSummary(txR.summary && typeof txR.summary === 'object' ? txR.summary : null)
+      } else {
+        setTx([])
+        setTxSummary(null)
+      }
       setBills(Array.isArray(billR) ? billR : [])
       setDash(dsum && typeof dsum === 'object' ? dsum : null)
       setYearlySpend(Array.isArray(ySpend) ? ySpend : [])
       setCardUtilization(Array.isArray(utilRows) ? utilRows : [])
       setSpendByCategory(Array.isArray(catSpend) ? catSpend : [])
       setBilledVsPaid(Array.isArray(billPay) ? billPay : [])
+      setOutstandingTrend(Array.isArray(outTrend) ? outTrend : [])
+      setInterestTrend(Array.isArray(intTrend) ? intTrend : [])
     } catch (e) {
       if (e.status === 401) {
         setPfToken(null)
@@ -381,7 +577,17 @@ export default function PfCreditCardsPage() {
     } finally {
       setLoading(false)
     }
-  }, [onSessionInvalid, period.m, period.y, yearlyChartYear])
+  }, [
+    onSessionInvalid,
+    period.m,
+    period.y,
+    yearlyChartYear,
+    txFilterCardId,
+    txFilterCategoryId,
+    txFilterDateFrom,
+    txFilterDateTo,
+    txFilterStatus,
+  ])
 
   useEffect(() => {
     if (!selectedCardId && cards.length) {
@@ -562,22 +768,154 @@ export default function PfCreditCardsPage() {
     try {
       await createCreditCardStandaloneTransaction({
         card_id: Number(txCardId),
+        transaction_type: txType,
         amount: Number(txAmount),
         transaction_date: txDate,
         expense_category_id: txCategoryId === '' ? null : Number(txCategoryId),
         category: cat?.name || 'general',
-        description: txDesc.trim() || null,
+        description: txDesc.trim() || txMerchant.trim() || null,
+        merchant: txMerchant.trim() || null,
+        notes: txNotes.trim() || null,
+        attachment_url: txAttachmentUrl.trim() || null,
+        is_emi: txIsEmiForm,
         paid_by: null,
       })
       setTxAmount('')
       setTxDesc('')
+      setTxMerchant('')
+      setTxNotes('')
+      setTxAttachmentUrl('')
+      setTxIsEmiForm(false)
+      setTxType('swipe')
       await load()
       refresh()
     } catch (err) {
-      setError(err.message || 'Could not add swipe')
+      setError(err.message || 'Could not add transaction')
     } finally {
       setBusy(false)
     }
+  }
+
+  function openTxEdit(row) {
+    setTxEdit({
+      id: row.id,
+      transaction_date: row.transaction_date,
+      transaction_type: row.transaction_type || 'swipe',
+      amount: String(Math.abs(Number(row.amount) || 0)),
+      category_id: row.category_id != null ? String(row.category_id) : '',
+      description: row.description ?? '',
+      merchant: row.merchant ?? '',
+      notes: row.notes ?? '',
+      attachment_url: row.attachment_url ?? '',
+      is_emi: !!row.is_emi,
+    })
+  }
+
+  async function handleSaveTxEdit(e) {
+    e.preventDefault()
+    if (!txEdit?.id) return
+    setBusy(true)
+    setError('')
+    try {
+      await patchCreditCardTransaction(txEdit.id, {
+        transaction_date: txEdit.transaction_date,
+        transaction_type: txEdit.transaction_type,
+        amount: Number(txEdit.amount),
+        category_id: txEdit.category_id === '' ? null : Number(txEdit.category_id),
+        description: txEdit.description.trim() || null,
+        merchant: txEdit.merchant.trim() || null,
+        notes: txEdit.notes.trim() || null,
+        attachment_url: txEdit.attachment_url.trim() || null,
+        is_emi: txEdit.is_emi,
+      })
+      setTxEdit(null)
+      await load()
+      refresh()
+    } catch (err) {
+      setError(err.message || 'Could not update transaction')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDeleteTx(row) {
+    if (!window.confirm('Delete this ledger line?')) return
+    setBusy(true)
+    setError('')
+    try {
+      await deleteCreditCardTransaction(row.id)
+      await load()
+      refresh()
+    } catch (err) {
+      setError(err.message || 'Could not delete')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleConvertEmi(row) {
+    setBusy(true)
+    setError('')
+    try {
+      await patchCreditCardTransaction(row.id, { is_emi: true, transaction_type: 'emi' })
+      await load()
+      refresh()
+    } catch (err) {
+      setError(err.message || 'Could not convert to EMI')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleConfirmAssignBill(e) {
+    e.preventDefault()
+    if (!txAssign?.id || !txAssignBillPick) return
+    setBusy(true)
+    setError('')
+    try {
+      await assignCreditCardTransactionToBill(txAssign.id, Number(txAssignBillPick))
+      setTxAssign(null)
+      setTxAssignBillPick('')
+      await load()
+      refresh()
+    } catch (err) {
+      setError(err.message || 'Could not assign bill')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function exportLedgerCsv(label) {
+    const esc = (s) => String(s || '').replace(/"/g, '""')
+    const header = [
+      'Date',
+      'Card',
+      'Merchant',
+      'Category',
+      'Type',
+      'Amount',
+      'Status',
+      'Balance',
+      'Bill',
+    ]
+    const lines = [header.join(',')]
+    for (const r of tx) {
+      lines.push(
+        [
+          r.transaction_date,
+          `"${esc(r.card_name)}"`,
+          `"${esc(r.merchant)}"`,
+          `"${esc(r.category_name)}"`,
+          r.transaction_type,
+          r.amount,
+          r.ledger_status,
+          r.running_balance,
+          r.bill_id ?? '',
+        ].join(','),
+      )
+    }
+    const bom = '\uFEFF'
+    downloadCsv(`${label}.csv`, bom + lines.join('\n'))
   }
 
   function openCardEditor(row) {
@@ -1444,14 +1782,130 @@ export default function PfCreditCardsPage() {
 
       {tab === 'transactions' ? (
         <div className={`${cardCls} p-0`}>
-          <div className="border-b border-[var(--pf-border)] px-4 py-3">
-            <h2 className="text-base font-bold text-[var(--pf-text)]">Transactions</h2>
+          <div className="border-b border-[var(--pf-border)] px-4 py-3 sm:px-5">
+            <h2 className="text-base font-bold text-[var(--pf-text)]">Credit card ledger</h2>
             <p className="mt-1 text-xs text-[var(--pf-text-muted)]">
-              Add a swipe, UPI on credit, or any charge manually — creates an expense and unbilled line (no bank debit until you pay the statement).
+              Swipes, refunds, fees, and interest post here. Statement closing day on the card drives the billing-cycle month.
+              Swipe / refund / EMI also create an expense line; fee and interest are ledger-only until booked elsewhere.
             </p>
           </div>
+
+          <div className="flex flex-wrap gap-2 border-b border-[var(--pf-border)] px-4 py-3 sm:px-5">
+            {[
+              { id: '', label: 'All' },
+              { id: 'unbilled', label: 'Unbilled' },
+              { id: 'billed', label: 'Billed' },
+              { id: 'paid', label: 'Paid' },
+              { id: 'overdue', label: 'Overdue' },
+              { id: 'emi', label: 'EMI' },
+              { id: 'refunded', label: 'Refund' },
+            ].map((f) => (
+              <button
+                key={f.id || 'all'}
+                type="button"
+                onClick={() => setTxFilterStatus(f.id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  txFilterStatus === f.id
+                    ? 'bg-[var(--pf-primary)] text-white'
+                    : 'border border-[var(--pf-border)] text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)]'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid gap-3 border-b border-[var(--pf-border)] px-4 py-3 sm:grid-cols-2 lg:grid-cols-4 sm:px-5">
+            <div>
+              <label className={labelCls}>From date</label>
+              <input
+                className={inputCls}
+                type="date"
+                value={txFilterDateFrom}
+                onChange={(e) => setTxFilterDateFrom(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>To date</label>
+              <input
+                className={inputCls}
+                type="date"
+                value={txFilterDateTo}
+                onChange={(e) => setTxFilterDateTo(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Card</label>
+              <select
+                className={inputCls}
+                value={txFilterCardId}
+                onChange={(e) => setTxFilterCardId(e.target.value)}
+              >
+                <option value="">All cards</option>
+                {cards.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.card_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Category</label>
+              <select
+                className={inputCls}
+                value={txFilterCategoryId}
+                onChange={(e) => setTxFilterCategoryId(e.target.value)}
+              >
+                <option value="">All categories</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {txSummary ? (
+            <div className="grid gap-2 border-b border-[var(--pf-border)] px-4 py-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 sm:px-5">
+              {[
+                ['Transactions', String(txSummary.transaction_count ?? 0)],
+                ['Unbilled', formatInr(txSummary.unbilled_amount)],
+                ['Billed', formatInr(txSummary.billed_amount)],
+                ['Paid', formatInr(txSummary.paid_amount)],
+                ['Overdue', formatInr(txSummary.overdue_amount)],
+                ['Refunded', formatInr(txSummary.refunded_amount)],
+              ].map(([k, v]) => (
+                <div
+                  key={k}
+                  className="rounded-xl border border-[var(--pf-border)] bg-[var(--pf-surface)] px-3 py-2"
+                >
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">{k}</p>
+                  <p className="mt-1 text-sm font-bold tabular-nums text-[var(--pf-text)]">{v}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2 border-b border-[var(--pf-border)] px-4 py-2 sm:px-5">
+            <button type="button" className={btnSecondary} onClick={() => exportLedgerCsv('credit-card-ledger')}>
+              Export CSV
+            </button>
+            <button type="button" className={btnSecondary} onClick={() => exportLedgerCsv('credit-card-ledger')}>
+              Export Excel (CSV)
+            </button>
+            <button
+              type="button"
+              className={btnSecondary}
+              onClick={() => exportLedgerCsv(`cc-statement-${todayISODate()}`)}
+            >
+              Download statement
+            </button>
+          </div>
+
           <form onSubmit={handleManualSwipe} className="space-y-3 border-b border-[var(--pf-border)] px-4 py-4 sm:px-5">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <h3 className="text-sm font-bold text-[var(--pf-text)]">Add transaction</h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <label className={labelCls}>Card</label>
                 <select
@@ -1466,6 +1920,16 @@ export default function PfCreditCardsPage() {
                       {c.card_name}
                     </option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Transaction type</label>
+                <select className={inputCls} value={txType} onChange={(e) => setTxType(e.target.value)}>
+                  <option value="swipe">Swipe</option>
+                  <option value="refund">Refund</option>
+                  <option value="fee">Fee</option>
+                  <option value="interest">Interest</option>
+                  <option value="emi">EMI</option>
                 </select>
               </div>
               <div>
@@ -1485,6 +1949,15 @@ export default function PfCreditCardsPage() {
                 <input className={inputCls} type="date" value={txDate} onChange={(e) => setTxDate(e.target.value)} required />
               </div>
               <div>
+                <label className={labelCls}>Merchant</label>
+                <input
+                  className={inputCls}
+                  value={txMerchant}
+                  onChange={(e) => setTxMerchant(e.target.value)}
+                  placeholder="Amazon, fuel…"
+                />
+              </div>
+              <div>
                 <label className={labelCls}>Category</label>
                 <select className={inputCls} value={txCategoryId} onChange={(e) => setTxCategoryId(e.target.value)}>
                   <option value="">— General —</option>
@@ -1495,17 +1968,46 @@ export default function PfCreditCardsPage() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className={labelCls}>Billing cycle (auto)</label>
+                <input className={`${inputCls} opacity-90`} readOnly value={txBillingCyclePreview} />
+              </div>
+              <div>
+                <label className={labelCls}>EMI</label>
+                <select
+                  className={inputCls}
+                  value={txIsEmiForm ? 'yes' : 'no'}
+                  onChange={(e) => setTxIsEmiForm(e.target.value === 'yes')}
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>Notes (optional)</label>
+              <input className={inputCls} value={txNotes} onChange={(e) => setTxNotes(e.target.value)} />
+            </div>
+            <div>
+              <label className={labelCls}>Attachment URL (optional)</label>
+              <input
+                className={inputCls}
+                value={txAttachmentUrl}
+                onChange={(e) => setTxAttachmentUrl(e.target.value)}
+                placeholder="Link to receipt image"
+              />
             </div>
             <div>
               <label className={labelCls}>Description (optional)</label>
-              <input className={inputCls} value={txDesc} onChange={(e) => setTxDesc(e.target.value)} placeholder="e.g. Amazon, fuel" />
+              <input className={inputCls} value={txDesc} onChange={(e) => setTxDesc(e.target.value)} />
             </div>
             <button type="submit" disabled={busy || !cards.length} className={btnPrimary}>
               {busy ? 'Saving…' : 'Add transaction'}
             </button>
           </form>
-          <div className="border-b border-[var(--pf-border)] px-4 py-2">
-            <h3 className="text-sm font-semibold text-[var(--pf-text)]">Recent swipes</h3>
+
+          <div className="border-b border-[var(--pf-border)] px-4 py-2 sm:px-5">
+            <h3 className="text-sm font-semibold text-[var(--pf-text)]">Ledger (oldest first, running balance per card)</h3>
           </div>
           <div className={pfTableWrap}>
             <table className={pfTable}>
@@ -1513,24 +2015,72 @@ export default function PfCreditCardsPage() {
                 <tr>
                   <th className={pfTh}>Date</th>
                   <th className={pfTh}>Card</th>
-                  <th className={pfTh}>Expense #</th>
-                  <th className={pfTh}>Bill</th>
+                  <th className={pfTh}>Merchant</th>
+                  <th className={pfTh}>Category</th>
+                  <th className={pfTh}>Type</th>
                   <th className={`${pfTh} text-right`}>Amount</th>
+                  <th className={`${pfTh} text-right`}>Balance</th>
+                  <th className={`${pfTh} text-right`}>Status</th>
+                  <th className={pfTh}>Bill</th>
+                  <th className={pfTh}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {tx.map((r) => (
-                  <tr key={r.id} className={pfTrHover}>
+                  <tr key={r.id} className={`${pfTrHover} ${ledgerRowAccentClass(r.ledger_status)}`}>
                     <td className={pfTd}>{r.transaction_date}</td>
-                    <td className={pfTd}>{cards.find((c) => c.id === r.card_id)?.card_name ?? r.card_id}</td>
-                    <td className={pfTd}>{r.expense_id ?? '—'}</td>
-                    <td className={pfTd}>{r.bill_id ?? '—'}</td>
+                    <td className={pfTd}>{r.card_name ?? cards.find((c) => c.id === r.card_id)?.card_name ?? r.card_id}</td>
+                    <td className={pfTd}>{r.merchant ?? '—'}</td>
+                    <td className={pfTd}>{r.category_name ?? '—'}</td>
+                    <td className={pfTd}>{r.transaction_type ?? '—'}</td>
                     <td className={`${pfTd} text-right font-medium`}>{formatInr(r.amount)}</td>
+                    <td className={`${pfTd} text-right tabular-nums`}>{formatInr(r.running_balance)}</td>
+                    <td className={`${pfTd} text-right text-xs font-semibold capitalize`}>{r.ledger_status}</td>
+                    <td className={pfTd}>{r.bill_id ?? '—'}</td>
+                    <td className={`${pfTd} text-xs`}>
+                      <div className="flex flex-wrap gap-1">
+                        <button type="button" className={btnSecondary} onClick={() => openTxEdit(r)}>
+                          Edit
+                        </button>
+                        <button type="button" className={btnSecondary} onClick={() => handleDeleteTx(r)}>
+                          Delete
+                        </button>
+                        {r.bill_id == null ? (
+                          <button
+                            type="button"
+                            className={btnSecondary}
+                            onClick={() => {
+                              setTxAssign(r)
+                              setTxAssignBillPick('')
+                            }}
+                          >
+                            Mark billed
+                          </button>
+                        ) : null}
+                        {r.bill_id != null ? (
+                          <button
+                            type="button"
+                            className={btnSecondary}
+                            onClick={() => {
+                              setPayBillId(String(r.bill_id))
+                              setTab('bills')
+                            }}
+                          >
+                            View bill
+                          </button>
+                        ) : null}
+                        {r.bill_id == null ? (
+                          <button type="button" className={btnSecondary} onClick={() => handleConvertEmi(r)}>
+                            EMI
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {!tx.length ? <p className="p-4 text-sm text-[var(--pf-text-muted)]">No transactions yet.</p> : null}
+            {!tx.length ? <p className="p-4 text-sm text-[var(--pf-text-muted)]">No transactions match.</p> : null}
           </div>
         </div>
       ) : null}
@@ -1812,6 +2362,174 @@ export default function PfCreditCardsPage() {
                   type="button"
                   className={btnSecondary}
                   onClick={() => setEditForm(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {txEdit ? (
+        <div className="fixed inset-0 z-[101] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8">
+          <div className={`${cardCls} relative mt-8 w-full max-w-lg space-y-3 p-4 sm:p-5`} role="dialog" aria-modal="true">
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="text-base font-bold text-[var(--pf-text)]">Edit transaction</h2>
+              <button
+                type="button"
+                className="text-sm text-[var(--pf-text-muted)] hover:text-[var(--pf-text)]"
+                onClick={() => setTxEdit(null)}
+              >
+                Close
+              </button>
+            </div>
+            <form onSubmit={handleSaveTxEdit} className="space-y-3">
+              <div>
+                <label className={labelCls}>Date</label>
+                <input
+                  className={inputCls}
+                  type="date"
+                  value={txEdit.transaction_date}
+                  onChange={(e) => setTxEdit({ ...txEdit, transaction_date: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Type</label>
+                <select
+                  className={inputCls}
+                  value={txEdit.transaction_type}
+                  onChange={(e) => setTxEdit({ ...txEdit, transaction_type: e.target.value })}
+                >
+                  <option value="swipe">Swipe</option>
+                  <option value="refund">Refund</option>
+                  <option value="fee">Fee</option>
+                  <option value="interest">Interest</option>
+                  <option value="emi">EMI</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Amount (positive; refund stored as credit)</label>
+                <input
+                  className={inputCls}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={txEdit.amount}
+                  onChange={(e) => setTxEdit({ ...txEdit, amount: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Merchant</label>
+                <input
+                  className={inputCls}
+                  value={txEdit.merchant}
+                  onChange={(e) => setTxEdit({ ...txEdit, merchant: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Category</label>
+                <select
+                  className={inputCls}
+                  value={txEdit.category_id}
+                  onChange={(e) => setTxEdit({ ...txEdit, category_id: e.target.value })}
+                >
+                  <option value="">— General —</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={String(c.id)}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Description</label>
+                <input
+                  className={inputCls}
+                  value={txEdit.description}
+                  onChange={(e) => setTxEdit({ ...txEdit, description: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Notes</label>
+                <input
+                  className={inputCls}
+                  value={txEdit.notes}
+                  onChange={(e) => setTxEdit({ ...txEdit, notes: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Attachment URL</label>
+                <input
+                  className={inputCls}
+                  value={txEdit.attachment_url}
+                  onChange={(e) => setTxEdit({ ...txEdit, attachment_url: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>EMI</label>
+                <select
+                  className={inputCls}
+                  value={txEdit.is_emi ? 'yes' : 'no'}
+                  onChange={(e) => setTxEdit({ ...txEdit, is_emi: e.target.value === 'yes' })}
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button type="submit" disabled={busy} className={btnPrimary}>
+                  {busy ? 'Saving…' : 'Save'}
+                </button>
+                <button type="button" className={btnSecondary} onClick={() => setTxEdit(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {txAssign ? (
+        <div className="fixed inset-0 z-[101] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8">
+          <div className={`${cardCls} relative mt-8 w-full max-w-md space-y-3 p-4 sm:p-5`} role="dialog" aria-modal="true">
+            <h2 className="text-base font-bold text-[var(--pf-text)]">Assign to statement</h2>
+            <p className="text-xs text-[var(--pf-text-muted)]">
+              Adds this unbilled line to an existing open bill and increases the bill total. Use only when the line
+              should have been on that statement.
+            </p>
+            <form onSubmit={handleConfirmAssignBill} className="space-y-3">
+              <div>
+                <label className={labelCls}>Bill</label>
+                <select
+                  className={inputCls}
+                  value={txAssignBillPick}
+                  onChange={(e) => setTxAssignBillPick(e.target.value)}
+                  required
+                >
+                  <option value="">— Select —</option>
+                  {bills
+                    .filter((b) => b.card_id === txAssign.card_id && b.status !== 'PAID')
+                    .map((b) => (
+                      <option key={b.id} value={String(b.id)}>
+                        #{b.id} · {b.bill_start_date} – {b.bill_end_date} · {b.status}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="submit" disabled={busy} className={btnPrimary}>
+                  {busy ? 'Saving…' : 'Assign'}
+                </button>
+                <button
+                  type="button"
+                  className={btnSecondary}
+                  onClick={() => {
+                    setTxAssign(null)
+                    setTxAssignBillPick('')
+                  }}
                 >
                   Cancel
                 </button>

@@ -1,4 +1,5 @@
 from calendar import monthrange
+from collections import defaultdict
 from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
@@ -171,6 +172,127 @@ def _pct_share(part: float, whole: float) -> float:
     if whole <= 0.01:
         return 0.0
     return round(100.0 * float(part) / float(whole), 2)
+
+
+def _balance_sheet_trend_for_range(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    account_id: int | None,
+) -> list[dict]:
+    """Month-end snapshots from monthly financial tables (non-cash BS lines are current-book repeats)."""
+    out: list[dict] = []
+    for y in range(start.year, end.year + 1):
+        tbl = monthly_financial_tables(db, profile_id, y, account_id)
+        for row in tbl.get('rows') or []:
+            mi = int(row['month_index'])
+            ms = date(y, mi, 1)
+            pe = str(row['period_end'])
+            me = date.fromisoformat(pe)
+            if me < start or ms > end:
+                continue
+            bs = row['balance_sheet']
+            out.append(
+                {
+                    'month': row['month_key'],
+                    'label': row['label'],
+                    'net_worth': round(float(bs.get('net_worth') or 0), 2),
+                    'credit_cards_outstanding': round(float(bs.get('credit_cards_liabilities') or 0), 2),
+                    'loans_payable': round(float(bs.get('loans_other_liabilities') or 0), 2),
+                    'cash_estimate': round(float(bs.get('cash_estimate') or 0), 2),
+                }
+            )
+    return out
+
+
+def _expense_category_stacked_months(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    *,
+    account_id: int | None,
+    expense_category_id: int | None,
+    pf_exp: str | None,
+    max_cats: int = 7,
+) -> tuple[list[dict], list[str]]:
+    month_chunks = list(_month_slices(start, end))
+    per_month: list[dict[str, float]] = []
+    totals: dict[str, float] = defaultdict(float)
+    for _key, _label, ms, me in month_chunks:
+        cats = pf_finance_repo.expense_by_category_scoped(
+            db,
+            profile_id,
+            ms,
+            me,
+            account_id=account_id,
+            expense_category_id=expense_category_id,
+            paid_by_contains=pf_exp,
+        )
+        d = {str(c): float(a) for c, a in cats}
+        per_month.append(d)
+        for c, a in cats:
+            totals[str(c)] += float(a)
+    top_names = [k for k, _ in sorted(totals.items(), key=lambda x: -x[1])[:max_cats]]
+    stacked: list[dict] = []
+    for i, (_key, label, _ms, _me) in enumerate(month_chunks):
+        pm = per_month[i]
+        row: dict = {'label': label}
+        other = 0.0
+        for name in top_names:
+            v = pm.get(name, 0.0)
+            row[name] = round(v, 2)
+        for k, v in pm.items():
+            if k not in top_names:
+                other += v
+        row['Other'] = round(other, 2)
+        stacked.append(row)
+    return stacked, top_names + ['Other']
+
+
+def _cumulative_daily_net_scoped(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    *,
+    account_id: int | None,
+    expense_category_id: int | None,
+    pf_exp: str | None,
+) -> list[dict]:
+    inc_rows = pf_finance_repo.income_by_day_scoped(
+        db, profile_id, start, end, account_id=account_id, income_category_id=None, person_contains=pf_exp
+    )
+    exp_rows = pf_finance_repo.expense_by_day_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        paid_by_contains=pf_exp,
+    )
+    by_day: dict[date, float] = defaultdict(float)
+    for d0, a in inc_rows:
+        by_day[d0] += float(a)
+    for d0, a in exp_rows:
+        by_day[d0] -= float(a)
+    out: list[dict] = []
+    running = 0.0
+    d = start
+    while d <= end:
+        day_net = by_day.get(d, 0.0)
+        running += day_net
+        out.append(
+            {
+                'date': d.isoformat(),
+                'day_net': round(day_net, 2),
+                'cumulative': round(running, 2),
+            }
+        )
+        d += timedelta(days=1)
+    return out
 
 
 def _month_slices(start: date, end: date):
@@ -363,6 +485,184 @@ def reports_summary(
             }
         )
 
+    for row in monthly_summary:
+        row['savings_after_emi'] = round(
+            float(row['income']) - float(row['expense']) - float(row['emi']), 2
+        )
+
+    cashflow_trend_monthly = [
+        {
+            'month': r['month'],
+            'label': r['label'],
+            'income': r['income'],
+            'expense': r['expense'],
+            'emi': r['emi'],
+            'savings': r['savings_after_emi'],
+        }
+        for r in monthly_summary
+    ]
+
+    stacked_expense_months, _stack_keys = _expense_category_stacked_months(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        pf_exp=pf_exp,
+    )
+
+    cumulative_daily = _cumulative_daily_net_scoped(
+        db,
+        profile_id,
+        start,
+        end,
+        account_id=account_id,
+        expense_category_id=expense_category_id,
+        pf_exp=pf_exp,
+    )
+
+    balance_trend = _balance_sheet_trend_for_range(db, profile_id, start, end, account_id)
+
+    interest_collected_monthly = []
+    for _key, label, ms, me in _month_slices(start, end):
+        interest_collected_monthly.append(
+            {
+                'label': label,
+                'interest': round(
+                    pf_finance_repo.sum_loan_interest_collected_in_range(db, profile_id, ms, me),
+                    2,
+                ),
+            }
+        )
+
+    cards = pf_credit_card_repo.list_cards(db, profile_id, 0, 500)
+    total_cc_limit = sum(float(c.card_limit or 0) for c in cards)
+    unbilled_cc = pf_credit_card_repo.sum_unbilled_for_profile(db, profile_id)
+    billed_cc = pf_credit_card_repo.sum_billed_outstanding_for_profile(db, profile_id)
+    cc_used = unbilled_cc + billed_cc
+    credit_utilization_pct = (
+        round((cc_used / total_cc_limit) * 100.0, 2) if total_cc_limit > 0.01 else 0.0
+    )
+    util_label = (
+        'Healthy' if credit_utilization_pct <= 30 else 'Moderate' if credit_utilization_pct <= 50 else 'High'
+    )
+
+    approx_months = span / 30.44
+    avg_monthly_exp_cal = exp / approx_months if approx_months > 0.1 else exp
+    if account_id is not None:
+        acc_row = pf_finance_repo.get_account_for_profile(db, account_id, profile_id)
+        cash_now = float(acc_row.balance) if acc_row else 0.0
+    else:
+        cash_now = pf_finance_repo.sum_account_balances(db, profile_id)
+    runway_months = (
+        round(cash_now / avg_monthly_exp_cal, 2) if avg_monthly_exp_cal > 0.01 else None
+    )
+
+    savings_after_emi = inc - exp - emi_exp
+    savings_rate_after_emi = (savings_after_emi / inc) if inc > 0.01 else None
+    expense_ratio_val = (exp / inc) if inc > 0.01 else None
+    emi_ratio_income = (emi_exp / inc) if inc > 0.01 else None
+
+    nw_change_mom = None
+    if len(balance_trend) >= 2:
+        nw_change_mom = round(balance_trend[-1]['net_worth'] - balance_trend[-2]['net_worth'], 2)
+
+    mom_comparison = None
+    if len(monthly_summary) >= 2:
+        cur = monthly_summary[-1]
+        prev = monthly_summary[-2]
+
+        def _pc(new: float, old: float) -> float | None:
+            if old < 0.01:
+                return None
+            return round(100.0 * (new - old) / old, 2)
+
+        nw_this = balance_trend[-1]['net_worth'] if balance_trend else None
+        nw_prev = balance_trend[-2]['net_worth'] if len(balance_trend) >= 2 else None
+        mom_comparison = {
+            'this_label': cur['label'],
+            'prev_label': prev['label'],
+            'income_this': cur['income'],
+            'income_prev': prev['income'],
+            'income_change_pct': _pc(float(cur['income']), float(prev['income'])),
+            'expense_this': cur['expense'],
+            'expense_prev': prev['expense'],
+            'expense_change_pct': _pc(float(cur['expense']), float(prev['expense'])),
+            'emi_this': cur['emi'],
+            'emi_prev': prev['emi'],
+            'emi_change_pct': _pc(float(cur['emi']), float(prev['emi'])),
+            'savings_this': cur['savings_after_emi'],
+            'savings_prev': prev['savings_after_emi'],
+            'savings_change_pct': _pc(
+                float(cur['savings_after_emi']), float(prev['savings_after_emi'])
+            ),
+            'net_worth_this': nw_this,
+            'net_worth_prev': nw_prev,
+            'net_worth_change_pct': _pc(float(nw_this or 0), float(nw_prev or 0))
+            if nw_this is not None and nw_prev is not None and nw_prev > 0.01
+            else None,
+        }
+
+    tail_m = monthly_summary[-3:] if len(monthly_summary) >= 3 else monthly_summary
+    forecast_simple = None
+    if tail_m:
+        ai = sum(float(r['income']) for r in tail_m) / len(tail_m)
+        ae = sum(float(r['expense']) for r in tail_m) / len(tail_m)
+        aemi = sum(float(r['emi']) for r in tail_m) / len(tail_m)
+        forecast_simple = {
+            'avg_income': round(ai, 2),
+            'avg_expense': round(ae, 2),
+            'avg_emi_ledger': round(aemi, 2),
+            'projected_next_month_expense': round(ae, 2),
+            'projected_savings': round(ai - ae - aemi, 2),
+            'note': 'Simple averages over the last months shown in this window (not a full cash-flow forecast).',
+        }
+
+    investment_book = pf_finance_repo.sum_investments_invested(db, profile_id)
+    ta_last = balance_trend[-1] if balance_trend else None
+    total_assets_proxy = None
+    investment_ratio = None
+    if ta_last:
+        total_assets_proxy = float(ta_last['net_worth']) + float(
+            ta_last.get('credit_cards_outstanding', 0) + ta_last.get('loans_payable', 0)
+        )
+        if total_assets_proxy > 0.01:
+            investment_ratio = investment_book / total_assets_proxy
+
+    account_balances_snapshot = [
+        {
+            'account_id': a.id,
+            'account_name': a.account_name,
+            'balance': round(float(a.balance), 2),
+        }
+        for a in pf_finance_repo.list_accounts(db, profile_id, 0, 200)
+    ]
+    if account_id is not None:
+        account_balances_snapshot = [r for r in account_balances_snapshot if r['account_id'] == account_id]
+
+    top5_expense_categories_bar = [{'name': c, 'amount': round(a, 2)} for c, a in by_cat_raw[:5]]
+
+    emi_vs_income_pct = round((emi_exp / inc) * 100.0, 2) if inc > 0.01 else None
+
+    credit_util_trend = [
+        {
+            'label': r['label'],
+            'utilization_pct': round(
+                (float(r['credit_cards_outstanding']) / total_cc_limit) * 100.0, 2
+            )
+            if total_cc_limit > 0.01
+            else 0.0,
+            'outstanding': r['credit_cards_outstanding'],
+        }
+        for r in balance_trend
+    ]
+
+    loan_activity_bar = [
+        {'name': 'New loans (booked)', 'value': round(loan_given, 2)},
+        {'name': 'Collections received', 'value': round(loan_received, 2)},
+    ]
+
     emi_other_expense = [
         {'name': 'EMI (ledger)', 'value': round(emi_exp, 2)},
         {'name': 'Other expense', 'value': round(max(0.0, exp - emi_exp), 2)},
@@ -374,9 +674,6 @@ def reports_summary(
     emi_breakdown = [{'loan': name, 'emi_paid': round(amt, 2)} for name, amt in liab_break]
 
     insights: list[str] = []
-    if by_cat_raw:
-        top_c, top_a = by_cat_raw[0]
-        insights.append(f'Highest expense category: {top_c} {top_a:,.0f} ₹')
     if by_acc_raw:
         _, acc_name, acc_amt = by_acc_raw[0]
         insights.append(f'Highest spending account: {acc_name} ({acc_amt:,.0f} ₹)')
@@ -401,6 +698,34 @@ def reports_summary(
         insights.append(f'Collected on loans you gave: ₹{loan_received:,.0f}')
     if int_paid > 0.01:
         insights.append(f'Interest paid (liabilities): ₹{int_paid:,.0f}')
+
+    if by_cat_raw and expense_total_for_pct > 0.01:
+        top_c0, top_a0 = by_cat_raw[0]
+        pc0 = _pct_share(top_a0, expense_total_for_pct)
+        insights.append(
+            f'Largest expense category is {top_c0} (~{pc0:.0f}% of spend; ₹{top_a0:,.0f}).'
+        )
+    if savings_rate_after_emi is not None:
+        srp = savings_rate_after_emi * 100.0
+        if srp < 0:
+            insights.append(
+                f'After ledger EMI, savings rate is negative ({srp:.1f}%): income does not cover expenses plus EMI.'
+            )
+        else:
+            insights.append(f'After ledger EMI, savings rate is {srp:.1f}%.')
+    insights.append(f'Credit utilization (cards in app): {credit_utilization_pct:.1f}% — {util_label}.')
+    if runway_months is not None:
+        insights.append(
+            f'Liquidity runway ≈ {runway_months:.1f} months at this window’s spending pace (cash ÷ monthlyized expense).'
+        )
+    if nw_change_mom is not None:
+        insights.append(
+            f'Net worth in the accounting series moved by ₹{nw_change_mom:,.0f} vs the prior month in the trend.'
+        )
+    if mom_comparison and mom_comparison.get('expense_change_pct') is not None:
+        insights.append(
+            f'Month over month: expenses {mom_comparison["expense_change_pct"]:+.1f}% vs {mom_comparison["prev_label"]}.'
+        )
 
     return {
         'period': {
@@ -443,6 +768,41 @@ def reports_summary(
         'emi_breakdown': emi_breakdown,
         'emi_vs_other_expense': emi_other_expense,
         'insights': insights,
+        'advanced_metrics': {
+            'savings_after_emi': round(savings_after_emi, 2),
+            'savings_rate_after_emi': round(float(savings_rate_after_emi), 4)
+            if savings_rate_after_emi is not None
+            else None,
+            'expense_ratio': round(float(expense_ratio_val), 4) if expense_ratio_val is not None else None,
+            'emi_ratio_income': round(float(emi_ratio_income), 4) if emi_ratio_income is not None else None,
+            'credit_utilization_pct': credit_utilization_pct,
+            'avg_daily_expense': round(avg_daily_exp, 2),
+            'runway_months': runway_months,
+            'net_worth_change_prior_month': nw_change_mom,
+        },
+        'cashflow_trend_monthly': cashflow_trend_monthly,
+        'cumulative_daily_cashflow': cumulative_daily,
+        'expense_category_stacked_monthly': stacked_expense_months,
+        'top5_expense_categories_bar': top5_expense_categories_bar,
+        'balance_sheet_trend': balance_trend,
+        'interest_collected_monthly': interest_collected_monthly,
+        'credit_utilization_trend': credit_util_trend,
+        'account_balances_snapshot': account_balances_snapshot,
+        'loan_activity_bar': loan_activity_bar,
+        'emi_vs_income_pct': emi_vs_income_pct,
+        'month_over_month': mom_comparison,
+        'forecast': forecast_simple,
+        'ratio_gauges': {
+            'savings_rate_pct': round(float(savings_rate_after_emi) * 100, 2)
+            if savings_rate_after_emi is not None
+            else None,
+            'debt_to_income_emi_pct': round((emi_exp / inc) * 100, 2) if inc > 0.01 else None,
+            'credit_utilization_pct': credit_utilization_pct,
+            'expense_ratio_pct': round((exp / inc) * 100, 2) if inc > 0.01 else None,
+            'investment_ratio_pct': round(float(investment_ratio) * 100, 2)
+            if investment_ratio is not None
+            else None,
+        },
     }
 
 
@@ -462,8 +822,8 @@ def month_ledger(
     start = date(year, month, 1)
     last = monthrange(year, month)[1]
     end = date(year, month, last)
-    inc = pf_finance_repo.list_income(db, profile_id, 0, 5000, start, end, account_id)
-    exp = pf_finance_repo.list_expenses(db, profile_id, 0, 5000, start, end, account_id)
+    inc = pf_finance_repo.list_income(db, profile_id, 0, 5000, start, end, account_id, None)
+    exp = pf_finance_repo.list_expenses(db, profile_id, 0, 5000, start, end, account_id, None)
     return {
         'year': year,
         'month': month,
@@ -490,8 +850,8 @@ def daily_ledger(
     if span > 400:
         raise ValueError('Date range cannot exceed 400 days')
     _ensure_finance_account(db, profile_id, account_id)
-    inc = pf_finance_repo.list_income(db, profile_id, 0, 5000, from_date, to_date, account_id)
-    exp = pf_finance_repo.list_expenses(db, profile_id, 0, 5000, from_date, to_date, account_id)
+    inc = pf_finance_repo.list_income(db, profile_id, 0, 5000, from_date, to_date, account_id, None)
+    exp = pf_finance_repo.list_expenses(db, profile_id, 0, 5000, from_date, to_date, account_id, None)
     return {
         'from_date': from_date.isoformat(),
         'to_date': to_date.isoformat(),
@@ -523,6 +883,10 @@ def monthly_financial_tables(
             'opening_cash_estimate': 0.0,
             'rows': [],
             'note': 'No rows — selected year is in the future.',
+            'expense_by_category_ytd': [],
+            'income_by_category_ytd': [],
+            'credit_utilization_pct': 0.0,
+            'cash_bank_reported': {'cash': 0.0, 'bank': 0.0, 'total': 0.0},
         }
 
     ytd_start = date(year, 1, 1)
@@ -551,6 +915,35 @@ def monthly_financial_tables(
     fixed_assets = pf_finance_repo.sum_assets(db, profile_id)
     liabilities = pf_finance_repo.sum_liabilities(db, profile_id)
     loans_out = pf_finance_repo.sum_loan_outstanding(db, profile_id)
+    cc_liab_out = pf_finance_repo.sum_liabilities_cc_statement_outstanding(db, profile_id)
+    loans_liab_ex_cc = max(0.0, round(liabilities - cc_liab_out, 2))
+    emi_due_snapshot = pf_finance_repo.sum_pending_loan_schedule_emis(db, profile_id)
+    cash_bank = pf_finance_repo.sum_account_balances_cash_vs_bank(db, profile_id)
+    if account_id is not None:
+        acc = pf_finance_repo.get_account_for_profile(db, account_id, profile_id)
+        if acc:
+            t = (acc.account_type or '').lower()
+            is_cash_slot = 'cash' in t or 'wallet' in t or t in ('petty', 'hand')
+            cash_bank = {
+                'cash': float(acc.balance) if is_cash_slot else 0.0,
+                'bank': 0.0 if is_cash_slot else float(acc.balance),
+                'total': float(acc.balance),
+            }
+    cards = pf_credit_card_repo.list_cards(db, profile_id, 0, 500)
+    total_cc_limit = sum(float(c.card_limit or 0) for c in cards)
+    unbilled_cc = pf_credit_card_repo.sum_unbilled_for_profile(db, profile_id)
+    billed_cc = pf_credit_card_repo.sum_billed_outstanding_for_profile(db, profile_id)
+    cc_used = unbilled_cc + billed_cc
+    credit_utilization_pct = round((cc_used / total_cc_limit) * 100.0, 2) if total_cc_limit > 0.01 else 0.0
+
+    exp_by_cat_ytd = [
+        {'category': a or 'Other', 'amount': round(float(b), 2)}
+        for a, b in pf_finance_repo.expense_by_category(db, profile_id, ytd_start, ytd_end, account_id)
+    ]
+    inc_by_cat_ytd = [
+        {'category': a or 'Other', 'amount': round(float(b), 2)}
+        for a, b in pf_finance_repo.income_by_category(db, profile_id, ytd_start, ytd_end, account_id)
+    ]
 
     month_names = (
         'January',
@@ -587,6 +980,15 @@ def monthly_financial_tables(
         exp = pf_finance_repo.sum_expense(db, profile_id, ms, me, account_id)
         net = inc - exp
         closing_cash += net
+        exp_emi = pf_finance_repo.sum_expense_emi_categories(db, profile_id, ms, me, account_id)
+        inv_add = pf_finance_repo.sum_investments_added_in_range(db, profile_id, ms, me)
+        loan_pay = pf_finance_repo.sum_loan_payments_in_range(db, profile_id, ms, me)
+        liab_pay = pf_finance_repo.sum_liability_cash_paid_in_range(db, profile_id, ms, me)
+        cc_pay = pf_credit_card_repo.sum_cc_payments_in_range(db, profile_id, ms, me)
+        financing_outflows = round(loan_pay + liab_pay + cc_pay, 2)
+        investing_flow = round(-inv_add, 2)
+        financing_flow = round(-financing_outflows, 2)
+        cash_summary = round(net + investing_flow + financing_flow, 2)
 
         # Loan outstanding here is receivable (money owed to you) — part of assets, not a liability.
         total_assets = closing_cash + investments + fixed_assets + loans_out
@@ -603,26 +1005,39 @@ def monthly_financial_tables(
                     'income': inc,
                     'expense': exp,
                     'net_income': net,
+                    'expense_emi': exp_emi,
                 },
                 'cash_flow': {
                     'cash_in_operating': inc,
                     'cash_out_operating': exp,
                     'net_operating_cash_flow': net,
+                    'investing_cash_flow': investing_flow,
+                    'financing_cash_flow': financing_flow,
+                    'debt_service_cash': financing_outflows,
+                    'investments_added': inv_add,
+                    'net_cash_activity': cash_summary,
                     'closing_cash_estimate': closing_cash,
                 },
                 'balance_sheet': {
                     'cash_estimate': closing_cash,
+                    'cash_wallet': cash_bank['cash'],
+                    'bank_accounts': cash_bank['bank'],
                     'investments': investments,
                     'fixed_assets': fixed_assets,
+                    'loans_given_receivable': loans_out,
+                    'receivables': 0.0,
                     'total_assets': total_assets,
                     'liabilities': liabilities,
+                    'credit_cards_liabilities': cc_liab_out,
+                    'loans_other_liabilities': loans_liab_ex_cc,
+                    'emi_installments_due': emi_due_snapshot,
                     'loans_outstanding': loans_out,
                     'net_worth': net_worth,
                 },
             }
         )
 
-    return {
+    out: dict = {
         'year': year,
         'account_id': account_id,
         'opening_cash_estimate': opening_cash,
@@ -637,5 +1052,28 @@ def monthly_financial_tables(
             'switches to a ₹0 opening so months are not shown negative. Investments, assets, liabilities, '
             'and loans repeat current totals (no historical snapshots). Manual balance edits can skew cash.'
         ),
+        'expense_by_category_ytd': exp_by_cat_ytd,
+        'income_by_category_ytd': inc_by_cat_ytd,
+        'credit_utilization_pct': credit_utilization_pct,
+        'cash_bank_reported': cash_bank,
         'rows': rows,
     }
+    if rows:
+        ytd_inc_tab = sum(float(r['income_statement']['income']) for r in rows)
+        ytd_exp_tab = sum(float(r['income_statement']['expense']) for r in rows)
+        ytd_net_tab = ytd_inc_tab - ytd_exp_tab
+        ytd_emi = sum(float(r['income_statement'].get('expense_emi') or 0) for r in rows)
+        last_bs = rows[-1]['balance_sheet']
+        ta = float(last_bs.get('total_assets') or 0)
+        inv = float(last_bs.get('investments') or 0)
+        cash_e = float(last_bs.get('cash_estimate') or 0)
+        avg_monthly_exp = ytd_exp_tab / max(len(rows), 1)
+        out['ratios_ytd'] = {
+            'savings_rate': round(ytd_net_tab / ytd_inc_tab, 4) if ytd_inc_tab > 0.01 else None,
+            'debt_to_income_emi': round(ytd_emi / ytd_inc_tab, 4) if ytd_inc_tab > 0.01 else None,
+            'expense_ratio': round(ytd_exp_tab / ytd_inc_tab, 4) if ytd_inc_tab > 0.01 else None,
+            'credit_utilization': round(credit_utilization_pct / 100.0, 4) if total_cc_limit > 0.01 else None,
+            'liquidity_months': round(cash_e / avg_monthly_exp, 2) if avg_monthly_exp > 0.01 else None,
+            'investment_to_assets': round(inv / ta, 4) if ta > 0.01 else None,
+        }
+    return out

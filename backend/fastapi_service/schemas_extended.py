@@ -144,6 +144,60 @@ class CreditCardTransactionOut(BaseModel):
     created_at: object
 
 
+class CreditCardLedgerSummaryOut(BaseModel):
+    transaction_count: int
+    unbilled_amount: float
+    billed_amount: float
+    paid_amount: float
+    overdue_amount: float
+    refunded_amount: float
+    emi_amount: float
+
+
+class CreditCardTransactionLedgerRow(BaseModel):
+    id: int
+    card_id: int
+    card_name: str
+    amount: float
+    transaction_date: str
+    transaction_type: str
+    merchant: str | None
+    category_id: int | None
+    category_name: str | None
+    description: str | None
+    notes: str | None
+    attachment_url: str | None
+    expense_id: int | None
+    bill_id: int | None
+    is_emi: bool
+    emi_id: int | None
+    billing_cycle_month: str
+    ledger_status: str
+    running_balance: float
+    created_at: str | None = None
+
+
+class CreditCardLedgerPageOut(BaseModel):
+    summary: CreditCardLedgerSummaryOut
+    transactions: list[CreditCardTransactionLedgerRow]
+
+
+class CreditCardTransactionUpdate(BaseModel):
+    transaction_date: date | None = None
+    amount: float | None = None
+    category_id: int | None = None
+    description: str | None = None
+    merchant: str | None = Field(None, max_length=200)
+    notes: str | None = None
+    attachment_url: str | None = None
+    transaction_type: str | None = Field(None, max_length=20)
+    is_emi: bool | None = None
+
+
+class CreditCardTxAssignBill(BaseModel):
+    bill_id: int = Field(..., ge=1)
+
+
 class CreditCardBillOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -154,13 +208,46 @@ class CreditCardBillOut(BaseModel):
     total_amount: Decimal
     due_date: date
     status: str
+    """Lifecycle: BILLED, PARTIAL, PAID, OVERDUE (legacy PENDING = billed unpaid)."""
     liability_id: int | None
     amount_paid: Decimal
+    opening_balance: Decimal | None = None
     minimum_due: Decimal | None = None
     interest: Decimal | None = None
     late_fee: Decimal | None = None
     created_at: object
     remaining: Decimal | None = None
+    display_status: str | None = None
+    """UI status: Unbilled | Billed | Partial | Paid | Overdue | Closed"""
+
+
+class CreditCardBillPreviewOut(BaseModel):
+    card_id: int
+    card_name: str
+    bill_start_date: str
+    bill_end_date: str
+    due_date: str
+    opening_balance: float
+    payments: float
+    purchases: float
+    fees: float
+    interest: float
+    new_balance: float
+    minimum_due: float
+    unbilled_transaction_count: int
+
+
+class CreditCardBillLineOut(BaseModel):
+    date: str
+    description: str
+    type: str
+    amount: float
+    transaction_id: int | None = None
+
+
+class CreditCardBillStatementOut(BaseModel):
+    bill: dict
+    lines: list[CreditCardBillLineOut]
 
 
 class CreditCardBillGenerate(BaseModel):
@@ -171,22 +258,62 @@ class CreditCardBillGenerate(BaseModel):
 
 class CreditCardBillPay(BaseModel):
     bill_id: int
-    amount: float = Field(..., gt=0)
+    amount: float | None = Field(None, gt=0)
+    payment_type: str | None = Field(
+        None,
+        description='full | minimum | custom (default: custom when amount set)',
+    )
     payment_date: date
     from_account_id: int
     reference_number: str | None = Field(None, max_length=100)
+    notes: str | None = Field(None, max_length=2000)
+
+    @field_validator('payment_type')
+    @classmethod
+    def _pt(cls, v: str | None) -> str | None:
+        if v is None or str(v).strip() == '':
+            return None
+        t = str(v).strip().lower()
+        if t not in ('full', 'minimum', 'custom'):
+            raise ValueError('payment_type must be full, minimum, or custom')
+        return t
+
+    @model_validator(mode='after')
+    def _amount_for_custom(self) -> Self:
+        pt = self.payment_type
+        if pt in ('full', 'minimum'):
+            return self
+        if self.amount is None or float(self.amount) <= 0:
+            raise ValueError('amount is required for custom payments')
+        return self
 
 
 class CreditCardStandaloneTx(BaseModel):
-    """Swipe + expense in one step (optional API)."""
+    """Ledger line + expense when type is swipe/refund/emi (fee/interest = row only)."""
 
     card_id: int
+    transaction_type: str = Field(
+        'swipe',
+        description='swipe | refund | fee | interest | emi',
+    )
     amount: float = Field(..., gt=0)
     transaction_date: date
     expense_category_id: int | None = None
     category: str = 'general'
     description: str | None = None
+    merchant: str | None = Field(None, max_length=200)
+    notes: str | None = None
+    attachment_url: str | None = None
+    is_emi: bool = False
     paid_by: str | None = None
+
+    @field_validator('transaction_type')
+    @classmethod
+    def normalize_tx_type(cls, v: str) -> str:
+        t = (v or 'swipe').strip().lower()
+        if t not in ('swipe', 'refund', 'fee', 'interest', 'emi'):
+            raise ValueError('transaction_type must be swipe, refund, fee, interest, or emi')
+        return t
 
 
 class FinanceIncomeOut(BaseModel):

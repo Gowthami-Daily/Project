@@ -6,6 +6,8 @@ export default function KpiCard({
   title,
   value,
   subtitle,
+  /** Optional MoM or hint, e.g. "↑ 4.2% vs prior month" */
+  trendLabel,
   gradientClass,
   iconTintClass,
   wrapperClassName,
@@ -37,6 +39,11 @@ export default function KpiCard({
           {subtitle ? (
             <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-[var(--pf-text-muted)] md:mt-1.5 md:text-xs md:text-white/80 md:dark:text-white/80">
               {subtitle}
+            </p>
+          ) : null}
+          {trendLabel ? (
+            <p className="mt-1.5 text-[11px] font-semibold tabular-nums text-slate-600 dark:text-[var(--pf-text-muted)] md:text-xs md:text-white/90 md:dark:text-white/90">
+              {trendLabel}
             </p>
           ) : null}
         </div>

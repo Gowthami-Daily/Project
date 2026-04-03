@@ -4,6 +4,7 @@ Does not alter dairy ERP models in ``models.py`` — link farm profiles via ``Pr
 """
 
 from datetime import date, datetime
+from typing import Optional
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -90,6 +91,7 @@ class CreditCardBill(Base):
         Integer, ForeignKey('finance_liabilities.id', ondelete='SET NULL'), nullable=True, index=True
     )
     amount_paid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    opening_balance: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     minimum_due: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     interest: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     late_fee: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
@@ -118,10 +120,16 @@ class CreditCardTransaction(Base):
     bill_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey('credit_card_bills.id', ondelete='SET NULL'), nullable=True, index=True
     )
+    transaction_type: Mapped[str] = mapped_column(String(20), nullable=False, default='swipe')
+    merchant: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attachment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_emi: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    emi_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     card: Mapped['CreditCard'] = relationship(back_populates='transactions')
-    bill: Mapped['CreditCardBill | None'] = relationship(back_populates='transactions')
+    bill: Mapped[Optional['CreditCardBill']] = relationship(back_populates='transactions')
 
 
 class CreditCardPayment(Base):
@@ -134,6 +142,7 @@ class CreditCardPayment(Base):
     payment_date: Mapped[date] = mapped_column(Date, nullable=False)
     from_account_id: Mapped[int] = mapped_column(Integer, ForeignKey('finance_accounts.id'), nullable=False, index=True)
     reference_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

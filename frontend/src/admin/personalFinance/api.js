@@ -340,6 +340,10 @@ export function getAccountsBalanceSummary() {
 
 export function listFinanceIncome(params = {}) {
   const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  if (params.dateFrom) q.set('date_from', String(params.dateFrom))
+  if (params.dateTo) q.set('date_to', String(params.dateTo))
+  if (params.accountId != null && params.accountId !== '') q.set('account_id', String(params.accountId))
+  if (params.category) q.set('category', String(params.category))
   return fin(`/income?${q}`)
 }
 
@@ -380,6 +384,10 @@ export function deletePfPaymentInstrument(id) {
 
 export function listFinanceExpenses(params = {}) {
   const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  if (params.dateFrom) q.set('date_from', String(params.dateFrom))
+  if (params.dateTo) q.set('date_to', String(params.dateTo))
+  if (params.accountId != null && params.accountId !== '') q.set('account_id', String(params.accountId))
+  if (params.category) q.set('category', String(params.category))
   return fin(`/expenses?${q}`)
 }
 
@@ -422,14 +430,33 @@ export function getCreditCardDashboardSummary(periodYear, periodMonth) {
 }
 
 export function listCreditCardTransactions(params = {}) {
-  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 500) })
   if (params.cardId != null && params.cardId !== '') q.set('card_id', String(params.cardId))
+  if (params.categoryId != null && params.categoryId !== '') q.set('category_id', String(params.categoryId))
+  if (params.dateFrom) q.set('date_from', String(params.dateFrom))
+  if (params.dateTo) q.set('date_to', String(params.dateTo))
+  if (params.status) q.set('status', String(params.status))
   if (params.unbilledOnly) q.set('unbilled_only', 'true')
   return fin(`/credit-cards/transactions?${q}`)
 }
 
 export function createCreditCardStandaloneTransaction(body) {
   return fin('/credit-cards/transactions', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function patchCreditCardTransaction(txId, body) {
+  return fin(`/credit-cards/transactions/${txId}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function deleteCreditCardTransaction(txId) {
+  return fin(`/credit-cards/transactions/${txId}`, { method: 'DELETE' })
+}
+
+export function assignCreditCardTransactionToBill(txId, billId) {
+  return fin(`/credit-cards/transactions/${txId}/assign-bill`, {
+    method: 'POST',
+    body: JSON.stringify({ bill_id: billId }),
+  })
 }
 
 export function listCreditCardBills(params = {}) {
@@ -444,6 +471,45 @@ export function generateCreditCardBill(body) {
 
 export function payCreditCardBill(body) {
   return fin('/credit-cards/pay-bill', { method: 'POST', body: JSON.stringify(body) })
+}
+
+/** Dry-run statement totals before POST generate-bill. */
+export function getCreditCardBillPreview(params) {
+  const q = new URLSearchParams({
+    card_id: String(params.cardId),
+    bill_start_date: String(params.billStartDate),
+    bill_end_date: String(params.billEndDate),
+  })
+  return fin(`/credit-cards/bill-preview?${q}`)
+}
+
+export function getCreditCardBillStatement(billId) {
+  return fin(`/credit-cards/bills/${encodeURIComponent(billId)}/statement`)
+}
+
+export function markCreditCardBillOverdue(billId, lateFee = 500) {
+  const q = new URLSearchParams({ late_fee: String(lateFee) })
+  return fin(`/credit-cards/bills/${encodeURIComponent(billId)}/mark-overdue?${q}`, {
+    method: 'POST',
+  })
+}
+
+export function getCreditCardOutstandingTrend(periodYear, periodMonth, months = 12) {
+  const q = new URLSearchParams({
+    period_year: String(periodYear),
+    period_month: String(periodMonth),
+    months: String(months),
+  })
+  return fin(`/credit-cards/analytics/outstanding-trend?${q}`)
+}
+
+export function getCreditCardInterestTrend(periodYear, periodMonth, months = 12) {
+  const q = new URLSearchParams({
+    period_year: String(periodYear),
+    period_month: String(periodMonth),
+    months: String(months),
+  })
+  return fin(`/credit-cards/analytics/interest-trend?${q}`)
 }
 
 export function getCreditCardOutstanding() {
