@@ -1,17 +1,18 @@
-/* Personal Finance — design tokens + mobile shell (scoped under .pf-app) */
+/* Personal Finance — Aether-aligned tokens + mobile shell (scoped under .pf-app) */
 .pf-app {
-  /* Light (fintech) */
-  --pf-bg: #f1f5f9;
-  --pf-sidebar: #ffffff;
-  --pf-header: rgba(255, 255, 255, 0.96);
-  --pf-content: rgba(255, 255, 255, 0.5);
-  --pf-card: #ffffff;
-  --pf-card-hover: #f8fafc;
-  --pf-border: #e2e8f0;
-  --pf-text: #0f172a;
-  --pf-text-muted: #64748b;
+  /* Light — Pure Alabaster */
+  --pf-bg: #f9fafb;
+  --pf-sidebar: rgba(255, 255, 255, 0.92);
+  --pf-header: rgba(255, 255, 255, 0.88);
+  --pf-content: rgba(255, 255, 255, 0.55);
+  --pf-card: rgba(255, 255, 255, 0.82);
+  --pf-card-hover: #f3f4f6;
+  --pf-border: rgba(0, 0, 0, 0.08);
+  --pf-text: #111827;
+  --pf-text-muted: #6b7280;
   --pf-primary: #1e3a8a;
   --pf-primary-hover: #172554;
+  --pf-accent: #d4af37;
   --pf-success: #10b981;
   --pf-danger: #ef4444;
   --pf-warning: #f59e0b;
@@ -31,25 +32,26 @@
   color: var(--pf-text);
 }
 
-/* Industry dark — layered surfaces (Stripe / Linear / Notion-style) */
+/* Dark — Digital Obsidian */
 .pf-app.dark {
-  --pf-bg: #0b1220;
-  --pf-sidebar: #0f172a;
-  --pf-header: #111827;
-  --pf-content: #0b1220;
-  --pf-card: #1e293b;
-  --pf-card-hover: #273449;
-  --pf-border: #334155;
-  --pf-text: #e5e7eb;
-  --pf-text-muted: #94a3b8;
+  --pf-bg: #030303;
+  --pf-sidebar: rgba(8, 8, 8, 0.94);
+  --pf-header: rgba(12, 12, 12, 0.92);
+  --pf-content: #030303;
+  --pf-card: rgba(255, 255, 255, 0.04);
+  --pf-card-hover: rgba(255, 255, 255, 0.06);
+  --pf-border: rgba(255, 255, 255, 0.08);
+  --pf-text: #ffffff;
+  --pf-text-muted: #a1a1aa;
   --pf-primary: #3b82f6;
-  --pf-primary-hover: #2563eb;
+  --pf-primary-hover: #60a5fa;
+  --pf-accent: #d4af37;
   --pf-success: #10b981;
   --pf-danger: #ef4444;
   --pf-warning: #f59e0b;
   --pf-purple: #8b5cf6;
-  --pf-input-bg: #020617;
-  --pf-th-bg: #020617;
+  --pf-input-bg: #0a0a0a;
+  --pf-th-bg: rgba(255, 255, 255, 0.04);
   --pf-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
   --pf-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.35);
   --pf-modal-surface: #0f172a;
@@ -312,4 +314,10 @@
 }
 .pf-app .pf-btn-primary-solid:active {
   transform: scale(0.97);
+}
+
+/* Privacy blur — main content area */
+.pf-app .pf-main-scroll.pf-main-privacy {
+  filter: blur(9px);
+  user-select: none;
 }

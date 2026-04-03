@@ -29,6 +29,7 @@ import {
   triggerDownloadBlob,
 } from '../api.js'
 import PfExportMenu from '../PfExportMenu.jsx'
+import { PageHeader } from '../../../components/ui/PageHeader.jsx'
 import {
   btnPrimary,
   btnSecondary,
@@ -297,23 +298,20 @@ export default function PfReportsHubPage() {
   }, [stackedExpense])
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">Reports & analytics</h1>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-            Business-intelligence style analytics: a clear cashflow story (income, spend, EMI, savings), book-keeping trends
-            (net worth, cards, loans), and drill-downs — scoped by your filters and compared to the prior window of equal length.
-          </p>
-        </div>
-        <PfExportMenu
-          busy={reportsExportBusy}
-          items={[
-            { key: 'pdf', label: 'Export PDF', onClick: () => handleReportsExport('pdf') },
-            { key: 'xlsx', label: 'Export Excel', onClick: () => handleReportsExport('excel') },
-          ]}
-        />
-      </div>
+    <div className="mx-auto max-w-[1400px] space-y-6">
+      <PageHeader
+        title="Reports & analytics"
+        description="Business-intelligence style analytics: a clear cashflow story (income, spend, EMI, savings), book-keeping trends (net worth, cards, loans), and drill-downs — scoped by your filters and compared to the prior window of equal length."
+        action={
+          <PfExportMenu
+            busy={reportsExportBusy}
+            items={[
+              { key: 'pdf', label: 'Export PDF', onClick: () => handleReportsExport('pdf') },
+              { key: 'xlsx', label: 'Export Excel', onClick: () => handleReportsExport('excel') },
+            ]}
+          />
+        }
+      />
 
       <div className={cardCls}>
         <div className="flex flex-wrap items-center justify-between gap-2">

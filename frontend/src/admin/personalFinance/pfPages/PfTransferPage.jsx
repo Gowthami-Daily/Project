@@ -1,4 +1,4 @@
-import { ArrowsRightLeftIcon, XMarkIcon } from '@heroicons/react/24/solid'
+import { XMarkIcon } from '@heroicons/react/24/solid'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
@@ -13,6 +13,7 @@ import {
   postAccountTransfer,
   setPfToken,
 } from '../api.js'
+import { PageHeader } from '../../../components/ui/PageHeader.jsx'
 import {
   btnPrimary,
   btnSecondary,
@@ -471,36 +472,29 @@ export default function PfTransferPage() {
   const internalOk = accounts.length >= 2
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--pf-primary)]/15 text-[var(--pf-primary)]">
-            <ArrowsRightLeftIcon className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-[var(--pf-text)]">Money movement</h1>
-            <p className="text-sm text-[var(--pf-text-muted)]">
-              Internal transfers, cash in/out of accounts, card bill pay from bank, and borrowed-loan flows — all update balances and the account ledger.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-          <button
-            type="button"
-            className={showAddForm ? btnSecondary : btnPrimary}
-            onClick={() => setShowAddForm((v) => !v)}
-            aria-expanded={showAddForm}
-            aria-controls="pf-add-movement-panel"
-          >
-            {showAddForm ? 'Hide form' : 'Add movement'}
-          </button>
-          {accounts.length > 0 ? (
-            <button type="button" className={btnSecondary} onClick={() => setStmtOpen(true)}>
-              View account statement
+    <div className="mx-auto max-w-[1400px] space-y-6">
+      <PageHeader
+        title="Money movement"
+        description="Internal transfers, cash in/out of accounts, card bill pay from bank, and borrowed-loan flows — all update balances and the account ledger."
+        action={
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+            <button
+              type="button"
+              className={showAddForm ? btnSecondary : btnPrimary}
+              onClick={() => setShowAddForm((v) => !v)}
+              aria-expanded={showAddForm}
+              aria-controls="pf-add-movement-panel"
+            >
+              {showAddForm ? 'Hide form' : 'Add movement'}
             </button>
-          ) : null}
-        </div>
-      </div>
+            {accounts.length > 0 ? (
+              <button type="button" className={btnSecondary} onClick={() => setStmtOpen(true)}>
+                View account statement
+              </button>
+            ) : null}
+          </div>
+        }
+      />
 
       {error ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">

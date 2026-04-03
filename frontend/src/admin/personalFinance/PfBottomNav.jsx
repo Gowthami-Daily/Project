@@ -95,7 +95,7 @@ export default function PfBottomNav() {
   return (
     <>
       <nav
-        className={`fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--pf-border)] bg-[var(--pf-header)]/95 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_24px_-4px_rgba(0,0,0,0.12)] backdrop-blur-md dark:shadow-[0_-4px_24px_-4px_rgba(0,0,0,0.35)] md:hidden ${navH}`}
+        className={`fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--pf-border)] bg-[var(--pf-header)]/85 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-12px_40px_-12px_rgba(0,0,0,0.18)] backdrop-blur-2xl backdrop-saturate-150 dark:border-white/[0.06] dark:bg-[var(--pf-header)]/75 dark:shadow-[0_-12px_48px_-8px_rgba(0,0,0,0.55)] md:hidden ${navH}`}
         aria-label="Primary"
       >
         <div className="relative mx-auto max-w-lg px-1">

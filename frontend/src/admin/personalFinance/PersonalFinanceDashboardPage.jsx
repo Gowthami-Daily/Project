@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { Link, useOutletContext } from 'react-router-dom'
 import {
   ArrowTrendingDownIcon,
   ArrowTrendingUpIcon,
@@ -10,8 +11,10 @@ import {
   CheckCircleIcon,
   CreditCardIcon,
   ExclamationTriangleIcon,
+  InformationCircleIcon,
   ReceiptPercentIcon,
   ScaleIcon,
+  SparklesIcon,
   TruckIcon,
   UsersIcon,
 } from '@heroicons/react/24/solid'
@@ -31,6 +34,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { chartGridStroke, chartTooltipBox } from '../../components/dashboard/chartTheme.js'
+import { PageHeader } from '../../components/ui/PageHeader.jsx'
 import KpiCard from '../dashboard/KpiCard.jsx'
 import {
   getCashflowMonthSummary,
@@ -42,15 +47,16 @@ import {
   getLoanDashboardAnalytics,
   getNetworthGrowth,
   getPfToken,
+  getReportsSummary,
   listFinanceAccounts,
   listFinanceLoans,
   setPfToken,
 } from './api.js'
+import PfBankAccountSelect from './PfBankAccountSelect.jsx'
 import PfMonthYearModal from './PfMonthYearModal.jsx'
 import PfSegmentedControl from './PfSegmentedControl.jsx'
 import { formatInr } from './pfFormat.js'
 import {
-  pfChartCard,
   pfSelectCompact,
   pfTable,
   pfTableWrap,
@@ -72,32 +78,78 @@ const LazyDashboardCharts = lazy(() => import('./PersonalFinanceDashboardCharts.
 
 const LOAN_CHART_COLORS = ['#1E3A8A', '#0ea5e9', '#22c55e', '#a855f7', '#f59e0b', '#ec4899', '#64748b']
 
-const chartTitle = 'text-base font-bold text-sky-950 dark:text-[var(--pf-text)]'
+const chartTitle = 'text-[13px] font-semibold tracking-tight text-slate-900 dark:text-[var(--pf-text)]'
 const chartSub = 'mt-0.5 text-xs text-slate-500 dark:text-[var(--pf-text-muted)]'
+
+/** Section headings (18px) — separates dashboard blocks. */
+const sectionTitleCls = 'text-lg font-semibold tracking-tight text-[var(--pf-text)]'
+const sectionSubCls = 'mt-1 text-sm text-[var(--pf-text-muted)]'
+
+/** Glass shell for dashboard charts & tables (PF only). */
+const DASH_CHART_CARD =
+  'min-w-0 rounded-2xl border border-black/[0.06] bg-white/55 p-4 shadow-[var(--pf-shadow)] backdrop-blur-xl transition-all duration-200 hover:-translate-y-[3px] hover:border-black/[0.1] hover:shadow-xl sm:p-5 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/[0.14] dark:hover:shadow-[0_10px_25px_rgba(0,0,0,0.22)]'
+
+/** Overview insight charts — 24px padding, 16px radius (matches DASH base). */
+const DASH_INSIGHT_CARD = `${DASH_CHART_CARD} !p-6`
+
+const DASH_TABLE_WRAP =
+  'overflow-x-auto rounded-2xl border border-[var(--pf-border)] bg-[var(--pf-card)]/50 shadow-[var(--pf-shadow)] backdrop-blur-md'
+
+const bentoContainer = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.055, delayChildren: 0.03 },
+  },
+}
+
+const bentoItem = {
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.22, ease: [0.25, 0.1, 0.25, 1] } },
+}
+
+function dashboardInsightMeta(line) {
+  const t = String(line).toLowerCase()
+  if (t.includes('decreased') || t.includes('consider paying')) {
+    return {
+      bar: 'border-l-rose-500 dark:border-l-rose-400',
+      bg: 'bg-rose-500/[0.07] dark:bg-rose-500/10',
+      Icon: ArrowTrendingDownIcon,
+    }
+  }
+  if (t.includes('increased') || t.includes('comfortable range')) {
+    return {
+      bar: 'border-l-emerald-500 dark:border-l-emerald-400',
+      bg: 'bg-emerald-500/[0.07] dark:bg-emerald-500/10',
+      Icon: ArrowTrendingUpIcon,
+    }
+  }
+  if (t.includes('largest expense') || t.includes('category')) {
+    return {
+      bar: 'border-l-violet-500 dark:border-l-violet-400',
+      bg: 'bg-violet-500/[0.07] dark:bg-violet-500/10',
+      Icon: ChartPieIcon,
+    }
+  }
+  if (t.includes('due in the next') || t.includes('emi')) {
+    return {
+      bar: 'border-l-amber-500 dark:border-l-amber-400',
+      bg: 'bg-amber-500/[0.07] dark:bg-amber-500/10',
+      Icon: CalendarDaysIcon,
+    }
+  }
+  return {
+    bar: 'border-l-sky-500 dark:border-l-sky-400',
+    bg: 'bg-sky-500/[0.06] dark:bg-sky-500/10',
+    Icon: InformationCircleIcon,
+  }
+}
 
 const DASH_TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'cashflow', label: 'Cashflow' },
   { id: 'credit', label: 'Credit & loans' },
 ]
-
-function buildDashboardMonthOptions(count = 48) {
-  const out = []
-  const d = new Date()
-  d.setDate(1)
-  for (let i = 0; i < count; i++) {
-    const y = d.getFullYear()
-    const m = d.getMonth() + 1
-    out.push({
-      y,
-      m,
-      value: `${y}-${String(m).padStart(2, '0')}`,
-      label: d.toLocaleString(undefined, { month: 'short', year: 'numeric' }),
-    })
-    d.setMonth(d.getMonth() - 1)
-  }
-  return out
-}
 
 function monthBounds(y, m) {
   const start = `${y}-${String(m).padStart(2, '0')}-01`
@@ -133,8 +185,10 @@ export default function PersonalFinanceDashboardPage() {
   const [emisDueMonth, setEmisDueMonth] = useState(null)
   const [accountingPolicy, setAccountingPolicy] = useState(null)
   const [creditCardsSummary, setCreditCardsSummary] = useState(null)
+  const [expenseByAccountReport, setExpenseByAccountReport] = useState([])
+  const [expenseByAccountReportLoading, setExpenseByAccountReportLoading] = useState(false)
+  const [expenseByAccountReportError, setExpenseByAccountReportError] = useState('')
 
-  const monthOptions = useMemo(() => buildDashboardMonthOptions(48), [])
   const accountQuery = bankFilter === '' ? undefined : bankFilter
   const dashMonthValue = `${dashYear}-${String(dashMonth).padStart(2, '0')}`
   const dashMonthLabel = useMemo(
@@ -142,15 +196,8 @@ export default function PersonalFinanceDashboardPage() {
     [dashYear, dashMonth],
   )
 
-  const tooltipBox = useMemo(
-    () => ({
-      borderRadius: 12,
-      border: isDark ? '1px solid #475569' : '1px solid #bae6fd',
-      background: isDark ? '#1e293b' : '#ffffff',
-      color: isDark ? '#e2e8f0' : '#0f172a',
-    }),
-    [isDark],
-  )
+  const tooltipBox = useMemo(() => chartTooltipBox(isDark), [isDark])
+  const gridStroke = useMemo(() => chartGridStroke(isDark), [isDark])
 
   const hydrateFromBundle = useCallback((b) => {
     setSummary(b.summary && typeof b.summary === 'object' ? b.summary : null)
@@ -270,6 +317,36 @@ export default function PersonalFinanceDashboardPage() {
     setDashStage(2)
   }, [summary])
 
+  useEffect(() => {
+    if (activeTab !== 'cashflow') return
+    if (!getPfToken()) return
+    let cancelled = false
+    const { start, end } = monthBounds(dashYear, dashMonth)
+    setExpenseByAccountReportLoading(true)
+    setExpenseByAccountReportError('')
+    getReportsSummary({
+      from: start,
+      to: end,
+      accountId: bankFilter || undefined,
+    })
+      .then((data) => {
+        if (cancelled) return
+        const rows = Array.isArray(data?.expense_by_account) ? data.expense_by_account : []
+        setExpenseByAccountReport(rows)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setExpenseByAccountReport([])
+        setExpenseByAccountReportError(e?.message || 'Could not load expense by account.')
+      })
+      .finally(() => {
+        if (!cancelled) setExpenseByAccountReportLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, dashYear, dashMonth, bankFilter, tick])
+
   const pieData = useMemo(
     () =>
       (expenseCats || []).map((row) => ({
@@ -331,6 +408,63 @@ export default function PersonalFinanceDashboardPage() {
       { name: 'Loans given', value: lent },
     ].filter((x) => x.value > 0.01)
   }, [summary])
+
+  /** Overview insight charts (derived only — no new API). */
+  const overviewNwThreeLineData = useMemo(() => {
+    const liab = Number(summary?.total_liabilities) || 0
+    return networthDisplayData.map((r) => ({
+      month: r.month,
+      netWorth: r.netWorth,
+      ...(bankFilter
+        ? {}
+        : {
+            assets: r.netWorth + liab,
+            liabilities: liab,
+          }),
+    }))
+  }, [networthDisplayData, summary, bankFilter])
+
+  const expenseCategoryHBarData = useMemo(
+    () =>
+      [...(expenseCats || [])]
+        .map((c) => ({ name: c.category || 'Other', amount: Number(c.total) || 0 }))
+        .filter((x) => x.amount > 0.01)
+        .sort((a, b) => b.amount - a.amount),
+    [expenseCats],
+  )
+
+  const cashflowHealthData = useMemo(
+    () =>
+      (incomeExpense || []).map((row) => {
+        const inc = Number(row.income) || 0
+        const exp = Number(row.expense) || 0
+        return { month: row.month, moneyIn: inc, moneyOut: exp, net: inc - exp }
+      }),
+    [incomeExpense],
+  )
+
+  const debtTrendData = useMemo(() => {
+    const liab = Number(summary?.total_liabilities) || 0
+    const cc = Number(creditCardsSummary?.used_limit) || 0
+    return (incomeExpense || []).map((row) => ({
+      month: row.month,
+      emi: row.month === dashMonthValue ? emiM : 0,
+      loanOutstanding: liab,
+      ccOutstanding: cc,
+    }))
+  }, [incomeExpense, dashMonthValue, emiM, summary, creditCardsSummary])
+
+  const savingsRateTrendData = useMemo(
+    () =>
+      (incomeExpense || []).map((row) => {
+        const inc = Number(row.income) || 0
+        const exp = Number(row.expense) || 0
+        const emi = row.month === dashMonthValue ? emiM : 0
+        const rate = inc > 0.01 ? ((inc - exp - emi) / inc) * 100 : null
+        return { month: row.month, rate: rate != null ? Math.round(rate * 10) / 10 : null }
+      }),
+    [incomeExpense, dashMonthValue, emiM],
+  )
 
   const financialHealth = useMemo(() => {
     const income = incomeM
@@ -522,8 +656,8 @@ export default function PersonalFinanceDashboardPage() {
   }, [loanAnalytics])
 
   const COMPOSITION_COLORS = isDark
-    ? ['#38bdf8', '#4ade80', '#a78bfa', '#fbbf24', '#f472b6']
-    : ['#0369a1', '#059669', '#7c3aed', '#d97706', '#db2777']
+    ? ['#60a5fa', '#4ade80', '#a78bfa', '#fbbf24', '#f472b6']
+    : ['#0ea5e9', '#34d399', '#8b5cf6', '#f59e0b', '#e879a9']
 
   const invBarData = useMemo(
     () =>
@@ -532,6 +666,11 @@ export default function PersonalFinanceDashboardPage() {
         value: Number(row.value) || 0,
       })),
     [invAlloc],
+  )
+
+  const investmentAllocationBarSorted = useMemo(
+    () => [...invBarData].sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0)),
+    [invBarData],
   )
 
   const cashflowBarData = useMemo(() => {
@@ -568,6 +707,102 @@ export default function PersonalFinanceDashboardPage() {
     [cashflowMonth, dashMonthLabel],
   )
 
+  const cashflowSnapshotTiles = useMemo(() => {
+    if (!cashflowMonth) return []
+    const dm = dashMonthLabel
+    const cf = cashflowMonth
+    return [
+      {
+        key: 'totex',
+        title: `Expense · ${dm}`,
+        value: formatInr(cf.total_expense_month),
+        subtitle: 'All recorded expenses in this period',
+        icon: CreditCardIcon,
+        tint: 'rose',
+      },
+      {
+        key: 'ccsw',
+        title: 'CC expenses (swipes)',
+        value: formatInr(cf.credit_card_expense_month),
+        subtitle: 'P&L on swipe date — bank not debited yet',
+        icon: CreditCardIcon,
+        tint: 'fuchsia',
+      },
+      {
+        key: 'ccpay',
+        title: 'CC bill payments',
+        value: formatInr(cf.credit_card_bill_payments_month),
+        subtitle: 'Cash paid to card issuer this month',
+        icon: BanknotesIcon,
+        tint: 'purple',
+      },
+      {
+        key: 'exdep',
+        title: 'External deposits',
+        value: formatInr(cf.external_deposit_month),
+        subtitle: 'Ledger: EXTERNAL_DEPOSIT',
+        icon: ArrowTrendingUpIcon,
+        tint: 'teal',
+      },
+      {
+        key: 'exwd',
+        title: 'External withdrawals',
+        value: formatInr(cf.external_withdrawal_month),
+        subtitle: 'Ledger: EXTERNAL_WITHDRAWAL',
+        icon: ArrowTrendingDownIcon,
+        tint: 'orange',
+      },
+      {
+        key: 'food',
+        title: 'Food & groceries',
+        value: formatInr(cf.food_expense),
+        subtitle: 'Category total',
+        icon: ChartPieIcon,
+        tint: 'lime',
+      },
+      {
+        key: 'emi',
+        title: 'EMI expenses',
+        value: formatInr(cf.emi_expense_month),
+        subtitle: 'EMI – Loans + cards + EMI-like labels',
+        icon: ReceiptPercentIcon,
+        tint: 'amber',
+      },
+      {
+        key: 'dairy',
+        title: 'Dairy (farm + feed)',
+        value: formatInr(cf.dairy_expense),
+        subtitle: 'Dairy Farm + Feed categories',
+        icon: TruckIcon,
+        tint: 'emerald',
+      },
+      {
+        key: 'pend',
+        title: 'Pending EMIs (receivable)',
+        value: formatInr(cf.pending_emis_receivable),
+        subtitle: 'Unpaid installments you are owed',
+        icon: CalendarDaysIcon,
+        tint: 'yellow',
+      },
+      {
+        key: 'cashb',
+        title: 'Cash-style accounts',
+        value: formatInr(cf.cash_balance),
+        subtitle: 'Cash / wallet / petty (heuristic)',
+        icon: BanknotesIcon,
+        tint: 'green',
+      },
+      {
+        key: 'bankb',
+        title: 'Bank-style accounts',
+        value: formatInr(cf.bank_balance),
+        subtitle: 'Other account types (balance sum)',
+        icon: BuildingLibraryIcon,
+        tint: 'sky',
+      },
+    ]
+  }, [cashflowMonth, dashMonthLabel])
+
   const filterBankName = useMemo(() => {
     if (!bankFilter) return ''
     return accounts.find((a) => String(a.id) === bankFilter)?.account_name ?? ''
@@ -585,72 +820,44 @@ export default function PersonalFinanceDashboardPage() {
       : 'Latest income and expense rows · add more from Income or Expenses in the sidebar'
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-4 md:space-y-6 lg:space-y-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl md:text-3xl">Dashboard</h1>
-          {loading ? <span className="text-xs text-slate-400 dark:text-slate-500 md:text-sm">Updating…</span> : null}
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {summary ? (
-            <div
-              className="mr-auto w-full rounded-2xl border border-slate-200/90 bg-white px-3 py-2 shadow-sm sm:mr-0 sm:w-auto sm:max-w-[13rem] dark:border-slate-600 dark:bg-slate-800/90"
-              title="Blended score: savings rate, credit utilization, EMI vs income, net worth change, cash cushion vs spending"
+    <div className="mx-auto max-w-[1400px] space-y-8 px-1 sm:px-0">
+      <PageHeader
+        title="Dashboard"
+        titleClassName="text-[1.75rem] font-semibold tracking-tight text-[var(--pf-text)] leading-tight"
+        description={loading ? 'Updating…' : undefined}
+        action={
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            {summary ? (
+              <div
+                className="mr-auto w-full rounded-2xl border border-[var(--pf-border)] bg-[var(--pf-card)] px-3 py-2 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:mr-0 sm:w-auto sm:max-w-[13rem]"
+                title="Blended score: savings rate, credit utilization, EMI vs income, net worth change, cash cushion vs spending"
+              >
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">
+                  Financial health
+                </p>
+                <p className="font-mono text-xl font-bold tabular-nums text-[var(--pf-text)]">
+                  {financialHealth.score}
+                  <span className="text-sm font-normal text-[var(--pf-text-muted)]"> / 100</span>
+                </p>
+                <p className="text-xs text-[var(--pf-text-muted)]">{financialHealth.label}</p>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setMonthModalOpen(true)}
+              className={`${pfSelectCompact} min-w-[6.5rem] text-left font-bold text-[var(--pf-text)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.97]`}
             >
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Financial health
-              </p>
-              <p className="font-mono text-xl font-bold tabular-nums text-slate-900 dark:text-slate-100">
-                {financialHealth.score}
-                <span className="text-sm font-normal text-slate-500 dark:text-slate-400"> / 100</span>
-              </p>
-              <p className="text-xs text-slate-600 dark:text-slate-300">{financialHealth.label}</p>
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => setMonthModalOpen(true)}
-            className={`${pfSelectCompact} min-w-[6.5rem] text-left font-bold text-slate-900 transition hover:bg-slate-50 active:scale-[0.97] dark:text-slate-100`}
-          >
-            {new Date(dashYear, dashMonth - 1, 1).toLocaleString(undefined, { month: 'short', year: 'numeric' })}
-          </button>
-          <select
-            aria-label="Month (quick)"
-            className={`${pfSelectCompact} hidden max-w-[9rem] sm:block`}
-            value={dashMonthValue}
-            onChange={(e) => {
-              const v = e.target.value
-              const [y, m] = v.split('-').map(Number)
-              if (y && m) {
-                setDashYear(y)
-                setDashMonth(m)
-              }
-            }}
-          >
-            {monthOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <label htmlFor="pf-bank-filter" className="sr-only">
-            Bank or account
-          </label>
-          <select
-            id="pf-bank-filter"
-            className={`${pfSelectCompact} min-w-[6.5rem] flex-[1.2] sm:max-w-[12rem]`}
-            value={bankFilter}
-            onChange={(e) => setBankFilter(e.target.value)}
-          >
-            <option value="">All banks</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={String(a.id)}>
-                {a.account_name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+              {new Date(dashYear, dashMonth - 1, 1).toLocaleString(undefined, { month: 'short', year: 'numeric' })}
+            </button>
+            <PfBankAccountSelect
+              className="flex-[1.2] sm:max-w-[16rem]"
+              value={bankFilter}
+              onChange={setBankFilter}
+              accounts={accounts}
+            />
+          </div>
+        }
+      />
 
       {bankFilter ? (
         <p className="hidden rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-900 md:block">
@@ -660,9 +867,9 @@ export default function PersonalFinanceDashboardPage() {
       ) : null}
 
       {showUnallocatedHint ? (
-        <div className="hidden rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 md:block">
-          <p className="font-semibold text-amber-900">Cash total may look low vs income/expense</p>
-          <p className="mt-1 text-amber-900/90">
+        <div className="hidden rounded-2xl border border-amber-200/90 bg-amber-50 px-4 py-3 text-sm text-amber-950 md:block dark:border-amber-800/70 dark:bg-amber-950/45 dark:text-amber-50/95">
+          <p className="font-semibold text-amber-900 dark:text-amber-100">Cash total may look low vs income/expense</p>
+          <p className="mt-1 text-amber-900/90 dark:text-amber-100/90">
             You have{' '}
             {unallocInc > 0 ? (
               <>
@@ -673,7 +880,21 @@ export default function PersonalFinanceDashboardPage() {
             {unallocExp > 0 ? (
               <>{formatInr(unallocExp)} expenses {periodModeMonth ? `in ${dashMonthLabel}` : 'YTD'} </>
             ) : null}
-            not linked to any bank account. Link transactions to accounts in Income/Expenses.
+            with no bank account linked. Add a{' '}
+            <span className="font-semibold text-amber-950 dark:text-amber-50">cash / wallet / petty cash</span> account
+            under{' '}
+            <Link to="/personal-finance/accounts" className="font-semibold text-amber-950 underline decoration-amber-700/70 underline-offset-2 hover:text-amber-900 dark:text-amber-200 dark:decoration-amber-400/80">
+              Accounts
+            </Link>
+            , then assign those rows to it on{' '}
+            <Link to="/personal-finance/expenses" className="font-semibold text-amber-950 underline decoration-amber-700/70 underline-offset-2 hover:text-amber-900 dark:text-amber-200 dark:decoration-amber-400/80">
+              Expenses
+            </Link>{' '}
+            (or{' '}
+            <Link to="/personal-finance/income" className="font-semibold text-amber-950 underline decoration-amber-700/70 underline-offset-2 hover:text-amber-900 dark:text-amber-200 dark:decoration-amber-400/80">
+              Income
+            </Link>
+            ) so cash totals stay consistent.
           </p>
         </div>
       ) : null}
@@ -694,97 +915,104 @@ export default function PersonalFinanceDashboardPage() {
       {activeTab === 'overview' && (
         <>
       {loading && !summary ? (
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-hidden>
+        <div className="grid grid-cols-12 gap-6" aria-hidden>
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className={`animate-pulse rounded-2xl bg-slate-200/70 ${i === 0 ? 'col-span-2 h-32 xl:col-span-1' : 'h-28'}`}
+              className={`animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10 ${i === 0 ? 'col-span-12 h-32 md:col-span-6 xl:col-span-4' : 'col-span-6 h-28 md:col-span-3 xl:col-span-4'}`}
             />
           ))}
         </div>
       ) : null}
       <section aria-label="Financial summary" className={loading && !summary ? 'hidden' : ''}>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <KpiCard
-            wrapperClassName="col-span-2 xl:col-span-2"
-            title="Net worth"
-            value={formatInr(summary?.net_worth)}
-            subtitle={bankFilter ? 'Selected account lens where applicable' : 'Assets + receivables − liabilities'}
-            trendLabel={netWorthMomLabel || undefined}
-            icon={ScaleIcon}
-            iconTintClass="bg-violet-100 text-violet-700 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-[#5b21b6] md:to-[#4c1d95]"
-          />
-          <KpiCard
-            title="Cash balance"
-            value={formatInr(cashBankTotal)}
-            subtitle="Cash + bank accounts"
-            icon={BanknotesIcon}
-            iconTintClass="bg-sky-100 text-sky-700 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-slate-600 md:to-slate-800"
-          />
-          <KpiCard
-            title="Investments"
-            value={formatInr(summary?.total_investment)}
-            subtitle="Funds, FDs, equity (book)"
-            icon={ChartPieIcon}
-            iconTintClass="bg-cyan-100 text-cyan-700 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-sky-700 md:to-blue-800"
-          />
-          <KpiCard
-            title="Total liabilities"
-            value={formatInr(summary?.total_liabilities)}
-            subtitle="Loans & cards outstanding"
-            icon={ReceiptPercentIcon}
-            iconTintClass="bg-slate-200 text-slate-800 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-rose-900/90 md:to-slate-900"
-          />
-          <KpiCard
-            title="Credit utilization"
-            value={creditCardsSummary?.utilization_pct != null ? `${creditCardsSummary.utilization_pct}%` : '—'}
-            subtitle={
-              creditCardsSummary?.total_credit_limit
-                ? `of ${formatInr(creditCardsSummary.total_credit_limit)} limit`
-                : 'Add cards to track'
-            }
-            icon={CreditCardIcon}
-            iconTintClass="bg-amber-100 text-amber-800 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-amber-700 md:to-orange-700"
-          />
-          <KpiCard
-            title="Savings rate"
-            value={
-              incomeM > 0.01 && savingsRateFormula != null ? `${(savingsRateFormula * 100).toFixed(1)}%` : '—'
-            }
-            subtitle="(Income − expense − EMI) / income"
-            icon={ArrowTrendingUpIcon}
-            iconTintClass="bg-emerald-100 text-emerald-800 md:bg-white/20 md:text-white"
-            gradientClass="md:bg-gradient-to-br md:from-emerald-800 md:to-teal-700"
-          />
-        </div>
-      </section>
-
-      <section
-        aria-label="Key ratios"
-        className={`grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5 ${loading && !summary ? 'hidden' : ''}`}
-      >
-        {ratioCards.map((r) => (
-          <div
-            key={r.label}
-            className="rounded-xl border border-slate-200/80 bg-white px-3 py-2.5 dark:border-slate-600 dark:bg-slate-800/80"
-          >
-            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">{r.label}</p>
-            <p className="mt-0.5 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
-              {r.value}
-            </p>
-            <p className="mt-0.5 text-[10px] leading-snug text-slate-400 dark:text-slate-500">{r.hint}</p>
+        <motion.div
+          className="grid grid-cols-12 gap-6"
+          variants={bentoContainer}
+          initial="hidden"
+          animate="show"
+        >
+          <motion.div variants={bentoItem} className="col-span-12 min-h-[1px] xl:col-span-4">
+            <KpiCard
+              wrapperClassName="h-full min-h-[140px]"
+              title="Net worth"
+              value={formatInr(summary?.net_worth)}
+              subtitle={bankFilter ? 'Selected account lens where applicable' : 'Assets + receivables − liabilities'}
+              trendLabel={netWorthMomLabel || undefined}
+              icon={ScaleIcon}
+              tint="violet"
+            />
+          </motion.div>
+          <div className="col-span-12 grid grid-cols-2 gap-6 md:grid-cols-2 xl:col-span-8 xl:grid-cols-2">
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard title="Cash balance" value={formatInr(cashBankTotal)} subtitle="Cash + bank accounts" icon={BanknotesIcon} tint="blue" />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Investments"
+                value={formatInr(summary?.total_investment)}
+                subtitle="Funds, FDs, equity (book)"
+                icon={ChartPieIcon}
+                tint="indigo"
+              />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Total liabilities"
+                value={formatInr(summary?.total_liabilities)}
+                subtitle="Loans & cards outstanding"
+                icon={ReceiptPercentIcon}
+                tint="rose"
+              />
+            </motion.div>
+            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+              <KpiCard
+                title="Credit utilization"
+                value={creditCardsSummary?.utilization_pct != null ? `${creditCardsSummary.utilization_pct}%` : '—'}
+                subtitle={
+                  creditCardsSummary?.total_credit_limit
+                    ? `of ${formatInr(creditCardsSummary.total_credit_limit)} limit`
+                    : 'Add cards to track'
+                }
+                icon={CreditCardIcon}
+                tint="amber"
+              />
+            </motion.div>
           </div>
-        ))}
+          <motion.div variants={bentoItem} className="col-span-12 md:col-span-6 xl:col-span-4">
+            <KpiCard
+              title="Savings rate"
+              value={incomeM > 0.01 && savingsRateFormula != null ? `${(savingsRateFormula * 100).toFixed(1)}%` : '—'}
+              subtitle="(Income − expense − EMI) / income"
+              icon={ArrowTrendingUpIcon}
+              tint="emerald"
+            />
+          </motion.div>
+          <div className="col-span-12 md:col-span-6 xl:col-span-8">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-5">
+              {ratioCards.map((r) => (
+                <motion.div key={r.label} variants={bentoItem} className="min-w-0">
+                  <div className="h-full rounded-2xl border border-black/[0.06] bg-white/50 px-3 py-3 shadow-[var(--pf-shadow)] backdrop-blur-md transition-all duration-200 hover:border-black/10 hover:bg-white/65 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/[0.14]">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+                      {r.label}
+                    </p>
+                    <p className="mt-1 font-mono text-sm font-bold tabular-nums text-slate-900 dark:text-white">{r.value}</p>
+                    <p className="mt-1 text-[10px] leading-snug text-slate-500 dark:text-[var(--pf-text-muted)]">{r.hint}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </motion.div>
       </section>
 
-      <section className={`grid min-w-0 gap-4 lg:grid-cols-2 ${loading && !summary ? 'hidden' : ''}`}>
-        <div className={`min-w-0 ${pfChartCard}`}>
-          <h2 className={chartTitle}>Net worth composition</h2>
+      <div className={`space-y-4 ${loading && !summary ? 'hidden' : ''}`}>
+        <div>
+          <h2 className={sectionTitleCls}>Composition & balance sheet</h2>
+          <p className={sectionSubCls}>Asset mix and how assets, liabilities, and net worth move over the selected window.</p>
+        </div>
+        <section className="grid min-w-0 gap-6 lg:grid-cols-2">
+          <div className={`min-w-0 ${DASH_CHART_CARD}`}>
+            <h2 className={chartTitle}>Net worth composition</h2>
           <p className={chartSub}>Cash, bank, investments, fixed assets, and loans you lent</p>
           <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
             {compositionPieData.length === 0 ? (
@@ -803,7 +1031,7 @@ export default function PersonalFinanceDashboardPage() {
                     innerRadius={56}
                     outerRadius={92}
                     paddingAngle={2}
-                    stroke={isDark ? '#1e293b' : '#fff'}
+                    stroke={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.85)'}
                     strokeWidth={2}
                     label={(props) => {
                       const name = props?.name != null ? String(props.name) : ''
@@ -822,7 +1050,7 @@ export default function PersonalFinanceDashboardPage() {
             )}
           </div>
         </div>
-        <div className={`min-w-0 ${pfChartCard}`}>
+        <div className={`min-w-0 ${DASH_CHART_CARD}`}>
           <h2 className={chartTitle}>Assets, liabilities & net worth</h2>
           <p className={chartSub}>
             Liabilities use today&apos;s balance; bars follow the net worth window ({nwHorizon === 6 ? '6' : nwHorizon === 36 ? '36' : '12'}{' '}
@@ -836,7 +1064,21 @@ export default function PersonalFinanceDashboardPage() {
             ) : (
               <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
                 <BarChart data={overviewAssetsLiabData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
+                  <defs>
+                    <linearGradient id="pfDashBarAssets" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0.65} />
+                    </linearGradient>
+                    <linearGradient id="pfDashBarLiab" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#fb923c" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="#ea580c" stopOpacity={0.6} />
+                    </linearGradient>
+                    <linearGradient id="pfDashBarNw" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="#6366f1" stopOpacity={0.65} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} strokeOpacity={0.35} />
                   <XAxis
                     dataKey="month"
                     tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
@@ -852,77 +1094,90 @@ export default function PersonalFinanceDashboardPage() {
                   />
                   <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
                   <Legend />
-                  <Bar dataKey="assets" name="Assets (book)" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="liabilities" name="Liabilities" fill="#f97316" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="netWorth" name="Net worth" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="assets" name="Assets (book)" fill="url(#pfDashBarAssets)" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="liabilities" name="Liabilities" fill="url(#pfDashBarLiab)" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="netWorth" name="Net worth" fill="url(#pfDashBarNw)" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </div>
         </div>
-      </section>
-
-      <div
-        className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${loading && !summary ? 'hidden' : ''}`}
-      >
-        <p className={`${chartSub} !mt-0`}>Net worth & allocation · {dashYear}</p>
-        <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/90">
-          {[
-            { m: 6, label: '6 months' },
-            { m: 12, label: '1 year' },
-            { m: 36, label: '3 years' },
-          ].map(({ m, label }) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setNwHorizon(m)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                nwHorizon === m
-                  ? 'bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-slate-100'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        </section>
       </div>
 
-      {dashStage >= 1 ? (
-        <Suspense
-          fallback={
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-hidden>
-              {[1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className={`${pfChartCard} h-[300px] animate-pulse bg-slate-200/50 dark:bg-slate-700/40`}
-                />
-              ))}
-            </div>
-          }
-        >
-          <LazyDashboardCharts
-            chartMode="overview"
-            isDark={isDark}
-            barIeData={barIeData}
-            pieData={pieData}
-            networthData={networthDisplayData}
-            invBarData={invBarData}
-            cashflowTrendData={cashflowTrendData}
-            dashYear={dashYear}
-            dashMonthLabel={dashMonthLabel}
-            filterBankName={filterBankName}
-            bankFilter={bankFilter}
-            pfChartCard={pfChartCard}
-            chartTitleCls={chartTitle}
-            chartSubCls={chartSub}
-          />
-        </Suspense>
-      ) : null}
+      <div className={`space-y-4 ${loading && !summary ? 'hidden' : ''}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className={sectionTitleCls}>Insights & behavior</h2>
+            <p className={sectionSubCls}>
+              Trends, ratios, and cash behavior from your existing dashboard data · {dashYear}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1 rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/40 p-1 backdrop-blur-sm">
+            {[
+              { m: 6, label: '6 mo' },
+              { m: 12, label: '1 yr' },
+              { m: 36, label: '3 yr' },
+            ].map(({ m, label }) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setNwHorizon(m)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  nwHorizon === m
+                    ? 'bg-[var(--pf-card)] text-[var(--pf-text)] shadow-sm dark:bg-white/10'
+                    : 'text-[var(--pf-text-muted)] hover:text-[var(--pf-text)]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {dashStage >= 1 ? (
+          <Suspense
+            fallback={
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2" aria-hidden>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={`${DASH_INSIGHT_CARD} h-[300px] animate-pulse bg-slate-200/50 dark:bg-slate-700/40`}
+                  />
+                ))}
+              </div>
+            }
+          >
+            <LazyDashboardCharts
+              chartMode="overview"
+              isDark={isDark}
+              barIeData={barIeData}
+              pieData={pieData}
+              networthData={networthDisplayData}
+              invBarData={invBarData}
+              cashflowTrendData={cashflowTrendData}
+              overviewNwThreeLineData={overviewNwThreeLineData}
+              expenseCategoryHBarData={expenseCategoryHBarData}
+              cashflowHealthData={cashflowHealthData}
+              debtTrendData={debtTrendData}
+              savingsRateTrendData={savingsRateTrendData}
+              accountDistributionData={compositionPieData}
+              investmentAllocationBarSorted={investmentAllocationBarSorted}
+              dashYear={dashYear}
+              dashMonthLabel={dashMonthLabel}
+              filterBankName={filterBankName}
+              bankFilter={bankFilter}
+              pfChartCard={DASH_CHART_CARD}
+              pfInsightCard={DASH_INSIGHT_CARD}
+              chartTitleCls={chartTitle}
+              chartSubCls={chartSub}
+            />
+          </Suspense>
+        ) : null}
+      </div>
 
       {dashStage >= 2 ? (
         <>
-          <section className={pfChartCard} aria-label="Monthly financial summary">
+          <section className={DASH_CHART_CARD} aria-label="Monthly financial summary">
             <h2 className={chartTitle}>Monthly financial summary</h2>
             <p className={chartSub}>
               Income, expense, EMI ({dashMonthLabel} only), savings, and month-on-month net worth change · {dashYear}
@@ -935,7 +1190,29 @@ export default function PersonalFinanceDashboardPage() {
               ) : (
                 <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={260}>
                   <ComposedChart data={monthlyFinanceBarData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
+                    <defs>
+                      <linearGradient id="pfDashInc" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#4ade80" stopOpacity={0.95} />
+                        <stop offset="100%" stopColor="#16a34a" stopOpacity={0.55} />
+                      </linearGradient>
+                      <linearGradient id="pfDashExp" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#fb923c" stopOpacity={0.95} />
+                        <stop offset="100%" stopColor="#ea580c" stopOpacity={0.55} />
+                      </linearGradient>
+                      <linearGradient id="pfDashEmi" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#f472b6" stopOpacity={0.95} />
+                        <stop offset="100%" stopColor="#db2777" stopOpacity={0.55} />
+                      </linearGradient>
+                      <linearGradient id="pfDashSav" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#93c5fd" stopOpacity={0.95} />
+                        <stop offset="100%" stopColor="#2563eb" stopOpacity={0.55} />
+                      </linearGradient>
+                      <linearGradient id="pfDashNwLine" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#c084fc" />
+                        <stop offset="100%" stopColor="#a855f7" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} strokeOpacity={0.35} />
                     <XAxis
                       dataKey="month"
                       tick={{ fontSize: 9, fill: isDark ? '#94a3b8' : '#64748b' }}
@@ -959,18 +1236,40 @@ export default function PersonalFinanceDashboardPage() {
                     />
                     <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
                     <Legend verticalAlign="bottom" height={36} />
-                    <Bar yAxisId="left" dataKey="income" name="Income" fill="#22c55e" maxBarSize={28} radius={[4, 4, 0, 0]} />
-                    <Bar yAxisId="left" dataKey="expense" name="Expense" fill="#ea580c" maxBarSize={28} radius={[4, 4, 0, 0]} />
-                    <Bar yAxisId="left" dataKey="emi" name="EMI" fill="#db2777" maxBarSize={28} radius={[4, 4, 0, 0]} />
-                    <Bar yAxisId="left" dataKey="savings" name="Savings" fill="#2563eb" maxBarSize={28} radius={[4, 4, 0, 0]} />
+                    <Bar
+                      yAxisId="left"
+                      dataKey="income"
+                      name="Income"
+                      fill="url(#pfDashInc)"
+                      maxBarSize={28}
+                      radius={[8, 8, 0, 0]}
+                    />
+                    <Bar
+                      yAxisId="left"
+                      dataKey="expense"
+                      name="Expense"
+                      fill="url(#pfDashExp)"
+                      maxBarSize={28}
+                      radius={[8, 8, 0, 0]}
+                    />
+                    <Bar yAxisId="left" dataKey="emi" name="EMI" fill="url(#pfDashEmi)" maxBarSize={28} radius={[8, 8, 0, 0]} />
+                    <Bar
+                      yAxisId="left"
+                      dataKey="savings"
+                      name="Savings"
+                      fill="url(#pfDashSav)"
+                      maxBarSize={28}
+                      radius={[8, 8, 0, 0]}
+                    />
                     <Line
                       yAxisId="right"
                       type="monotone"
                       dataKey="nwChange"
                       name="NW Δ"
-                      stroke="#a855f7"
-                      strokeWidth={2}
-                      dot={{ r: 2 }}
+                      stroke="url(#pfDashNwLine)"
+                      strokeWidth={2.5}
+                      dot={{ r: 2.5, strokeWidth: 1, fill: isDark ? '#09090b' : '#fff' }}
+                      activeDot={{ r: 5 }}
                     />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -979,37 +1278,56 @@ export default function PersonalFinanceDashboardPage() {
           </section>
 
           {insightsList.length > 0 ? (
-            <section
-              className={`${pfChartCard} border-sky-200/60 dark:border-sky-800/50`}
-              aria-label="Insights"
-            >
-              <h2 className={chartTitle}>Insights</h2>
-              <p className={chartSub}>Rule-based highlights from your current numbers</p>
-              <ul className="mt-3 list-inside list-disc space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
-                {insightsList.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
+            <section className={DASH_CHART_CARD} aria-label="Insights">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/50 text-[var(--pf-primary)]">
+                  <SparklesIcon className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h2 className={chartTitle}>Insights</h2>
+                  <p className={chartSub}>Automated observations from your current numbers</p>
+                </div>
+              </div>
+              <ul className="mt-4 space-y-2.5">
+                {insightsList.map((line, idx) => {
+                  const { bar, bg, Icon } = dashboardInsightMeta(line)
+                  return (
+                    <motion.li
+                      key={`insight-${idx}`}
+                      initial={{ opacity: 0, x: -6 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className={`flex gap-3 rounded-xl border border-[var(--pf-border)]/70 py-2.5 pl-1 pr-3 text-[13px] leading-snug text-slate-700 dark:text-[var(--pf-text)] ${bar} border-l-4 ${bg}`}
+                    >
+                      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--pf-text-muted)]" />
+                      <span className="min-w-0">{line}</span>
+                    </motion.li>
+                  )
+                })}
               </ul>
             </section>
           ) : null}
 
           {upcomingPaymentsRows.length > 0 ? (
-            <section className={pfChartCard} aria-label="Upcoming payments">
+            <section className={DASH_CHART_CARD} aria-label="Upcoming payments">
               <h2 className={chartTitle}>Upcoming payments</h2>
               <p className={chartSub}>Credit card and EMI obligations with due dates</p>
-              <div className={`mt-3 ${pfTableWrap}`}>
-                <table className={`${pfTable} min-w-[480px] text-sm`}>
-                  <thead>
+              <div className={`mt-3 ${DASH_TABLE_WRAP}`}>
+                <table className={`${pfTable} min-w-[480px] text-[13px]`}>
+                  <thead className="sticky top-0 z-[1]">
                     <tr>
-                      <th className={pfTh}>Type</th>
-                      <th className={pfTh}>Name</th>
-                      <th className={pfTh}>Due</th>
-                      <th className={pfThRight}>Amount</th>
+                      <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Type</th>
+                      <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Name</th>
+                      <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Due</th>
+                      <th className={`${pfThRight} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Amount</th>
                     </tr>
                   </thead>
                   <tbody>
                     {upcomingPaymentsRows.map((row, idx) => (
-                      <tr key={`${row.type}-${row.name}-${row.due}-${idx}`} className={pfTrHover}>
+                      <tr
+                        key={`${row.type}-${row.name}-${row.due}-${idx}`}
+                        className={`${pfTrHover} transition-colors hover:bg-white/[0.05] dark:hover:bg-white/[0.05]`}
+                      >
                         <td className={pfTd}>{row.type}</td>
                         <td className={`${pfTd} max-w-[12rem] truncate`}>{row.name}</td>
                         <td className={`${pfTd} tabular-nums text-slate-600 dark:text-slate-400`}>{row.due || '—'}</td>
@@ -1022,7 +1340,7 @@ export default function PersonalFinanceDashboardPage() {
             </section>
           ) : null}
 
-          <section aria-label="Recent transactions" className={pfChartCard}>
+          <section aria-label="Recent transactions" className={DASH_CHART_CARD}>
             <h2 className={chartTitle}>Recent transactions</h2>
             <p className={`${chartSub} hidden md:block`}>{txSubtitle}</p>
             {(summary?.recent_transactions ?? []).length === 0 ? (
@@ -1069,19 +1387,22 @@ export default function PersonalFinanceDashboardPage() {
                     )
                   })}
                 </div>
-                <div className={`mt-4 hidden md:block ${pfTableWrap}`}>
-                  <table className={`${pfTable} min-w-[520px]`}>
-                    <thead>
+                <div className={`mt-4 hidden md:block ${DASH_TABLE_WRAP}`}>
+                  <table className={`${pfTable} min-w-[520px] text-[13px]`}>
+                    <thead className="sticky top-0 z-[1]">
                       <tr>
-                        <th className={pfTh}>Type</th>
-                        <th className={pfTh}>Date</th>
-                        <th className={pfTh}>Category</th>
-                        <th className={pfThRight}>Amount</th>
+                        <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Type</th>
+                        <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Date</th>
+                        <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Category</th>
+                        <th className={`${pfThRight} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Amount</th>
                       </tr>
                     </thead>
                     <tbody>
                       {summary.recent_transactions.map((tx) => (
-                        <tr key={`${tx.kind}-${tx.id}`} className={pfTrHover}>
+                        <tr
+                          key={`${tx.kind}-${tx.id}`}
+                          className={`${pfTrHover} transition-colors hover:bg-white/[0.05] dark:hover:bg-white/[0.05]`}
+                        >
                           <td className={pfTd}>
                             <span
                               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
@@ -1111,258 +1432,273 @@ export default function PersonalFinanceDashboardPage() {
 
       {activeTab === 'cashflow' && (
         <>
-          <section aria-label="Cashflow summary KPIs" className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <section aria-label="Cashflow period overview" className="space-y-3">
+            <div>
+              <h2 className={sectionTitleCls}>Period overview</h2>
+              <p className={sectionSubCls}>
+                Income, spending, and ratios for {dashMonthLabel}
+                {bankFilter ? ` · ${filterBankName || 'filtered account'}` : ''}.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <KpiCard
+                stacked
                 title={`Income · ${dashMonthLabel}`}
                 value={formatInr(summary?.total_income)}
-                subtitle={bankFilter ? filterBankName || 'Account' : 'Recorded in period'}
+                subtitle={bankFilter ? filterBankName || 'Selected account' : 'Recorded in period'}
                 icon={ArrowTrendingUpIcon}
-                gradientClass="md:bg-gradient-to-br md:from-emerald-700 md:to-green-600"
+                tint="emerald"
               />
               <KpiCard
+                stacked
                 title={`Expense · ${dashMonthLabel}`}
                 value={formatInr(summary?.total_expense)}
                 subtitle="All expenses in period"
                 icon={CreditCardIcon}
-                gradientClass="md:bg-gradient-to-br md:from-rose-700 md:to-red-600"
+                tint="rose"
               />
               <KpiCard
+                stacked
                 title="EMI"
                 value={formatInr(cashflowMonth?.emi_expense_month)}
                 subtitle="EMI-tagged expense this month"
                 icon={ReceiptPercentIcon}
-                gradientClass="md:bg-gradient-to-br md:from-orange-600 md:to-amber-600"
+                tint="amber"
               />
               <KpiCard
+                stacked
                 title="Savings"
                 value={formatInr(incomeM - expenseM)}
                 subtitle="Income − expense (before EMI carve-out in rate)"
                 icon={BanknotesIcon}
-                gradientClass="md:bg-gradient-to-br md:from-slate-600 md:to-slate-800"
+                tint="slate"
               />
               <KpiCard
+                stacked
                 title="Savings rate"
                 value={
-                  incomeM > 0.01 && savingsRateFormula != null
-                    ? `${(savingsRateFormula * 100).toFixed(1)}%`
-                    : '—'
+                  incomeM > 0.01 && savingsRateFormula != null ? `${(savingsRateFormula * 100).toFixed(1)}%` : '—'
                 }
                 subtitle="(Income − expense − EMI) / income"
                 icon={ChartPieIcon}
-                gradientClass="md:bg-gradient-to-br md:from-indigo-700 md:to-violet-700"
+                tint="indigo"
               />
               <KpiCard
+                stacked
                 title="Expense ratio"
-                value={
-                  incomeM > 0.01 ? `${((expenseM / incomeM) * 100).toFixed(1)}%` : '—'
-                }
+                value={incomeM > 0.01 ? `${((expenseM / incomeM) * 100).toFixed(1)}%` : '—'}
                 subtitle="Expense / income"
                 icon={ScaleIcon}
-                gradientClass="md:bg-gradient-to-br md:from-sky-700 md:to-blue-800"
+                tint="sky"
               />
             </div>
           </section>
 
-          {dashStage >= 1 ? (
-            <Suspense
-              fallback={
-                <div className={`${pfChartCard} h-[280px] animate-pulse bg-slate-200/50 dark:bg-slate-700/40`} aria-hidden />
-              }
-            >
-              <LazyDashboardCharts
-                chartMode="cashflow"
-                isDark={isDark}
-                barIeData={barIeData}
-                pieData={pieData}
-                networthData={networthData}
-                invBarData={invBarData}
-                cashflowTrendData={cashflowTrendData}
-                dashYear={dashYear}
-                dashMonthLabel={dashMonthLabel}
-                filterBankName={filterBankName}
-                bankFilter={bankFilter}
-                pfChartCard={pfChartCard}
-                chartTitleCls={chartTitle}
-                chartSubCls={chartSub}
-              />
-            </Suspense>
-          ) : null}
-
-          <section className={pfChartCard} aria-label="Expense by account">
-            <h2 className={chartTitle}>Expense by account</h2>
-            <p className={chartSub}>
-              Splitting spend by linked bank account needs a dedicated aggregation endpoint; for now, use the category pie
-              above and assign accounts on the Expenses page.
-            </p>
-          </section>
-
-          <section aria-label="Month cashflow snapshot" className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <KpiCard
-                title={`Expense · ${dashMonthLabel}`}
-                value={formatInr(cashflowMonth?.total_expense_month)}
-                subtitle="All recorded expenses in this period"
-                icon={CreditCardIcon}
-                gradientClass="md:bg-gradient-to-br md:from-[#dc2626] md:to-[#ef4444]"
-              />
-              <KpiCard
-                title="CC expenses (swipes)"
-                value={formatInr(cashflowMonth?.credit_card_expense_month)}
-                subtitle={'P&L on swipe date — bank not debited yet'}
-                icon={CreditCardIcon}
-                gradientClass="md:bg-gradient-to-br md:from-fuchsia-600 md:to-purple-700"
-              />
-              <KpiCard
-                title="CC bill payments"
-                value={formatInr(cashflowMonth?.credit_card_bill_payments_month)}
-                subtitle="Cash paid to card issuer this month"
-                icon={BanknotesIcon}
-                gradientClass="md:bg-gradient-to-br md:from-violet-600 md:to-indigo-800"
-              />
-              <KpiCard
-                title="External deposits"
-                value={formatInr(cashflowMonth?.external_deposit_month)}
-                subtitle="Money into accounts from outside (ledger: EXTERNAL_DEPOSIT)"
-                icon={ArrowTrendingUpIcon}
-                gradientClass="md:bg-gradient-to-br md:from-teal-500 md:to-cyan-600"
-              />
-              <KpiCard
-                title="External withdrawals"
-                value={formatInr(cashflowMonth?.external_withdrawal_month)}
-                subtitle="Money out to outside world (ledger: EXTERNAL_WITHDRAWAL)"
-                icon={ArrowTrendingDownIcon}
-                gradientClass="md:bg-gradient-to-br md:from-orange-500 md:to-red-600"
-              />
-              <KpiCard
-                title="Food & groceries"
-                value={formatInr(cashflowMonth?.food_expense)}
-                subtitle="Category total"
-                icon={ChartPieIcon}
-                gradientClass="md:bg-gradient-to-br md:from-lime-500 md:to-green-600"
-              />
-              <KpiCard
-                title="EMI expenses"
-                value={formatInr(cashflowMonth?.emi_expense_month)}
-                subtitle="EMI – Loans + Credit Card + EMI-like labels"
-                icon={ReceiptPercentIcon}
-                gradientClass="md:bg-gradient-to-br md:from-red-500 md:to-rose-600"
-              />
-              <KpiCard
-                title="Dairy (farm + feed)"
-                value={formatInr(cashflowMonth?.dairy_expense)}
-                subtitle="Dairy Farm + Feed categories"
-                icon={TruckIcon}
-                gradientClass="md:bg-gradient-to-br md:from-emerald-600 md:to-teal-700"
-              />
-              <KpiCard
-                title="Pending EMIs (receivable)"
-                value={formatInr(cashflowMonth?.pending_emis_receivable)}
-                subtitle="Unpaid installments you are owed (loans you gave)"
-                icon={CalendarDaysIcon}
-                gradientClass="md:bg-gradient-to-br md:from-amber-500 md:to-yellow-600"
-              />
-              <KpiCard
-                title="Cash-style accounts"
-                value={formatInr(cashflowMonth?.cash_balance)}
-                subtitle="Accounts named cash / wallet / petty (heuristic)"
-                icon={BanknotesIcon}
-                gradientClass="md:bg-gradient-to-br md:from-green-600 md:to-emerald-700"
-              />
-              <KpiCard
-                title="Bank-style accounts"
-                value={formatInr(cashflowMonth?.bank_balance)}
-                subtitle="Other account types (remaining balance sum)"
-                icon={BuildingLibraryIcon}
-                gradientClass="md:bg-gradient-to-br md:from-sky-600 md:to-blue-700"
-              />
+          <section className="space-y-4" aria-label="Cashflow charts">
+            <div>
+              <h2 className={sectionTitleCls}>Charts</h2>
+              <p className={sectionSubCls}>Income vs expense, categories, and multi-series cashflow for {dashYear}.</p>
             </div>
+            {dashStage >= 1 ? (
+              <Suspense
+                fallback={
+                  <div className={`${DASH_CHART_CARD} h-[280px] animate-pulse bg-slate-200/50 dark:bg-slate-700/40`} aria-hidden />
+                }
+              >
+                <LazyDashboardCharts
+                  chartMode="cashflow"
+                  isDark={isDark}
+                  barIeData={barIeData}
+                  pieData={pieData}
+                  networthData={networthData}
+                  invBarData={invBarData}
+                  cashflowTrendData={cashflowTrendData}
+                  dashYear={dashYear}
+                  dashMonthLabel={dashMonthLabel}
+                  filterBankName={filterBankName}
+                  bankFilter={bankFilter}
+                  pfChartCard={DASH_CHART_CARD}
+                  chartTitleCls={chartTitle}
+                  chartSubCls={chartSub}
+                />
+              </Suspense>
+            ) : null}
           </section>
 
-          <section aria-label="Month cashflow charts" className="grid min-w-0 gap-4 lg:grid-cols-2">
-            <div className={`min-w-0 ${pfChartCard}`}>
-              <h2 className={chartTitle}>{dashMonthLabel} · amounts at a glance</h2>
-              <p className={chartSub}>Same buckets as the cards (₹)</p>
-              <div className="mt-3 h-[320px] min-h-[320px] min-w-0 w-full">
-                {cashflowBarData.length === 0 || cashflowBarData.every((d) => d.value === 0) ? (
-                  <p className="flex h-full items-center justify-center text-sm text-slate-500">
-                    No expense data for {dashMonthLabel} yet
-                  </p>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={240}>
-                    <BarChart
-                      data={cashflowBarData}
-                      layout="vertical"
-                      margin={{ top: 8, right: 16, left: 8, bottom: 0 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
-                      <XAxis
-                        type="number"
-                        tick={{ fontSize: 11, fill: isDark ? '#94a3b8' : '#64748b' }}
-                        stroke={isDark ? '#94a3b8' : '#64748b'}
-                        tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
-                      />
-                      <YAxis
-                        type="category"
-                        dataKey="name"
-                        width={92}
-                        tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
-                        stroke={isDark ? '#94a3b8' : '#64748b'}
-                      />
-                      <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
-                      <Bar dataKey="value" name="Amount" fill="#004080" radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
+          <section aria-label="Expense by account" className="space-y-3">
+            <div>
+              <h2 className={sectionTitleCls}>Expense by account</h2>
+              <p className={sectionSubCls}>
+                Totals from expense rows linked to each bank account in {dashMonthLabel} (same rules as Reports →
+                Summary). Assign an account on the Expenses page when missing.
+              </p>
+            </div>
+            {expenseByAccountReportError ? (
+              <div className="rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+                {expenseByAccountReportError}
               </div>
-            </div>
+            ) : null}
+            {expenseByAccountReportLoading ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-hidden>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-32 animate-pulse rounded-2xl bg-white/10 dark:bg-white/[0.06]" />
+                ))}
+              </div>
+            ) : expenseByAccountReport.length === 0 ? (
+              <div className={`${DASH_CHART_CARD} text-sm text-[var(--pf-text-muted)]`}>
+                {accounts.length === 0
+                  ? 'Add bank accounts under Accounts or Money movement, then link expenses to an account to see splits here.'
+                  : `No expenses with a linked account in ${dashMonthLabel}, or all amounts are under (No account). Link transactions on the Expenses page.`}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {expenseByAccountReport.map((row, i) => (
+                  <KpiCard
+                    stacked
+                    key={row.account_id != null ? `acc-${row.account_id}` : `row-${i}-${row.account_name}`}
+                    title={row.account_name || 'Account'}
+                    value={formatInr(row.amount)}
+                    subtitle={
+                      row.pct != null && Number(row.pct) > 0
+                        ? `${Number(row.pct).toFixed(0)}% of expense in this period`
+                        : 'Share of period expense'
+                    }
+                    icon={BuildingLibraryIcon}
+                    tint={['slate', 'sky', 'indigo', 'teal', 'rose', 'amber'][i % 6]}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
 
-            <div className={`min-w-0 ${pfChartCard}`}>
-              <h2 className={chartTitle}>Month breakdown · table</h2>
-              <p className={chartSub}>Quick copy-friendly totals</p>
-              <div className={`mt-3 ${pfTableWrap}`}>
-                <table className={`${pfTable} min-w-[280px]`}>
-                  <thead>
-                    <tr>
-                      <th className={pfTh}>Metric</th>
-                      <th className={pfThRight}>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cashflowTableRows.map((row) => (
-                      <tr key={row.label} className={pfTrHover}>
-                        <td className={`${pfTd} text-slate-700`}>{row.label}</td>
-                        <td className={pfTdRight}>{formatInr(row.value)}</td>
+          <section aria-label="Month cashflow snapshot" className="space-y-3">
+            <div>
+              <h2 className={sectionTitleCls}>{dashMonthLabel} · snapshot</h2>
+              <p className={sectionSubCls}>Ledger-style buckets for the selected month.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+              {cashflowSnapshotTiles.map((tile) => (
+                <KpiCard
+                  key={tile.key}
+                  title={tile.title}
+                  value={tile.value}
+                  subtitle={tile.subtitle}
+                  icon={tile.icon}
+                  tint={tile.tint}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section aria-label="Cashflow analytics" className="space-y-4">
+            <div>
+              <h2 className={sectionTitleCls}>Analytics</h2>
+              <p className={sectionSubCls}>Bar view and copy-friendly table for the same month buckets.</p>
+            </div>
+            <div className="grid min-w-0 gap-6 lg:grid-cols-2">
+              <div className={`min-w-0 ${DASH_CHART_CARD}`}>
+                <h2 className={chartTitle}>{dashMonthLabel} · amounts at a glance</h2>
+                <p className={chartSub}>Same buckets as the snapshot (₹)</p>
+                <div className="mt-3 h-[320px] min-h-[320px] min-w-0 w-full">
+                  {cashflowBarData.length === 0 || cashflowBarData.every((d) => d.value === 0) ? (
+                    <p className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">
+                      No expense data for {dashMonthLabel} yet
+                    </p>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={240}>
+                      <BarChart
+                        data={cashflowBarData}
+                        layout="vertical"
+                        margin={{ top: 8, right: 16, left: 8, bottom: 0 }}
+                      >
+                        <defs>
+                          <linearGradient id="pfCashflowGlanceBar" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.35} />
+                            <stop offset="100%" stopColor="#6366f1" stopOpacity={0.95} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} strokeOpacity={0.35} />
+                        <XAxis
+                          type="number"
+                          tick={{ fontSize: 11, fill: isDark ? '#94a3b8' : '#64748b' }}
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
+                          tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="name"
+                          width={92}
+                          tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
+                          stroke={isDark ? '#94a3b8' : '#64748b'}
+                        />
+                        <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
+                        <Bar
+                          dataKey="value"
+                          name="Amount"
+                          fill="url(#pfCashflowGlanceBar)"
+                          radius={[0, 6, 6, 0]}
+                          animationDuration={550}
+                          animationEasing="ease-out"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              <div className={`min-w-0 ${DASH_CHART_CARD}`}>
+                <h2 className={chartTitle}>Month breakdown · table</h2>
+                <p className={chartSub}>Quick copy-friendly totals</p>
+                <div className={`mt-3 ${DASH_TABLE_WRAP}`}>
+                  <table className={`${pfTable} min-w-[280px] text-[13px]`}>
+                    <thead className="sticky top-0 z-[1]">
+                      <tr>
+                        <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Metric</th>
+                        <th className={`${pfThRight} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Amount</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {cashflowTableRows.map((row) => (
+                        <tr
+                          key={row.label}
+                          className={`${pfTrHover} transition-colors hover:bg-white/[0.03] dark:hover:bg-white/[0.03]`}
+                        >
+                          <td className={`${pfTd} text-slate-700 dark:text-slate-300`}>{row.label}</td>
+                          <td className={`${pfTdRight} font-mono tabular-nums`}>{formatInr(row.value)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </section>
 
-          <section className={pfChartCard} aria-label="Monthly cashflow table">
+          <section className={`${DASH_CHART_CARD}`} aria-label="Monthly cashflow table">
             <h2 className={chartTitle}>Monthly summary · {dashYear}</h2>
             <p className={chartSub}>Income, expense, EMI ({dashMonthLabel} row only), savings</p>
-            <div className={`mt-3 ${pfTableWrap}`}>
-              <table className={`${pfTable} min-w-[520px] text-sm`}>
-                <thead>
+            <div className={`mt-3 ${DASH_TABLE_WRAP}`}>
+              <table className={`${pfTable} min-w-[520px] text-[13px]`}>
+                <thead className="sticky top-0 z-[1]">
                   <tr>
-                    <th className={pfTh}>Month</th>
-                    <th className={pfThRight}>Income</th>
-                    <th className={pfThRight}>Expense</th>
-                    <th className={pfThRight}>EMI</th>
-                    <th className={pfThRight}>Savings</th>
+                    <th className={`${pfTh} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Month</th>
+                    <th className={`${pfThRight} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Income</th>
+                    <th className={`${pfThRight} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Expense</th>
+                    <th className={`${pfThRight} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>EMI</th>
+                    <th className={`${pfThRight} sticky top-0 bg-[var(--pf-th-bg)]/95 backdrop-blur-sm`}>Savings</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cashflowMonthlyTableRows.map((row) => (
-                    <tr key={row.month} className={pfTrHover}>
+                    <tr
+                      key={row.month}
+                      className={`${pfTrHover} transition-colors hover:bg-white/[0.03] dark:hover:bg-white/[0.03]`}
+                    >
                       <td className={`${pfTd} font-medium tabular-nums`}>{row.month}</td>
-                      <td className={pfTdRight}>{formatInr(row.income)}</td>
-                      <td className={pfTdRight}>{formatInr(row.expense)}</td>
-                      <td className={pfTdRight}>{formatInr(row.emi)}</td>
-                      <td className={pfTdRight}>{formatInr(row.savings)}</td>
+                      <td className={`${pfTdRight} font-mono tabular-nums`}>{formatInr(row.income)}</td>
+                      <td className={`${pfTdRight} font-mono tabular-nums`}>{formatInr(row.expense)}</td>
+                      <td className={`${pfTdRight} font-mono tabular-nums`}>{formatInr(row.emi)}</td>
+                      <td className={`${pfTdRight} font-mono tabular-nums`}>{formatInr(row.savings)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1381,61 +1717,61 @@ export default function PersonalFinanceDashboardPage() {
                 value={formatInr(creditCardsSummary?.total_credit_limit)}
                 subtitle={`${creditCardsSummary?.card_count ?? 0} card(s)`}
                 icon={CreditCardIcon}
-                gradientClass="md:bg-gradient-to-br md:from-slate-700 md:to-slate-900"
+                tint="slate"
               />
               <KpiCard
                 title="Credit used"
                 value={formatInr(creditCardsSummary?.used_limit)}
                 subtitle="Billed + unbilled"
                 icon={CreditCardIcon}
-                gradientClass="md:bg-gradient-to-br md:from-fuchsia-700 md:to-purple-800"
+                tint="fuchsia"
               />
               <KpiCard
                 title="Utilization"
                 value={creditCardsSummary?.utilization_pct != null ? `${creditCardsSummary.utilization_pct}%` : '—'}
                 subtitle={creditCardsSummary?.credit_health ?? '—'}
                 icon={ChartPieIcon}
-                gradientClass="md:bg-gradient-to-br md:from-amber-600 md:to-orange-600"
+                tint="amber"
               />
               <KpiCard
                 title="CC overdue"
                 value={formatInr(creditCardsSummary?.overdue_amount)}
                 subtitle="Statements past due"
                 icon={ExclamationTriangleIcon}
-                gradientClass="md:bg-gradient-to-br md:from-rose-700 md:to-red-800"
+                tint="rose"
               />
               <KpiCard
                 title="Loan given (principal)"
                 value={formatInr(loanAnalytics?.total_loan_given)}
                 subtitle="Money you lent out"
                 icon={BanknotesIcon}
-                gradientClass="md:bg-gradient-to-br md:from-sky-600 md:to-blue-700"
+                tint="sky"
               />
               <KpiCard
                 title="Loan collected"
                 value={formatInr(loanAnalytics?.total_collected)}
                 subtitle="All-time repayments"
                 icon={ArrowTrendingUpIcon}
-                gradientClass="md:bg-gradient-to-br md:from-green-600 md:to-emerald-700"
+                tint="green"
               />
               <KpiCard
                 title="Loan outstanding"
                 value={formatInr(loanAnalytics?.total_remaining_receivable)}
                 subtitle="Still to collect"
                 icon={ScaleIcon}
-                gradientClass="md:bg-gradient-to-br md:from-cyan-600 md:to-teal-700"
+                tint="cyan"
               />
               <KpiCard
                 title="EMI due (month)"
                 value={formatInr(loanAnalytics?.emi_due_this_month)}
                 subtitle="Unpaid EMIs due this calendar month"
                 icon={CalendarDaysIcon}
-                gradientClass="md:bg-gradient-to-br md:from-orange-600 md:to-amber-600"
+                tint="amber"
               />
             </div>
           </section>
 
-          <section className={pfChartCard} aria-label="Credit utilization trend">
+          <section className={DASH_CHART_CARD} aria-label="Credit utilization trend">
             <h2 className={chartTitle}>Credit utilization trend</h2>
             <p className={chartSub}>
               Month-over-month utilization history is not in the bundle yet; snapshot for {dashMonthLabel}:{' '}
@@ -1448,7 +1784,7 @@ export default function PersonalFinanceDashboardPage() {
           {emisDueMonth ? (
             <section
               aria-label="EMIs due in selected month"
-              className={`${pfChartCard} border-sky-200/80 dark:border-slate-600`}
+              className={`${DASH_CHART_CARD} border-sky-200/80 dark:border-slate-600`}
             >
               <h2 className={chartTitle}>EMIs due · {dashMonthLabel}</h2>
               <p className={chartSub}>
@@ -1511,7 +1847,7 @@ export default function PersonalFinanceDashboardPage() {
 
           {Array.isArray(creditCardsSummary?.alerts) && creditCardsSummary.alerts.length > 0 ? (
             <section
-              className={`${pfChartCard} border-fuchsia-200/80 dark:border-fuchsia-900/40`}
+              className={`${DASH_CHART_CARD} border-fuchsia-200/80 dark:border-fuchsia-900/40`}
               aria-label="Credit card alerts"
             >
               <h2 className={chartTitle}>Credit card alerts</h2>
@@ -1534,7 +1870,7 @@ export default function PersonalFinanceDashboardPage() {
           ) : null}
 
           {creditCardsSummary?.current_bill ? (
-            <section className={pfChartCard} aria-label="Next credit card statement">
+            <section className={DASH_CHART_CARD} aria-label="Next credit card statement">
               <h2 className={chartTitle}>Next statement (earliest due)</h2>
               <p className={chartSub}>
                 {creditCardsSummary.current_bill.card_name} · period {creditCardsSummary.current_bill.bill_period} · due{' '}
@@ -1545,7 +1881,7 @@ export default function PersonalFinanceDashboardPage() {
           ) : null}
 
           {cashflowMonth != null ? (
-            <section className={pfChartCard} aria-label="EMI receivable vs expense">
+            <section className={DASH_CHART_CARD} aria-label="EMI receivable vs expense">
               <h2 className={chartTitle}>EMI · paid (expense) vs pending (receivable)</h2>
               <p className={chartSub}>{dashMonthLabel} · profile-wide</p>
               <div className="mt-3 h-[200px] min-h-[200px] min-w-0 w-full">
@@ -1600,7 +1936,7 @@ export default function PersonalFinanceDashboardPage() {
           ) : null}
 
           {upcomingEmis.length > 0 ? (
-            <section className={pfChartCard} aria-label="Upcoming EMIs">
+            <section className={DASH_CHART_CARD} aria-label="Upcoming EMIs">
               <h2 className={chartTitle}>Upcoming EMIs</h2>
               <p className={chartSub}>Next unpaid installments you are owed</p>
               <div className="mt-3 flex gap-3 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1620,7 +1956,7 @@ export default function PersonalFinanceDashboardPage() {
             </section>
           ) : null}
 
-          <section aria-label="Loan exposure mix" className={pfChartCard}>
+          <section aria-label="Loan exposure mix" className={DASH_CHART_CARD}>
             <h2 className={chartTitle}>Receivable: current vs overdue</h2>
             <p className={chartSub}>Outstanding you are owed, split by overdue EMIs</p>
             <div className="mt-3 h-[260px] min-h-[260px] w-full">
@@ -1656,84 +1992,84 @@ export default function PersonalFinanceDashboardPage() {
                 value={formatInr(loanAnalytics?.total_loan_given)}
                 subtitle="Sum of principal (loan amounts)"
                 icon={BanknotesIcon}
-                gradientClass="md:bg-gradient-to-br md:from-sky-600 md:to-blue-700"
+                tint="sky"
               />
               <KpiCard
                 title="Interest profit (book)"
                 value={formatInr(loanAnalytics?.total_interest_profit)}
                 subtitle="Expected interest on scheduled loans"
                 icon={ReceiptPercentIcon}
-                gradientClass="md:bg-gradient-to-br md:from-amber-500 md:to-orange-600"
+                tint="amber"
               />
               <KpiCard
                 title="Total expected"
                 value={formatInr(loanAnalytics?.total_amount_expected)}
                 subtitle="Principal + interest (book)"
                 icon={ScaleIcon}
-                gradientClass="md:bg-gradient-to-br md:from-indigo-600 md:to-violet-700"
+                tint="indigo"
               />
               <KpiCard
                 title="Total collected"
                 value={formatInr(loanAnalytics?.total_collected)}
                 subtitle="All EMI / payments recorded"
                 icon={ArrowTrendingUpIcon}
-                gradientClass="md:bg-gradient-to-br md:from-green-600 md:to-emerald-700"
+                tint="green"
               />
               <KpiCard
                 title="Remaining receivable"
                 value={formatInr(loanAnalytics?.total_remaining_receivable)}
                 subtitle="Unpaid EMIs or latest balance"
                 icon={ChartPieIcon}
-                gradientClass="md:bg-gradient-to-br md:from-cyan-600 md:to-teal-700"
+                tint="cyan"
               />
               <KpiCard
                 title="Active loans"
                 value={loanAnalytics?.active_loans != null ? String(loanAnalytics.active_loans) : '—'}
                 subtitle="Not closed"
                 icon={UsersIcon}
-                gradientClass="md:bg-gradient-to-br md:from-blue-600 md:to-slate-700"
+                tint="blue"
               />
               <KpiCard
                 title="Closed loans"
                 value={loanAnalytics?.closed_loans != null ? String(loanAnalytics.closed_loans) : '—'}
                 subtitle="Fully settled"
                 icon={CheckCircleIcon}
-                gradientClass="md:bg-gradient-to-br md:from-slate-500 md:to-slate-700"
+                tint="slate"
               />
               <KpiCard
                 title="This month collection"
                 value={formatInr(loanAnalytics?.this_month_collection)}
                 subtitle="Payments in the current calendar month"
                 icon={CalendarDaysIcon}
-                gradientClass="md:bg-gradient-to-br md:from-rose-500 md:to-pink-600"
+                tint="pink"
               />
               <KpiCard
                 title="EMI due this month"
                 value={formatInr(loanAnalytics?.emi_due_this_month)}
                 subtitle="Unpaid installments due in the current calendar month"
                 icon={CalendarDaysIcon}
-                gradientClass="md:bg-gradient-to-br md:from-cyan-500 md:to-sky-600"
+                tint="cyan"
               />
               <KpiCard
                 title="Principal collected (lifetime)"
                 value={formatInr(loanAnalytics?.principal_collected_lifetime)}
                 subtitle="Principal portion of all recorded repayments"
                 icon={BanknotesIcon}
-                gradientClass="md:bg-gradient-to-br md:from-slate-600 md:to-slate-800"
+                tint="slate"
               />
               <KpiCard
                 title="Interest collected (lifetime)"
                 value={formatInr(loanAnalytics?.interest_collected_lifetime)}
                 subtitle="Interest portion of repayments (lending profit)"
                 icon={ReceiptPercentIcon}
-                gradientClass="md:bg-gradient-to-br md:from-amber-600 md:to-yellow-700"
+                tint="amber"
               />
               <KpiCard
                 title="Overdue EMI (receivable)"
                 value={formatInr(loanAnalytics?.overdue_emi_amount)}
                 subtitle="Unpaid installments past due date"
                 icon={ExclamationTriangleIcon}
-                gradientClass="md:bg-gradient-to-br md:from-red-600 md:to-orange-600"
+                tint="orange"
               />
               <KpiCard
                 title="Upcoming EMIs (7 days)"
@@ -1744,13 +2080,13 @@ export default function PersonalFinanceDashboardPage() {
                 }
                 subtitle="Count of installments due in the next week"
                 icon={CalendarDaysIcon}
-                gradientClass="md:bg-gradient-to-br md:from-violet-600 md:to-purple-700"
+                tint="violet"
               />
             </div>
           </section>
 
           <section aria-label="Loan charts" className="grid min-w-0 gap-4 lg:grid-cols-2">
-            <div className={`min-w-0 ${pfChartCard}`}>
+            <div className={`min-w-0 ${DASH_CHART_CARD}`}>
               <h2 className={chartTitle}>Loan: given vs collected vs remaining</h2>
               <p className={chartSub}>Portfolio totals (₹)</p>
               <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
@@ -1779,7 +2115,7 @@ export default function PersonalFinanceDashboardPage() {
               </div>
             </div>
 
-            <div className={`min-w-0 ${pfChartCard}`}>
+            <div className={`min-w-0 ${DASH_CHART_CARD}`}>
               <h2 className={chartTitle}>Monthly EMI collection</h2>
               <p className={chartSub}>{dashYear} · total paid per month</p>
               <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
@@ -1801,7 +2137,7 @@ export default function PersonalFinanceDashboardPage() {
               </div>
             </div>
 
-            <div className={`min-w-0 ${pfChartCard}`}>
+            <div className={`min-w-0 ${DASH_CHART_CARD}`}>
               <h2 className={chartTitle}>Interest collected by month</h2>
               <p className={chartSub}>{dashYear} · from payment records</p>
               <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
@@ -1823,7 +2159,7 @@ export default function PersonalFinanceDashboardPage() {
               </div>
             </div>
 
-            <div className={`min-w-0 ${pfChartCard}`}>
+            <div className={`min-w-0 ${DASH_CHART_CARD}`}>
               <h2 className={chartTitle}>Active vs closed loans</h2>
               <p className={chartSub}>Loan count</p>
               <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
@@ -1856,7 +2192,7 @@ export default function PersonalFinanceDashboardPage() {
             </div>
           </section>
 
-          <section aria-label="Your loans table" className={pfChartCard}>
+          <section aria-label="Your loans table" className={DASH_CHART_CARD}>
             <h2 className={chartTitle}>Your loans</h2>
             <p className={chartSub}>Manage details from the Loans page in the sidebar</p>
             <div className={`mt-4 ${pfTableWrap}`}>

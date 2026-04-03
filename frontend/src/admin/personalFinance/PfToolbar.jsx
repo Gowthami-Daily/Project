@@ -15,6 +15,8 @@ import {
   setPfToken,
   switchProfile,
 } from './api.js'
+import PrivacyToggle from '../../components/ui/PrivacyToggle.jsx'
+import { usePfPrivacy } from './PfPrivacyContext.jsx'
 import { usePfRefresh } from './pfRefreshContext.jsx'
 
 export default function PfToolbar({
@@ -25,6 +27,7 @@ export default function PfToolbar({
   onOpenMobileNav,
 }) {
   const { tick, refresh } = usePfRefresh()
+  const { privacyBlur, setPrivacyBlur } = usePfPrivacy()
   const [profiles, setProfiles] = useState([])
   const [loading, setLoading] = useState(false)
   const [activeProfileId, setActiveProfileId] = useState(() => readActiveProfileIdFromToken())
@@ -86,7 +89,7 @@ export default function PfToolbar({
 
   return (
     <header className="z-40 shrink-0 border-b border-[var(--pf-border)] bg-[var(--pf-header)] backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-2 px-4 sm:px-6">
+      <div className="mx-auto flex h-14 max-w-[1400px] items-center justify-between gap-2 px-4 sm:px-8">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
             type="button"
@@ -114,6 +117,7 @@ export default function PfToolbar({
           </h1>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <PrivacyToggle active={privacyBlur} onToggle={setPrivacyBlur} />
           <button
             type="button"
             className="flex h-10 w-10 items-center justify-center rounded-[10px] text-[var(--pf-text-muted)] transition hover:bg-black/[0.06] active:scale-95 dark:hover:bg-white/[0.06]"
@@ -176,7 +180,7 @@ export default function PfToolbar({
           </Link>
         </div>
       </div>
-      <div className="mx-auto max-w-[1600px] border-t border-[var(--pf-border)]/80 px-4 pb-2 pt-1.5 sm:px-6">
+      <div className="mx-auto max-w-[1400px] border-t border-[var(--pf-border)]/80 px-4 pb-2 pt-1.5 sm:px-8">
         <label htmlFor="pf-profile" className="sr-only">
           Active profile
         </label>

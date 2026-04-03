@@ -1,10 +1,13 @@
 import { Link, Outlet } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import AppShell from '../../components/layout/AppShell.jsx'
 import RiverLogo from '../RiverLogo.jsx'
 import PersonalFinanceAuth from './PersonalFinanceAuth.jsx'
 import { PfAuthProvider, usePfAuth } from './PfAuthContext.jsx'
 import PfBottomNav from './PfBottomNav.jsx'
 import PfOutletErrorBoundary from './PfOutletErrorBoundary.jsx'
+import { PfPrivacyProvider, usePfPrivacy } from './PfPrivacyContext.jsx'
 import PfSidebar from './PfSidebar.jsx'
 import { readSidebarCollapsed, writeSidebarCollapsed } from './pfSidebarStorage.js'
 import PfToolbar from './PfToolbar.jsx'
@@ -25,6 +28,7 @@ const pfPageFallback = (
 function PersonalFinanceShellInner() {
   const { user, logout, invalidateSession } = usePfAuth()
   const { resolved } = usePfTheme()
+  const { privacyBlur } = usePfPrivacy()
   const isDark = resolved === 'dark'
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readSidebarCollapsed())
@@ -76,7 +80,7 @@ function PersonalFinanceShellInner() {
       className={`pf-app min-h-screen font-sans antialiased ${isDark ? 'dark' : ''} bg-[var(--pf-bg)] text-[var(--pf-text)]`}
       >
         <header className="sticky top-0 z-10 border-b border-[var(--pf-border)] bg-[var(--pf-header)] backdrop-blur-md">
-          <div className="mx-auto flex h-[60px] max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
+          <div className="mx-auto flex h-[60px] max-w-[1400px] items-center justify-between gap-4 px-4 sm:px-8">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--pf-primary)] text-white shadow-inner">
                 <RiverLogo className="h-6 w-6 text-white" />
@@ -91,7 +95,7 @@ function PersonalFinanceShellInner() {
             </Link>
           </div>
         </header>
-        <main className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6">
+        <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-8">
           <PersonalFinanceAuth />
         </main>
       </div>
@@ -101,33 +105,43 @@ function PersonalFinanceShellInner() {
   return (
     <PfOutletErrorBoundary>
       <PfRefreshProvider>
-        <div
-          className={`pf-app pf-app-layout flex h-dvh max-h-dvh min-h-0 flex-col overflow-hidden antialiased ${isDark ? 'dark' : ''}`}
-        >
-          <PfToolbar
-            onSessionInvalid={invalidateSession}
-            onLogout={logout}
-            sidebarCollapsed={sidebarCollapsed}
-            onToggleSidebarCollapsed={toggleSidebarCollapsed}
-            onOpenMobileNav={() => setMobileNavOpen(true)}
-          />
-          <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col md:flex-row md:items-stretch">
-            <PfSidebar
-              user={user}
-              collapsed={sidebarCollapsed}
-              mobileOpen={mobileNavOpen}
-              onCloseMobile={() => setMobileNavOpen(false)}
-              onLogout={logout}
-            />
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-[var(--pf-border)]/80 md:border-l md:bg-[var(--pf-content)]">
-              <main className="pf-main-scroll pf-page-enter min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-smooth px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 md:py-6 md:pb-6">
-                <Suspense fallback={pfPageFallback}>
+        <div className={`pf-app antialiased ${isDark ? 'dark' : ''}`}>
+          <AppShell
+            className="pf-app-layout"
+            topbar={
+              <PfToolbar
+                onSessionInvalid={invalidateSession}
+                onLogout={logout}
+                sidebarCollapsed={sidebarCollapsed}
+                onToggleSidebarCollapsed={toggleSidebarCollapsed}
+                onOpenMobileNav={() => setMobileNavOpen(true)}
+              />
+            }
+            sidebar={
+              <PfSidebar
+                user={user}
+                collapsed={sidebarCollapsed}
+                mobileOpen={mobileNavOpen}
+                onCloseMobile={() => setMobileNavOpen(false)}
+                onLogout={logout}
+              />
+            }
+            bottomBar={<PfBottomNav />}
+          >
+            <main
+              className={`pf-main-scroll pf-page-enter min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-smooth px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:px-8 md:py-6 md:pb-6 ${privacyBlur ? 'pf-main-privacy' : ''}`}
+            >
+              <Suspense fallback={pfPageFallback}>
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
+                >
                   <Outlet context={sessionCtx} />
-                </Suspense>
-              </main>
-            </div>
-          </div>
-          <PfBottomNav />
+                </motion.div>
+              </Suspense>
+            </main>
+          </AppShell>
         </div>
       </PfRefreshProvider>
     </PfOutletErrorBoundary>
@@ -141,7 +155,9 @@ export default function PersonalFinanceShell() {
   return (
     <PfThemeProvider>
       <PfAuthProvider>
-        <PersonalFinanceShellInner />
+        <PfPrivacyProvider>
+          <PersonalFinanceShellInner />
+        </PfPrivacyProvider>
       </PfAuthProvider>
     </PfThemeProvider>
   )

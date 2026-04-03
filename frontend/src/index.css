@@ -3,7 +3,18 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Aether / OS-level tokens (optional; PF shell uses --pf-* in pfMobile.css) */
+:root {
+  --aether-bg: #f9fafb;
+  --aether-card: rgba(255, 255, 255, 0.8);
+  --aether-border: rgba(0, 0, 0, 0.06);
+  --aether-text: #111827;
+  --aether-text-muted: #6b7280;
+  --aether-accent: #d4af37;
 }
 
 html {
@@ -13,6 +24,8 @@ html {
 body {
   margin: 0;
   font-family: var(--font-sans);
+  background: var(--aether-bg);
+  color: var(--aether-text);
 }
 
 #root {
