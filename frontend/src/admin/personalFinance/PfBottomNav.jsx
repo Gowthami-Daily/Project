@@ -1,15 +1,6 @@
-import {
-  BanknotesIcon,
-  CreditCardIcon,
-  EllipsisHorizontalIcon,
-  HomeIcon,
-  PlusIcon,
-  ScaleIcon,
-  WalletIcon,
-} from '@heroicons/react/24/solid'
-import { useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
-import { pfModalOverlay60, pfModalSurface } from './pfFormStyles.js'
+import { ChartBarIcon, Cog6ToothIcon, HomeIcon, PlusIcon, WalletIcon } from '@heroicons/react/24/solid'
+import { NavLink } from 'react-router-dom'
+import { usePfUniversalAdd } from './globalAdd/PfUniversalAddContext.jsx'
 
 const navH = 'min-h-[64px]'
 const navItem =
@@ -17,138 +8,59 @@ const navItem =
 const navInactive = 'text-[var(--pf-text-muted)]'
 const navActive = 'text-[var(--pf-primary)]'
 
-function PfQuickAddSheet({ open, onClose }) {
-  const navigate = useNavigate()
-  if (!open) return null
-  const go = (path) => {
-    onClose()
-    navigate(path)
-  }
+/**
+ * Mobile bottom bar (md+ hidden). Safe-area aware. Center (+) opens UniversalEntryModal.
+ */
+export default function PfBottomNav() {
+  const { openPicker } = usePfUniversalAdd()
+
   return (
-    <div
-      className={`${pfModalOverlay60} flex flex-col justify-end md:hidden`}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Quick add"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
+    <nav
+      className={`fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--pf-border)] bg-[var(--pf-header)]/85 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-12px_40px_-12px_rgba(0,0,0,0.18)] backdrop-blur-2xl backdrop-saturate-150 dark:border-white/[0.06] dark:bg-[var(--pf-header)]/75 dark:shadow-[0_-12px_48px_-8px_rgba(0,0,0,0.55)] md:hidden ${navH}`}
+      aria-label="Primary"
     >
-      <div
-        className={`${pfModalSurface} max-h-[min(88dvh,560px)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))]`}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--pf-border)]" />
-        <p className="mb-3 text-center text-sm font-bold text-[var(--pf-text)]">Add new</p>
-        <div className="grid gap-2">
-          <button
-            type="button"
-            onClick={() => go('/personal-finance/income')}
-            className="flex items-center gap-3 rounded-[12px] border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/50 px-4 py-3 text-left text-sm font-semibold text-[var(--pf-text)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.99]"
+      <div className="relative mx-auto max-w-lg px-1">
+        <div className={`flex items-end justify-between ${navH}`}>
+          <NavLink
+            to="/personal-finance"
+            end
+            className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
           >
-            <BanknotesIcon className="h-6 w-6 text-emerald-600" />
-            Add income
-          </button>
-          <button
-            type="button"
-            onClick={() => go('/personal-finance/expenses')}
-            className="flex items-center gap-3 rounded-[12px] border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/50 px-4 py-3 text-left text-sm font-semibold text-[var(--pf-text)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.99]"
+            <HomeIcon className="h-[22px] w-[22px] shrink-0" />
+            Dashboard
+          </NavLink>
+          <NavLink
+            to="/personal-finance/accounts"
+            className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
           >
-            <CreditCardIcon className="h-6 w-6 text-[#EF4444]" />
-            Add expense
-          </button>
-          <button
-            type="button"
-            onClick={() => go('/personal-finance/loans')}
-            className="flex items-center gap-3 rounded-[12px] border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/50 px-4 py-3 text-left text-sm font-semibold text-[var(--pf-text)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.99]"
+            <WalletIcon className="h-[22px] w-[22px] shrink-0" />
+            Accounts
+          </NavLink>
+          <div className="w-14 shrink-0" aria-hidden />
+          <NavLink
+            to="/personal-finance/reports"
+            className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
           >
-            <ScaleIcon className="h-6 w-6 text-[var(--pf-primary)]" />
-            Add loan
-          </button>
-          <button
-            type="button"
-            onClick={() => go('/personal-finance/accounts')}
-            className="flex items-center gap-3 rounded-[12px] border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/50 px-4 py-3 text-left text-sm font-semibold text-[var(--pf-text)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.99]"
+            <ChartBarIcon className="h-[22px] w-[22px] shrink-0" />
+            Reports
+          </NavLink>
+          <NavLink
+            to="/personal-finance/settings"
+            className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
           >
-            <WalletIcon className="h-6 w-6 text-sky-600" />
-            Add account
-          </button>
+            <Cog6ToothIcon className="h-[22px] w-[22px] shrink-0" />
+            Settings
+          </NavLink>
         </div>
         <button
           type="button"
-          onClick={onClose}
-          className="mt-3 w-full rounded-[12px] border border-[var(--pf-border)] py-2.5 text-sm font-semibold text-[var(--pf-text-muted)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.99]"
+          onClick={openPicker}
+          className="pf-fab-tap absolute left-1/2 top-0 z-10 flex h-14 w-14 -translate-x-1/2 -translate-y-[52%] items-center justify-center rounded-full bg-[var(--pf-primary)] text-white shadow-[0_8px_28px_rgba(0,0,0,0.35)] ring-4 ring-[var(--pf-bg)] transition duration-200 hover:bg-[var(--pf-primary-hover)]"
+          aria-label="Add expense, income, transfer, or more"
         >
-          Cancel
+          <PlusIcon className="h-8 w-8" />
         </button>
       </div>
-    </div>
-  )
-}
-
-/**
- * Mobile bottom bar (md+ hidden). Safe-area aware.
- */
-export default function PfBottomNav() {
-  const [quickOpen, setQuickOpen] = useState(false)
-
-  return (
-    <>
-      <nav
-        className={`fixed bottom-0 left-0 right-0 z-50 border-t border-[var(--pf-border)] bg-[var(--pf-header)]/85 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-12px_40px_-12px_rgba(0,0,0,0.18)] backdrop-blur-2xl backdrop-saturate-150 dark:border-white/[0.06] dark:bg-[var(--pf-header)]/75 dark:shadow-[0_-12px_48px_-8px_rgba(0,0,0,0.55)] md:hidden ${navH}`}
-        aria-label="Primary"
-      >
-        <div className="relative mx-auto max-w-lg px-1">
-          <div className={`flex items-end justify-between ${navH}`}>
-            <NavLink
-              to="/personal-finance"
-              end
-              className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
-            >
-              <HomeIcon className="h-[22px] w-[22px] shrink-0" />
-              Home
-            </NavLink>
-            <NavLink
-              to="/personal-finance/income"
-              className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
-            >
-              <BanknotesIcon className="h-[22px] w-[22px] shrink-0" />
-              Income
-            </NavLink>
-            <div className="w-14 shrink-0" aria-hidden />
-            <NavLink
-              to="/personal-finance/expenses"
-              className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
-            >
-              <CreditCardIcon className="h-[22px] w-[22px] shrink-0" />
-              Expense
-            </NavLink>
-            <NavLink
-              to="/personal-finance/loans"
-              className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
-            >
-              <ScaleIcon className="h-[22px] w-[22px] shrink-0" />
-              Loans
-            </NavLink>
-            <NavLink
-              to="/personal-finance/more"
-              className={({ isActive }) => `${navItem} flex-1 ${isActive ? navActive : navInactive}`}
-            >
-              <EllipsisHorizontalIcon className="h-[22px] w-[22px] shrink-0" />
-              More
-            </NavLink>
-          </div>
-          <button
-            type="button"
-            onClick={() => setQuickOpen(true)}
-            className="pf-fab-tap absolute left-1/2 top-0 z-10 flex h-14 w-14 -translate-x-1/2 -translate-y-[52%] items-center justify-center rounded-full bg-[var(--pf-primary)] text-white shadow-[0_8px_28px_rgba(0,0,0,0.35)] ring-4 ring-[var(--pf-bg)] transition duration-200 hover:bg-[var(--pf-primary-hover)]"
-            aria-label="Add income, expense, loan, or account"
-          >
-            <PlusIcon className="h-8 w-8" />
-          </button>
-        </div>
-      </nav>
-      <PfQuickAddSheet open={quickOpen} onClose={() => setQuickOpen(false)} />
-    </>
+    </nav>
   )
 }

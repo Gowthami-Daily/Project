@@ -1,6 +1,6 @@
 import { PlusIcon } from '@heroicons/react/24/solid'
-import { useCallback, useEffect, useState } from 'react'
-import UniversalEntryModal from './UniversalEntryModal.jsx'
+import { useCallback, useEffect } from 'react'
+import { usePfUniversalAdd } from './PfUniversalAddContext.jsx'
 
 function isTextInputTarget(el) {
   if (!el || !(el instanceof Element)) return false
@@ -13,15 +13,14 @@ function isTextInputTarget(el) {
 /**
  * Floating global add control + universal entry modal. Mount inside Personal Finance shell (logged-in only).
  */
-export default function PfGlobalAdd({ onSessionInvalid }) {
-  const [open, setOpen] = useState(false)
+export default function PfGlobalAdd() {
+  const { openPicker, isOpen } = usePfUniversalAdd()
 
-  const openModal = useCallback(() => setOpen(true), [])
-  const closeModal = useCallback(() => setOpen(false), [])
+  const openModal = useCallback(() => openPicker(), [openPicker])
 
   useEffect(() => {
     const onKey = (e) => {
-      if (open) return
+      if (isOpen) return
       if (e.defaultPrevented) return
       const t = e.target
       if (isTextInputTarget(t)) return
@@ -39,21 +38,18 @@ export default function PfGlobalAdd({ onSessionInvalid }) {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [open, openModal])
+  }, [isOpen, openModal])
 
   return (
-    <>
-      <UniversalEntryModal open={open} onClose={closeModal} onSessionInvalid={onSessionInvalid} />
-      <button
-        type="button"
-        onClick={openModal}
-        title="Add new entry — shortcut A or Ctrl+K"
-        aria-label="Add new entry"
-        className="pf-global-add-fab fixed z-[55] flex items-center gap-2 rounded-full border border-[var(--pf-border)] bg-[var(--pf-primary)] px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-[var(--pf-primary-hover)] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[var(--pf-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--pf-bg)] active:scale-[0.98] max-md:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] max-md:right-4 md:bottom-8 md:right-8"
-      >
-        <PlusIcon className="h-5 w-5 shrink-0" aria-hidden />
-        <span className="hidden sm:inline">Add</span>
-      </button>
-    </>
+    <button
+      type="button"
+      onClick={openModal}
+      title="Add new entry — shortcut A or Ctrl+K"
+      aria-label="Add new entry"
+      className="pf-global-add-fab fixed z-[55] hidden items-center gap-2 rounded-full border border-[var(--pf-border)] bg-[var(--pf-primary)] px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-[var(--pf-primary-hover)] focus-visible:outline focus-visible:ring-2 focus-visible:ring-[var(--pf-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--pf-bg)] active:scale-[0.98] md:bottom-8 md:right-8 md:flex"
+    >
+      <PlusIcon className="h-5 w-5 shrink-0" aria-hidden />
+      <span className="hidden sm:inline">Add</span>
+    </button>
   )
 }

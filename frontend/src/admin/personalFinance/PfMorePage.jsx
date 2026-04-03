@@ -157,7 +157,7 @@ export default function PfMorePage() {
       </button>
 
       <Link
-        to="/"
+        to="/legacy-home"
         className="block text-center text-sm font-semibold text-[#1E3A8A] underline-offset-2 hover:underline dark:text-blue-400"
       >
         ← River Dairy home

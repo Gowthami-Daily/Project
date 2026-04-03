@@ -1,8 +1,7 @@
-import { Link, Outlet } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import AppShell from '../../components/layout/AppShell.jsx'
-import RiverLogo from '../RiverLogo.jsx'
 import PersonalFinanceAuth from './PersonalFinanceAuth.jsx'
 import { PfAuthProvider, usePfAuth } from './PfAuthContext.jsx'
 import PfBottomNav from './PfBottomNav.jsx'
@@ -12,6 +11,7 @@ import PfSidebar from './PfSidebar.jsx'
 import { readSidebarCollapsed, writeSidebarCollapsed } from './pfSidebarStorage.js'
 import PfToolbar from './PfToolbar.jsx'
 import PfGlobalAdd from './globalAdd/PfGlobalAdd.jsx'
+import { PfUniversalAddProvider } from './globalAdd/PfUniversalAddContext.jsx'
 import { PfToastProvider } from './notifications/pfToastContext.jsx'
 import { PfRefreshProvider } from './pfRefreshContext.jsx'
 import { PfThemeProvider, usePfTheme } from './PfThemeContext.jsx'
@@ -78,28 +78,10 @@ function PersonalFinanceShellInner() {
 
   if (!user) {
     return (
-    <div
-      className={`pf-app min-h-screen font-sans antialiased ${isDark ? 'dark' : ''} bg-[var(--pf-bg)] text-[var(--pf-text)]`}
+      <div
+        className={`pf-app min-h-[100dvh] font-sans antialiased ${isDark ? 'dark' : ''} bg-slate-950 text-[var(--pf-text)]`}
       >
-        <header className="sticky top-0 z-10 border-b border-[var(--pf-border)] bg-[var(--pf-header)] backdrop-blur-md">
-          <div className="mx-auto flex h-[60px] max-w-[1400px] items-center justify-between gap-4 px-4 sm:px-8">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--pf-primary)] text-white shadow-inner">
-                <RiverLogo className="h-6 w-6 text-white" />
-              </div>
-              <p className="text-sm font-bold text-[var(--pf-text)]">Personal finance</p>
-            </div>
-            <Link
-              to="/"
-              className="rounded-[12px] px-3 py-2 text-sm font-semibold text-[var(--pf-primary)] transition hover:bg-black/5 dark:hover:bg-white/5"
-            >
-              ← Home
-            </Link>
-          </div>
-        </header>
-        <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-8">
-          <PersonalFinanceAuth />
-        </main>
+        <PersonalFinanceAuth />
       </div>
     )
   }
@@ -108,6 +90,7 @@ function PersonalFinanceShellInner() {
     <PfOutletErrorBoundary>
       <PfRefreshProvider>
         <PfToastProvider>
+        <PfUniversalAddProvider onSessionInvalid={invalidateSession}>
         <div className={`pf-app antialiased ${isDark ? 'dark' : ''}`}>
           <AppShell
             className="pf-app-layout"
@@ -145,8 +128,9 @@ function PersonalFinanceShellInner() {
               </Suspense>
             </main>
           </AppShell>
-          <PfGlobalAdd onSessionInvalid={invalidateSession} />
+          <PfGlobalAdd />
         </div>
+        </PfUniversalAddProvider>
         </PfToastProvider>
       </PfRefreshProvider>
     </PfOutletErrorBoundary>

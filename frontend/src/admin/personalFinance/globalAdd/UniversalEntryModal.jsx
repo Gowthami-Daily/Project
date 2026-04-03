@@ -11,7 +11,7 @@ import {
   UserGroupIcon,
   WalletIcon,
 } from '@heroicons/react/24/solid'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   listCreditCardBills,
   listCreditCards,
@@ -192,7 +192,7 @@ function mapPrefsInvestmentType(v) {
   return m[v] || 'MUTUAL_FUND'
 }
 
-export default function UniversalEntryModal({ open, onClose, onSessionInvalid }) {
+export default function UniversalEntryModal({ open, onClose, onSessionInvalid, bootToEntryId = null }) {
   const { refresh } = usePfRefresh()
   const toast = usePfToast()
   const [step, setStep] = useState('pick')
@@ -207,6 +207,8 @@ export default function UniversalEntryModal({ open, onClose, onSessionInvalid })
   const [bills, setBills] = useState([])
   const [loans, setLoans] = useState([])
   const [liabilities, setLiabilities] = useState([])
+
+  const bootAppliedRef = useRef(false)
 
   const prefs = useMemo(() => loadPfAppPrefs(), [open])
 
@@ -296,11 +298,25 @@ export default function UniversalEntryModal({ open, onClose, onSessionInvalid })
   }, [onSessionInvalid])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      bootAppliedRef.current = false
+      return
+    }
+    bootAppliedRef.current = false
     setStep('pick')
     setEntryId(null)
     loadBootstrap()
   }, [open, loadBootstrap])
+
+  useEffect(() => {
+    if (!open || loading || loadError || !bootToEntryId) return
+    if (bootAppliedRef.current) return
+    const valid = ENTRY_GRID.some((e) => e.id === bootToEntryId)
+    if (!valid) return
+    bootAppliedRef.current = true
+    setEntryId(bootToEntryId)
+    setStep('form')
+  }, [open, loading, loadError, bootToEntryId])
 
   const formId = entryId ? `pf-global-${entryId}` : 'pf-global-none'
 

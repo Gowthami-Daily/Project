@@ -24,7 +24,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -88,10 +87,10 @@ const sectionSubCls = 'mt-1 text-sm text-[var(--pf-text-muted)]'
 
 /** Glass shell for dashboard charts & tables (PF only). */
 const DASH_CHART_CARD =
-  'min-w-0 rounded-2xl border border-black/[0.06] bg-white/55 p-4 shadow-[var(--pf-shadow)] backdrop-blur-xl transition-all duration-200 hover:-translate-y-[3px] hover:border-black/[0.1] hover:shadow-xl sm:p-5 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/[0.14] dark:hover:shadow-[0_10px_25px_rgba(0,0,0,0.22)]'
+  'min-w-0 rounded-2xl border border-black/[0.06] bg-white/55 p-4 shadow-[var(--pf-shadow)] backdrop-blur-xl transition-all duration-300 ease-out hover:-translate-y-1 hover:border-black/[0.1] hover:shadow-xl sm:p-5 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/[0.14] dark:hover:shadow-[0_10px_25px_rgba(0,0,0,0.22)]'
 
-/** Overview insight charts — 24px padding, 16px radius (matches DASH base). */
-const DASH_INSIGHT_CARD = `${DASH_CHART_CARD} !p-6`
+/** Overview charts — slightly more padding for hierarchy */
+const DASH_INSIGHT_CARD = `${DASH_CHART_CARD} sm:!p-5`
 
 const DASH_TABLE_WRAP =
   'overflow-x-auto rounded-2xl border border-[var(--pf-border)] bg-[var(--pf-card)]/50 shadow-[var(--pf-shadow)] backdrop-blur-md'
@@ -100,48 +99,60 @@ const bentoContainer = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
-    transition: { staggerChildren: 0.055, delayChildren: 0.03 },
+    transition: { staggerChildren: 0.06, delayChildren: 0.05 },
   },
 }
 
 const bentoItem = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.22, ease: [0.25, 0.1, 0.25, 1] } },
+  hidden: { opacity: 0, y: 18 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.25, 0.1, 0.25, 1] } },
+}
+
+/** Last N rows for chart time window (1 / 3 / 6 / 12 months). */
+function tailChartRows(rows, n) {
+  if (!rows?.length) return []
+  const take = Math.max(1, Math.min(n, rows.length))
+  return rows.slice(-take)
 }
 
 function dashboardInsightMeta(line) {
   const t = String(line).toLowerCase()
   if (t.includes('decreased') || t.includes('consider paying')) {
     return {
-      bar: 'border-l-rose-500 dark:border-l-rose-400',
-      bg: 'bg-rose-500/[0.07] dark:bg-rose-500/10',
+      glyph: '▼',
+      bar: 'border-l-rose-500/80 dark:border-l-rose-400',
+      bg: 'bg-rose-500/[0.06] dark:bg-rose-500/[0.08]',
       Icon: ArrowTrendingDownIcon,
     }
   }
   if (t.includes('increased') || t.includes('comfortable range')) {
     return {
-      bar: 'border-l-emerald-500 dark:border-l-emerald-400',
-      bg: 'bg-emerald-500/[0.07] dark:bg-emerald-500/10',
+      glyph: '▲',
+      bar: 'border-l-emerald-500/80 dark:border-l-emerald-400',
+      bg: 'bg-emerald-500/[0.06] dark:bg-emerald-500/[0.08]',
       Icon: ArrowTrendingUpIcon,
     }
   }
   if (t.includes('largest expense') || t.includes('category')) {
     return {
-      bar: 'border-l-violet-500 dark:border-l-violet-400',
-      bg: 'bg-violet-500/[0.07] dark:bg-violet-500/10',
+      glyph: '◆',
+      bar: 'border-l-violet-500/80 dark:border-l-violet-400',
+      bg: 'bg-violet-500/[0.06] dark:bg-violet-500/[0.08]',
       Icon: ChartPieIcon,
     }
   }
   if (t.includes('due in the next') || t.includes('emi')) {
     return {
-      bar: 'border-l-amber-500 dark:border-l-amber-400',
-      bg: 'bg-amber-500/[0.07] dark:bg-amber-500/10',
+      glyph: '⚠',
+      bar: 'border-l-amber-500/80 dark:border-l-amber-400',
+      bg: 'bg-amber-500/[0.06] dark:bg-amber-500/[0.08]',
       Icon: CalendarDaysIcon,
     }
   }
   return {
-    bar: 'border-l-sky-500 dark:border-l-sky-400',
-    bg: 'bg-sky-500/[0.06] dark:bg-sky-500/10',
+    glyph: '●',
+    bar: 'border-l-sky-500/80 dark:border-l-sky-400',
+    bg: 'bg-sky-500/[0.05] dark:bg-sky-500/[0.08]',
     Icon: InformationCircleIcon,
   }
 }
@@ -166,7 +177,8 @@ export default function PersonalFinanceDashboardPage() {
   const bundleTickRef = useRef(null)
   const [dashStage, setDashStage] = useState(0)
   const [activeTab, setActiveTab] = useState('overview')
-  const [nwHorizon, setNwHorizon] = useState(12)
+  /** Chart window for Overview: 1 / 3 / 6 / 12 months of series data */
+  const [overviewTimeRange, setOverviewTimeRange] = useState(12)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [summary, setSummary] = useState(null)
@@ -357,7 +369,7 @@ export default function PersonalFinanceDashboardPage() {
     [expenseCats],
   )
 
-  const barIeData = useMemo(
+  const barIeDataFull = useMemo(
     () =>
       (incomeExpense || []).map((row) => ({
         month: row.month,
@@ -365,6 +377,11 @@ export default function PersonalFinanceDashboardPage() {
         expense: Number(row.expense) || 0,
       })),
     [incomeExpense],
+  )
+
+  const barIeData = useMemo(
+    () => tailChartRows(barIeDataFull, overviewTimeRange),
+    [barIeDataFull, overviewTimeRange],
   )
 
   const networthData = useMemo(
@@ -376,11 +393,10 @@ export default function PersonalFinanceDashboardPage() {
     [networth],
   )
 
-  const networthDisplayData = useMemo(() => {
-    const take = nwHorizon === 6 ? 6 : nwHorizon === 36 ? 36 : 12
-    if (networthData.length === 0) return []
-    return networthData.slice(-Math.min(take, networthData.length))
-  }, [networthData, nwHorizon])
+  const networthDisplayData = useMemo(
+    () => tailChartRows(networthData, overviewTimeRange),
+    [networthData, overviewTimeRange],
+  )
 
   const incomeM = Number(summary?.total_income) || 0
   const expenseM = Number(summary?.total_expense) || 0
@@ -466,15 +482,14 @@ export default function PersonalFinanceDashboardPage() {
     [expenseCats],
   )
 
-  const cashflowHealthData = useMemo(
-    () =>
-      (incomeExpense || []).map((row) => {
-        const inc = Number(row.income) || 0
-        const exp = Number(row.expense) || 0
-        return { month: row.month, moneyIn: inc, moneyOut: exp, net: inc - exp }
-      }),
-    [incomeExpense],
-  )
+  const cashflowHealthData = useMemo(() => {
+    const rows = (incomeExpense || []).map((row) => {
+      const inc = Number(row.income) || 0
+      const exp = Number(row.expense) || 0
+      return { month: row.month, moneyIn: inc, moneyOut: exp, net: inc - exp }
+    })
+    return tailChartRows(rows, overviewTimeRange)
+  }, [incomeExpense, overviewTimeRange])
 
   const debtTrendData = useMemo(() => {
     const liab = Number(summary?.total_liabilities) || 0
@@ -546,6 +561,14 @@ export default function PersonalFinanceDashboardPage() {
       { label: 'Liquidity', value: pct(liq), hint: 'Liquid cash / monthly expense' },
     ]
   }, [incomeM, expenseM, emiM, creditCardsSummary, totalAssetsBook, summary, cashBankTotal])
+
+  const ratioRowCards = useMemo(
+    () =>
+      ratioCards.filter((r) =>
+        ['Savings rate', 'Debt to income', 'Credit utilization', 'Liquidity'].includes(r.label),
+      ),
+    [ratioCards],
+  )
 
   const netWorthMomLabel = useMemo(() => {
     if (networthData.length < 2) return null
@@ -648,35 +671,6 @@ export default function PersonalFinanceDashboardPage() {
     [incomeExpense, dashMonthValue, emiM],
   )
 
-  const overviewAssetsLiabData = useMemo(() => {
-    const liab = Number(summary?.total_liabilities) || 0
-    return networthDisplayData.map((r) => ({
-      month: r.month,
-      assets: r.netWorth + liab,
-      liabilities: liab,
-      netWorth: r.netWorth,
-    }))
-  }, [networthDisplayData, summary])
-
-  const monthlyFinanceBarData = useMemo(() => {
-    let prev = null
-    return (incomeExpense || []).map((row) => {
-      const nwRow = networthData.find((n) => n.month === row.month)
-      const nw = nwRow ? nwRow.netWorth : null
-      let nwChange = 0
-      if (prev != null && nw != null) nwChange = nw - prev
-      prev = nw
-      return {
-        month: row.month,
-        income: Number(row.income) || 0,
-        expense: Number(row.expense) || 0,
-        emi: row.month === dashMonthValue ? emiM : 0,
-        savings: (Number(row.income) || 0) - (Number(row.expense) || 0),
-        nwChange,
-      }
-    })
-  }, [incomeExpense, networthData, dashMonthValue, emiM])
-
   const loanExposurePie = useMemo(() => {
     const rem = Number(loanAnalytics?.total_remaining_receivable) || 0
     const od = Number(loanAnalytics?.overdue_emi_amount) || 0
@@ -686,10 +680,6 @@ export default function PersonalFinanceDashboardPage() {
       { name: 'Overdue EMI', value: od },
     ].filter((x) => x.value > 0.01)
   }, [loanAnalytics])
-
-  const COMPOSITION_COLORS = isDark
-    ? ['#60a5fa', '#4ade80', '#a78bfa', '#fbbf24', '#f472b6']
-    : ['#0ea5e9', '#34d399', '#8b5cf6', '#f59e0b', '#e879a9']
 
   const invBarData = useMemo(
     () =>
@@ -874,6 +864,32 @@ export default function PersonalFinanceDashboardPage() {
                 <p className="text-xs text-[var(--pf-text-muted)]">{financialHealth.label}</p>
               </div>
             ) : null}
+            {activeTab === 'overview' ? (
+              <div
+                className="flex w-full flex-wrap gap-1 rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)]/70 p-1 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:w-auto"
+                title="Length of trend charts on Overview (income, net worth, cashflow)"
+              >
+                {[
+                  { v: 1, label: 'This month' },
+                  { v: 3, label: '3M' },
+                  { v: 6, label: '6M' },
+                  { v: 12, label: '1Y' },
+                ].map(({ v, label }) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setOverviewTimeRange(v)}
+                    className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition sm:px-3 sm:text-xs ${
+                      overviewTimeRange === v
+                        ? 'bg-[var(--pf-primary)] text-white shadow-sm'
+                        : 'text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] hover:text-[var(--pf-text)]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={() => setMonthModalOpen(true)}
@@ -947,71 +963,110 @@ export default function PersonalFinanceDashboardPage() {
       {activeTab === 'overview' && (
         <>
       {loading && !summary ? (
-        <div className="grid grid-cols-12 gap-6" aria-hidden>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className={`animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10 ${i === 0 ? 'col-span-12 h-32 md:col-span-6 xl:col-span-4' : 'col-span-6 h-28 md:col-span-3 xl:col-span-4'}`}
-            />
-          ))}
+        <div className="space-y-8" aria-hidden>
+          <div className="h-48 animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10 sm:h-52" />
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-28 animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10" />
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={`w-${i}`} className="h-28 animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10" />
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={`r-${i}`} className="h-24 animate-pulse rounded-xl bg-slate-200/50 dark:bg-white/10" />
+            ))}
+          </div>
         </div>
       ) : null}
+
       <section aria-label="Financial summary" className={loading && !summary ? 'hidden' : ''}>
         <motion.div
-          className="grid grid-cols-12 gap-6"
+          className="space-y-8"
           variants={bentoContainer}
           initial="hidden"
           animate="show"
         >
-          <motion.div variants={bentoItem} className="col-span-12 min-h-[1px] xl:col-span-4">
-            <KpiCard
-              wrapperClassName="h-full min-h-[140px]"
-              title="Net worth"
-              value={formatInr(summary?.net_worth)}
-              subtitle={bankFilter ? 'Selected account lens where applicable' : 'Assets + receivables − liabilities'}
-              trendLabel={netWorthMomLabel || undefined}
-              icon={ScaleIcon}
-              tint="violet"
-            />
+          <motion.div variants={bentoItem}>
+            <div className="relative overflow-hidden rounded-2xl border border-black/[0.07] bg-gradient-to-br from-violet-500/[0.12] via-white/70 to-sky-500/[0.08] p-6 shadow-[var(--pf-shadow)] backdrop-blur-xl dark:border-white/10 dark:from-violet-600/25 dark:via-white/[0.04] dark:to-indigo-950/50 sm:p-8">
+              <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-gradient-to-br from-violet-400/25 to-indigo-500/10 blur-3xl dark:from-violet-500/20 dark:to-transparent" />
+              <div className="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-600 dark:text-white/65">
+                    Net worth
+                  </p>
+                  <p className="mt-2 break-words text-3xl font-bold tabular-nums tracking-tight text-slate-900 dark:text-white sm:text-[2.15rem]">
+                    {formatInr(summary?.net_worth)}
+                  </p>
+                  {netWorthMomLabel ? (
+                    <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-white/85">{netWorthMomLabel}</p>
+                  ) : null}
+                  <p className="mt-2 max-w-xl text-xs leading-relaxed text-slate-600 dark:text-white/55">
+                    {bankFilter ? 'Selected account lens where applicable' : 'Assets + receivables − liabilities'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-x-10 gap-y-4 border-t border-black/[0.06] pt-6 dark:border-white/10 lg:border-t-0 lg:pt-0">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-teal-700/90 dark:text-teal-300/90">
+                      Assets
+                    </p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-teal-900 dark:text-teal-200">
+                      {formatInr(totalAssetsBook)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-purple-700/90 dark:text-purple-300/90">
+                      Liabilities
+                    </p>
+                    <p className="mt-1 text-lg font-bold tabular-nums text-purple-900 dark:text-purple-200">
+                      {formatInr(summary?.total_liabilities)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </motion.div>
-          <div className="col-span-12 grid grid-cols-2 gap-4 md:gap-6 xl:col-span-8 xl:grid-cols-2">
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+
+          <motion.div variants={bentoItem}>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Liquid</p>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
               <KpiCard
-                title="Bank balance"
+                title="Bank"
                 value={formatInr(liquidBankKpi)}
-                subtitle="Checking & savings (liquid)"
+                subtitle="Checking & savings"
                 icon={BuildingLibraryIcon}
-                tint="blue"
+                tint="teal"
               />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
               <KpiCard
-                title="Cash balance"
+                title="Cash"
                 value={formatInr(hasLiquidSplit ? liquidCashKpi : legacyCashBucket)}
-                subtitle={hasLiquidSplit ? 'Physical cash' : 'Cash & wallet (legacy bucket)'}
+                subtitle={hasLiquidSplit ? 'Physical cash' : 'Cash & wallet (legacy)'}
                 icon={BanknotesIcon}
-                tint="sky"
+                tint="teal"
               />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
               <KpiCard
-                title="Wallet balance"
+                title="Wallet"
                 value={formatInr(hasLiquidSplit ? liquidWalletKpi : null)}
-                subtitle={hasLiquidSplit ? 'UPI / Paytm / PhonePe' : 'Split appears when type = Wallet'}
+                subtitle={hasLiquidSplit ? 'UPI / wallets' : 'Enable wallet-type accounts'}
                 icon={DevicePhoneMobileIcon}
                 tint="cyan"
               />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
               <KpiCard
                 title="Total liquid"
                 value={formatInr(liquidTotalKpi)}
                 subtitle="Bank + cash + wallet"
                 icon={BanknotesIcon}
-                tint="blue"
+                tint="sky"
               />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
+            </div>
+          </motion.div>
+
+          <motion.div variants={bentoItem}>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Wealth & debt</p>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
               <KpiCard
                 title="Investments"
                 value={formatInr(summary?.total_investment)}
@@ -1019,209 +1074,62 @@ export default function PersonalFinanceDashboardPage() {
                 icon={ChartPieIcon}
                 tint="indigo"
               />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
               <KpiCard
-                title="Total liabilities"
-                value={formatInr(summary?.total_liabilities)}
-                subtitle="Loans & cards outstanding"
-                icon={ReceiptPercentIcon}
-                tint="rose"
-              />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
-              <KpiCard
-                title="Loans given (acct)"
+                title="Loans given"
                 value={formatInr(summary?.finance_loans_given_balance)}
-                subtitle="LOAN_GIVEN finance accounts"
+                subtitle="LOAN_GIVEN accounts"
                 icon={UsersIcon}
-                tint="violet"
+                tint="orange"
               />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
               <KpiCard
-                title="Loans taken (acct)"
+                title="Loans taken"
                 value={formatInr(summary?.finance_loans_taken_balance)}
-                subtitle="LOAN_TAKEN book balances"
+                subtitle="LOAN_TAKEN balances"
                 icon={ReceiptPercentIcon}
                 tint="orange"
               />
-            </motion.div>
-            <motion.div variants={bentoItem} className="col-span-1 min-w-0">
               <KpiCard
-                title="Credit utilization"
-                value={creditCardsSummary?.utilization_pct != null ? `${creditCardsSummary.utilization_pct}%` : '—'}
-                subtitle={
-                  creditCardsSummary?.total_credit_limit
-                    ? `of ${formatInr(creditCardsSummary.total_credit_limit)} limit`
-                    : 'Add cards to track'
-                }
-                icon={CreditCardIcon}
-                tint="amber"
+                title="Liabilities"
+                value={formatInr(summary?.total_liabilities)}
+                subtitle="Loans & cards outstanding"
+                icon={ScaleIcon}
+                tint="purple"
               />
-            </motion.div>
-          </div>
-          <motion.div variants={bentoItem} className="col-span-12 md:col-span-6 xl:col-span-4">
-            <KpiCard
-              title="Savings rate"
-              value={incomeM > 0.01 && savingsRateFormula != null ? `${(savingsRateFormula * 100).toFixed(1)}%` : '—'}
-              subtitle="(Income − expense − EMI) / income"
-              icon={ArrowTrendingUpIcon}
-              tint="emerald"
-            />
+            </div>
           </motion.div>
-          <div className="col-span-12 md:col-span-6 xl:col-span-8">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-5">
-              {ratioCards.map((r) => (
-                <motion.div key={r.label} variants={bentoItem} className="min-w-0">
-                  <div className="h-full rounded-2xl border border-black/[0.06] bg-white/50 px-3 py-3 shadow-[var(--pf-shadow)] backdrop-blur-md transition-all duration-200 hover:border-black/10 hover:bg-white/65 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/[0.14]">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
-                      {r.label}
-                    </p>
-                    <p className="mt-1 font-mono text-sm font-bold tabular-nums text-slate-900 dark:text-white">{r.value}</p>
-                    <p className="mt-1 text-[10px] leading-snug text-slate-500 dark:text-[var(--pf-text-muted)]">{r.hint}</p>
-                  </div>
-                </motion.div>
+
+          <motion.div variants={bentoItem}>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Ratios</p>
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+              {ratioRowCards.map((r) => (
+                <div
+                  key={r.label}
+                  className="rounded-2xl border border-black/[0.06] bg-white/50 px-4 py-4 shadow-[var(--pf-shadow)] backdrop-blur-md transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-black/10 hover:shadow-lg dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-white/[0.14]"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-[var(--pf-text-muted)]">
+                    {r.label}
+                  </p>
+                  <p className="mt-1.5 font-mono text-base font-bold tabular-nums text-slate-900 dark:text-white">{r.value}</p>
+                  <p className="mt-1 text-[10px] leading-snug text-slate-500 dark:text-[var(--pf-text-muted)]">{r.hint}</p>
+                </div>
               ))}
             </div>
-          </div>
+          </motion.div>
         </motion.div>
       </section>
 
-      <div className={`space-y-4 ${loading && !summary ? 'hidden' : ''}`}>
+      <div className={`mt-8 space-y-3 ${loading && !summary ? 'hidden' : ''}`}>
         <div>
-          <h2 className={sectionTitleCls}>Composition & balance sheet</h2>
-          <p className={sectionSubCls}>Asset mix and how assets, liabilities, and net worth move over the selected window.</p>
-        </div>
-        <section className="grid min-w-0 gap-6 lg:grid-cols-2">
-          <div className={`min-w-0 ${DASH_CHART_CARD}`}>
-            <h2 className={chartTitle}>Net worth composition</h2>
-          <p className={chartSub}>Liquid (bank, cash, wallet), investments, fixed assets, loans you lent</p>
-          <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
-            {compositionPieData.length === 0 ? (
-              <p className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">
-                No balances to show yet
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
-                <PieChart>
-                  <Pie
-                    data={compositionPieData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={56}
-                    outerRadius={92}
-                    paddingAngle={2}
-                    stroke={isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.85)'}
-                    strokeWidth={2}
-                    label={(props) => {
-                      const name = props?.name != null ? String(props.name) : ''
-                      const pct = typeof props?.percent === 'number' ? props.percent : 0
-                      return `${name} ${(pct * 100).toFixed(0)}%`
-                    }}
-                  >
-                    {compositionPieData.map((_, i) => (
-                      <Cell key={i} fill={COMPOSITION_COLORS[i % COMPOSITION_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
-                  <Legend verticalAlign="bottom" height={28} />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-        <div className={`min-w-0 ${DASH_CHART_CARD}`}>
-          <h2 className={chartTitle}>Assets, liabilities & net worth</h2>
-          <p className={chartSub}>
-            Liabilities use today&apos;s balance; bars follow the net worth window ({nwHorizon === 6 ? '6' : nwHorizon === 36 ? '36' : '12'}{' '}
-            months max).
+          <h2 className={sectionTitleCls}>Charts</h2>
+          <p className={sectionSubCls}>
+            Trends for {dashYear} · window matches header ({overviewTimeRange === 1 ? '1 mo' : overviewTimeRange === 3 ? '3 mo' : overviewTimeRange === 6 ? '6 mo' : '12 mo'})
           </p>
-          <div className="mt-3 h-[280px] min-h-[280px] min-w-0 w-full">
-            {overviewAssetsLiabData.length === 0 ? (
-              <p className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">
-                No trend data for this year yet
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={220}>
-                <BarChart data={overviewAssetsLiabData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="pfDashBarAssets" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.95} />
-                      <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0.65} />
-                    </linearGradient>
-                    <linearGradient id="pfDashBarLiab" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#fb923c" stopOpacity={0.95} />
-                      <stop offset="100%" stopColor="#ea580c" stopOpacity={0.6} />
-                    </linearGradient>
-                    <linearGradient id="pfDashBarNw" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.95} />
-                      <stop offset="100%" stopColor="#6366f1" stopOpacity={0.65} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} strokeOpacity={0.35} />
-                  <XAxis
-                    dataKey="month"
-                    tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
-                    stroke={isDark ? '#94a3b8' : '#64748b'}
-                    angle={-35}
-                    textAnchor="end"
-                    height={56}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11, fill: isDark ? '#94a3b8' : '#64748b' }}
-                    stroke={isDark ? '#94a3b8' : '#64748b'}
-                    tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
-                  />
-                  <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
-                  <Legend />
-                  <Bar dataKey="assets" name="Assets (book)" fill="url(#pfDashBarAssets)" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="liabilities" name="Liabilities" fill="url(#pfDashBarLiab)" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="netWorth" name="Net worth" fill="url(#pfDashBarNw)" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-        </section>
-      </div>
-
-      <div className={`space-y-4 ${loading && !summary ? 'hidden' : ''}`}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className={sectionTitleCls}>Insights & behavior</h2>
-            <p className={sectionSubCls}>
-              Trends, ratios, and cash behavior from your existing dashboard data · {dashYear}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-1 rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/40 p-1 backdrop-blur-sm">
-            {[
-              { m: 6, label: '6 mo' },
-              { m: 12, label: '1 yr' },
-              { m: 36, label: '3 yr' },
-            ].map(({ m, label }) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setNwHorizon(m)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  nwHorizon === m
-                    ? 'bg-[var(--pf-card)] text-[var(--pf-text)] shadow-sm dark:bg-white/10'
-                    : 'text-[var(--pf-text-muted)] hover:text-[var(--pf-text)]'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
         {dashStage >= 1 ? (
           <Suspense
             fallback={
-              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2" aria-hidden>
-                {Array.from({ length: 8 }).map((_, i) => (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-hidden>
+                {Array.from({ length: 6 }).map((_, i) => (
                   <div
                     key={i}
                     className={`${DASH_INSIGHT_CARD} h-[300px] animate-pulse bg-slate-200/50 dark:bg-slate-700/40`}
@@ -1260,129 +1168,32 @@ export default function PersonalFinanceDashboardPage() {
 
       {dashStage >= 2 ? (
         <>
-          <section className={DASH_CHART_CARD} aria-label="Monthly financial summary">
-            <h2 className={chartTitle}>Monthly financial summary</h2>
-            <p className={chartSub}>
-              Income, expense, EMI ({dashMonthLabel} only), savings, and month-on-month net worth change · {dashYear}
-            </p>
-            <div className="mt-3 h-[320px] min-h-[320px] min-w-0 w-full">
-              {monthlyFinanceBarData.length === 0 ? (
-                <p className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">
-                  No monthly data yet
-                </p>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%" minWidth={48} minHeight={260}>
-                  <ComposedChart data={monthlyFinanceBarData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="pfDashInc" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#4ade80" stopOpacity={0.95} />
-                        <stop offset="100%" stopColor="#16a34a" stopOpacity={0.55} />
-                      </linearGradient>
-                      <linearGradient id="pfDashExp" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#fb923c" stopOpacity={0.95} />
-                        <stop offset="100%" stopColor="#ea580c" stopOpacity={0.55} />
-                      </linearGradient>
-                      <linearGradient id="pfDashEmi" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#f472b6" stopOpacity={0.95} />
-                        <stop offset="100%" stopColor="#db2777" stopOpacity={0.55} />
-                      </linearGradient>
-                      <linearGradient id="pfDashSav" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#93c5fd" stopOpacity={0.95} />
-                        <stop offset="100%" stopColor="#2563eb" stopOpacity={0.55} />
-                      </linearGradient>
-                      <linearGradient id="pfDashNwLine" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="#c084fc" />
-                        <stop offset="100%" stopColor="#a855f7" />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} strokeOpacity={0.35} />
-                    <XAxis
-                      dataKey="month"
-                      tick={{ fontSize: 9, fill: isDark ? '#94a3b8' : '#64748b' }}
-                      stroke={isDark ? '#94a3b8' : '#64748b'}
-                      angle={-35}
-                      textAnchor="end"
-                      height={52}
-                    />
-                    <YAxis
-                      yAxisId="left"
-                      tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
-                      stroke={isDark ? '#94a3b8' : '#64748b'}
-                      tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      tick={{ fontSize: 10, fill: isDark ? '#94a3b8' : '#64748b' }}
-                      stroke={isDark ? '#94a3b8' : '#64748b'}
-                      tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
-                    />
-                    <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} />
-                    <Legend verticalAlign="bottom" height={36} />
-                    <Bar
-                      yAxisId="left"
-                      dataKey="income"
-                      name="Income"
-                      fill="url(#pfDashInc)"
-                      maxBarSize={28}
-                      radius={[8, 8, 0, 0]}
-                    />
-                    <Bar
-                      yAxisId="left"
-                      dataKey="expense"
-                      name="Expense"
-                      fill="url(#pfDashExp)"
-                      maxBarSize={28}
-                      radius={[8, 8, 0, 0]}
-                    />
-                    <Bar yAxisId="left" dataKey="emi" name="EMI" fill="url(#pfDashEmi)" maxBarSize={28} radius={[8, 8, 0, 0]} />
-                    <Bar
-                      yAxisId="left"
-                      dataKey="savings"
-                      name="Savings"
-                      fill="url(#pfDashSav)"
-                      maxBarSize={28}
-                      radius={[8, 8, 0, 0]}
-                    />
-                    <Line
-                      yAxisId="right"
-                      type="monotone"
-                      dataKey="nwChange"
-                      name="NW Δ"
-                      stroke="url(#pfDashNwLine)"
-                      strokeWidth={2.5}
-                      dot={{ r: 2.5, strokeWidth: 1, fill: isDark ? '#09090b' : '#fff' }}
-                      activeDot={{ r: 5 }}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </section>
-
           {insightsList.length > 0 ? (
-            <section className={DASH_CHART_CARD} aria-label="Insights">
+            <section className={`${DASH_CHART_CARD} mt-8`} aria-label="Insights">
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/50 text-[var(--pf-primary)]">
                   <SparklesIcon className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <h2 className={chartTitle}>Insights</h2>
-                  <p className={chartSub}>Automated observations from your current numbers</p>
+                  <p className={chartSub}>High-signal notes from your current numbers · {dashMonthLabel}</p>
                 </div>
               </div>
-              <ul className="mt-4 space-y-2.5">
+              <ul className="mt-5 grid gap-3 sm:grid-cols-1">
                 {insightsList.map((line, idx) => {
-                  const { bar, bg, Icon } = dashboardInsightMeta(line)
+                  const { glyph, bar, bg, Icon } = dashboardInsightMeta(line)
                   return (
                     <motion.li
                       key={`insight-${idx}`}
-                      initial={{ opacity: 0, x: -6 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className={`flex gap-3 rounded-xl border border-[var(--pf-border)]/70 py-2.5 pl-1 pr-3 text-[13px] leading-snug text-slate-700 dark:text-[var(--pf-text)] ${bar} border-l-4 ${bg}`}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, delay: idx * 0.04 }}
+                      className={`flex gap-3 rounded-xl border border-[var(--pf-border)]/60 py-3 pl-3 pr-4 text-[13px] leading-snug text-slate-800 dark:text-[var(--pf-text)] ${bar} border-l-[3px] ${bg} transition-all duration-200 hover:border-[var(--pf-border)]`}
                     >
-                      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--pf-text-muted)]" />
+                      <span className="mt-0.5 shrink-0 font-mono text-base tabular-nums text-slate-500 dark:text-white/50">
+                        {glyph}
+                      </span>
+                      <Icon className="mt-0.5 h-4 w-4 shrink-0 opacity-70 text-[var(--pf-text-muted)]" />
                       <span className="min-w-0">{line}</span>
                     </motion.li>
                   )
@@ -1391,11 +1202,34 @@ export default function PersonalFinanceDashboardPage() {
             </section>
           ) : null}
 
+          <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-4">
           {upcomingPaymentsRows.length > 0 ? (
             <section className={DASH_CHART_CARD} aria-label="Upcoming payments">
               <h2 className={chartTitle}>Upcoming payments</h2>
-              <p className={chartSub}>Credit card and EMI obligations with due dates</p>
-              <div className={`mt-3 ${DASH_TABLE_WRAP}`}>
+              <p className={`${chartSub} hidden md:block`}>Credit card and EMI obligations with due dates</p>
+              <p className={`${chartSub} md:hidden`}>Due dates & amounts</p>
+              <div className="mt-4 space-y-3 md:hidden">
+                {upcomingPaymentsRows.map((row, idx) => (
+                  <div
+                    key={`${row.type}-${row.name}-${row.due}-${idx}`}
+                    className="flex flex-col gap-1 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-600 dark:bg-slate-800"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        {row.type}
+                      </span>
+                      <span className="shrink-0 text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                        {formatInr(row.amount)}
+                      </span>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{row.name}</p>
+                    <p className="text-xs tabular-nums text-slate-600 dark:text-slate-400">
+                      Due {row.due || '—'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div className={`mt-3 hidden md:block ${DASH_TABLE_WRAP}`}>
                 <table className={`${pfTable} min-w-[480px] text-[13px]`}>
                   <thead className="sticky top-0 z-[1]">
                     <tr>
@@ -1423,7 +1257,7 @@ export default function PersonalFinanceDashboardPage() {
             </section>
           ) : null}
 
-          <section aria-label="Recent transactions" className={DASH_CHART_CARD}>
+          <section aria-label="Recent transactions" className={`${DASH_CHART_CARD} min-w-0`}>
             <h2 className={chartTitle}>Recent transactions</h2>
             <p className={`${chartSub} hidden md:block`}>{txSubtitle}</p>
             {(summary?.recent_transactions ?? []).length === 0 ? (
@@ -1508,6 +1342,7 @@ export default function PersonalFinanceDashboardPage() {
               </>
             )}
           </section>
+          </div>
         </>
       ) : null}
         </>
@@ -1591,7 +1426,7 @@ export default function PersonalFinanceDashboardPage() {
                 <LazyDashboardCharts
                   chartMode="cashflow"
                   isDark={isDark}
-                  barIeData={barIeData}
+                  barIeData={barIeDataFull}
                   pieData={pieData}
                   networthData={networthData}
                   invBarData={invBarData}

@@ -167,7 +167,7 @@ export default function PfToolbar({
             ) : null}
           </div>
           <Link
-            to="/"
+            to="/personal-finance"
             className="hidden rounded-[10px] px-2 py-2 text-xs font-semibold text-[var(--pf-primary)] hover:bg-black/[0.06] dark:hover:bg-white/[0.06] md:inline"
           >
             Home

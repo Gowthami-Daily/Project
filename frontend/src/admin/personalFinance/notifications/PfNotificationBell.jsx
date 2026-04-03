@@ -1,17 +1,28 @@
 import { BellIcon } from '@heroicons/react/24/solid'
 import { AnimatePresence } from 'framer-motion'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 import { loadPfNotificationFeed } from './pfNotificationFeed.js'
 import PfNotificationPanel from './PfNotificationPanel.jsx'
 
+function pfNotificationPortalTarget() {
+  if (typeof document === 'undefined') return null
+  return document.querySelector('.pf-app') || document.body
+}
+
 export default function PfNotificationBell({ onSessionInvalid }) {
   const { tick } = usePfRefresh()
+  const [portalEl, setPortalEl] = useState(null)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [items, setItems] = useState([])
   const [highCount, setHighCount] = useState(0)
   const [mediumCount, setMediumCount] = useState(0)
+
+  useLayoutEffect(() => {
+    setPortalEl(pfNotificationPortalTarget())
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -28,6 +39,11 @@ export default function PfNotificationBell({ onSessionInvalid }) {
   useEffect(() => {
     load()
   }, [load, tick])
+
+  useEffect(() => {
+    if (!open) return
+    load()
+  }, [open, load])
 
   return (
     <>
@@ -47,11 +63,21 @@ export default function PfNotificationBell({ onSessionInvalid }) {
         ) : null}
       </button>
 
-      <AnimatePresence mode="sync">
-        {open ? (
-          <PfNotificationPanel key="pf-notification-panel" onClose={() => setOpen(false)} items={items} loading={loading} />
-        ) : null}
-      </AnimatePresence>
+      {portalEl
+        ? createPortal(
+            <AnimatePresence mode="sync">
+              {open ? (
+                <PfNotificationPanel
+                  key="pf-notification-panel"
+                  onClose={() => setOpen(false)}
+                  items={items}
+                  loading={loading}
+                />
+              ) : null}
+            </AnimatePresence>,
+            portalEl,
+          )
+        : null}
     </>
   )
 }

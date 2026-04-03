@@ -48,6 +48,7 @@ import MilkCollectionEntryPage from './admin/inflow/MilkCollectionEntryPage.jsx'
 import MilkTransferPage from './admin/inflow/MilkTransferPage.jsx'
 import TanksPage from './admin/inflow/TanksPage.jsx'
 import MarketingSite from './pages/MarketingSite.jsx'
+import PersonalFinanceLandingPage from './pages/PersonalFinanceLandingPage.jsx'
 import AssetsLayout from './admin/assets/AssetsLayout.jsx'
 import AssetsTanksPage from './admin/assets/AssetsTanksPage.jsx'
 import FuelLogsPage from './admin/assets/FuelLogsPage.jsx'
@@ -132,7 +133,8 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<MarketingSite />} />
+        <Route path="/" element={<PersonalFinanceLandingPage />} />
+        <Route path="/legacy-home" element={<MarketingSite />} />
         <Route path="/personal-finance/*" element={<PersonalFinanceShell />}>
           <Route index element={<PersonalFinanceDashboardPage />} />
           <Route path="monthly-statements" element={<PfMonthlyStatementsPage />} />
