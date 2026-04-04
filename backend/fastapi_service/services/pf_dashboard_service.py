@@ -330,7 +330,11 @@ def dashboard_bundle(
     emis_due_month = pf_finance_repo.emis_due_in_calendar_month_detail(
         db, profile_id, period_year, period_month
     )
-    ie_rows = income_vs_expense(db, profile_id, period_year, account_id)
+    # Charts and net-worth series: only months through the selected period (not later months in the same year).
+    ie_all = income_vs_expense(db, profile_id, period_year, account_id)
+    cap_ym = f'{period_year}-{int(period_month):02d}'
+    ie_rows = [r for r in ie_all if str(r.get('month', '')) <= cap_ym]
+    nw_rows = _networth_growth_from_ie_series(db, profile_id, account_id, ie_rows)
     cc_summ = pf_credit_card_repo.dashboard_summary(
         db, profile_id, period_year=period_year, period_month=period_month
     )
@@ -339,7 +343,7 @@ def dashboard_bundle(
         'summary': summ,
         'income_vs_expense': ie_rows,
         'expense_by_category': expense_category(db, profile_id, start, end, account_id),
-        'networth_growth': _networth_growth_from_ie_series(db, profile_id, account_id, ie_rows),
+        'networth_growth': nw_rows,
         'investment_allocation': investment_allocation(db, profile_id),
         'credit_cards_summary': cc_summ,
         'loans_analytics': loans_analytics(

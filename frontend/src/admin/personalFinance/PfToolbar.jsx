@@ -2,7 +2,8 @@ import {
   Bars3Icon,
   ChevronDoubleLeftIcon,
   ChevronDoubleRightIcon,
-  ChevronDownIcon,
+  EyeIcon,
+  EyeSlashIcon,
   UserCircleIcon,
 } from '@heroicons/react/24/solid'
 import { Link } from 'react-router-dom'
@@ -14,7 +15,6 @@ import {
   setPfToken,
   switchProfile,
 } from './api.js'
-import { PremiumSelect } from '../../components/ui/PremiumSelect.jsx'
 import PrivacyToggle from '../../components/ui/PrivacyToggle.jsx'
 import PfNotificationBell from './notifications/PfNotificationBell.jsx'
 import { usePfPrivacy } from './PfPrivacyContext.jsx'
@@ -75,6 +75,7 @@ export default function PfToolbar({
       const data = await switchProfile(id)
       setPfToken(data.access_token)
       setActiveProfileId(id)
+      setMenuOpen(false)
       refresh()
     } catch (e) {
       if (e.status === 401) {
@@ -84,13 +85,9 @@ export default function PfToolbar({
     }
   }
 
-  const activeLabel =
-    profiles.find((p) => p.profile_id === activeProfileId)?.profile_name ??
-    (loading ? 'Loading…' : 'Profile')
-
   return (
     <header className="z-40 shrink-0 border-b border-[var(--pf-border)] bg-[var(--pf-header)] backdrop-blur-md">
-      <div className="mx-auto flex min-h-14 w-full max-w-full items-center justify-between gap-2 px-3 sm:px-4 lg:px-6">
+      <div className="mx-auto flex h-14 min-h-14 w-full max-w-full items-center justify-between gap-2 px-3 sm:px-4 lg:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
             type="button"
@@ -117,24 +114,25 @@ export default function PfToolbar({
             Personal Finance
           </h1>
         </div>
-        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <PrivacyToggle active={privacyBlur} onToggle={setPrivacyBlur} />
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+          <div className="hidden lg:block">
+            <PrivacyToggle active={privacyBlur} onToggle={setPrivacyBlur} />
+          </div>
           <PfNotificationBell onSessionInvalid={onSessionInvalid} />
           <div className="relative" ref={menuRef}>
             <button
               type="button"
               onClick={() => setMenuOpen((v) => !v)}
-              className="flex h-11 min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-[10px] px-2 text-[var(--pf-text)] transition hover:bg-black/[0.06] active:scale-[0.97] dark:hover:bg-white/[0.06] sm:min-w-0 sm:px-2.5"
+              className="flex h-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-[10px] text-[var(--pf-text)] transition hover:bg-black/[0.06] active:scale-[0.97] dark:hover:bg-white/[0.06]"
               aria-expanded={menuOpen}
               aria-haspopup="menu"
-              aria-label="Account menu"
+              aria-label="Profile and workspace menu"
             >
               <UserCircleIcon className="h-7 w-7 shrink-0 text-[var(--pf-primary)]" />
-              <ChevronDownIcon className="hidden h-4 w-4 shrink-0 text-[var(--pf-text-muted)] sm:block" />
             </button>
             {menuOpen ? (
               <div
-                className="absolute right-0 z-50 mt-1 w-[min(100vw-1.5rem,14rem)] min-w-0 rounded-[10px] border border-[var(--pf-border)] bg-[var(--pf-card)] py-1 shadow-[var(--pf-shadow)]"
+                className="absolute right-0 z-50 mt-1 w-[min(100vw-1.5rem,20rem)] min-w-0 overflow-hidden rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)] shadow-[var(--pf-shadow)]"
                 role="menu"
               >
                 <Link
@@ -145,25 +143,82 @@ export default function PfToolbar({
                 >
                   Profile
                 </Link>
-                <Link
-                  to="/personal-finance/settings"
-                  role="menuitem"
-                  className="block min-h-11 px-4 py-3 text-sm font-semibold leading-snug text-[var(--pf-text)] hover:bg-[var(--pf-card-hover)] sm:py-2.5"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Settings
-                </Link>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="min-h-11 w-full px-4 py-3 text-left text-sm font-semibold leading-snug text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 sm:py-2.5"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onLogout?.()
-                  }}
-                >
-                  Logout
-                </button>
+                <div className="border-t border-[var(--pf-border)]/80 px-3 py-2" role="group" aria-label="Switch workspace">
+                  <p className="px-1 pb-2 text-[10px] font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">
+                    Switch workspace
+                  </p>
+                  <div className="max-h-48 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
+                    {loading ? (
+                      <p className="px-1 py-2 text-xs text-[var(--pf-text-muted)]">Loading workspaces…</p>
+                    ) : profiles.length === 0 ? (
+                      <p className="px-1 py-2 text-xs text-[var(--pf-text-muted)]">No workspaces</p>
+                    ) : (
+                      profiles.map((p) => {
+                        const isOn = p.profile_id === activeProfileId
+                        return (
+                          <button
+                            key={p.profile_id}
+                            type="button"
+                            role="menuitem"
+                            disabled={loading}
+                            onClick={() => handleProfileChange(p.profile_id)}
+                            className={`mb-0.5 flex w-full rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition ${
+                              isOn
+                                ? 'bg-[var(--pf-primary)]/15 text-[var(--pf-text)] ring-1 ring-[var(--pf-primary)]/30'
+                                : 'text-[var(--pf-text)] hover:bg-[var(--pf-card-hover)]'
+                            }`}
+                          >
+                            <span className="min-w-0 flex-1 truncate">
+                              {p.profile_name}
+                              <span className="mt-0.5 block text-[11px] font-medium text-[var(--pf-text-muted)]">
+                                {p.profile_type}
+                              </span>
+                            </span>
+                            {isOn ? (
+                              <span className="ml-2 shrink-0 text-xs font-bold text-[var(--pf-primary)]">✓</span>
+                            ) : null}
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+                <div className="border-t border-[var(--pf-border)]/80 lg:hidden">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-[var(--pf-text)] hover:bg-[var(--pf-card-hover)] sm:py-2.5"
+                    onClick={() => setPrivacyBlur(!privacyBlur)}
+                  >
+                    {privacyBlur ? (
+                      <EyeSlashIcon className="h-5 w-5 shrink-0 text-[var(--pf-text-muted)]" aria-hidden />
+                    ) : (
+                      <EyeIcon className="h-5 w-5 shrink-0 text-[var(--pf-text-muted)]" aria-hidden />
+                    )}
+                    {privacyBlur ? 'Show amounts' : 'Blur amounts (privacy)'}
+                  </button>
+                </div>
+                <div className="border-t border-[var(--pf-border)]/80">
+                  <Link
+                    to="/personal-finance/settings"
+                    role="menuitem"
+                    className="block min-h-11 px-4 py-3 text-sm font-semibold leading-snug text-[var(--pf-text)] hover:bg-[var(--pf-card-hover)] sm:py-2.5"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    Settings
+                  </Link>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="min-h-11 w-full px-4 py-3 text-left text-sm font-semibold leading-snug text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40 sm:py-2.5"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      onLogout?.()
+                    }}
+                  >
+                    Logout
+                  </button>
+                </div>
               </div>
             ) : null}
           </div>
@@ -174,26 +229,6 @@ export default function PfToolbar({
             Home
           </Link>
         </div>
-      </div>
-      <div className="mx-auto w-full max-w-full border-t border-[var(--pf-border)]/80 px-3 pb-2 pt-1.5 sm:px-4 lg:px-6">
-        <PremiumSelect
-          id="pf-profile"
-          aria-label={`Active profile: ${activeLabel}`}
-          className="sm:max-w-md"
-          options={
-            profiles.length === 0
-              ? []
-              : profiles.map((p) => ({
-                  value: String(p.profile_id),
-                  label: `${p.profile_name} (${p.profile_type})`,
-                }))
-          }
-          value={activeProfileId != null ? String(activeProfileId) : ''}
-          onChange={(v) => handleProfileChange(v)}
-          placeholder="No profiles"
-          disabled={loading || profiles.length === 0}
-          searchable={profiles.length > 6}
-        />
       </div>
     </header>
   )

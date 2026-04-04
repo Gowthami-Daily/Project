@@ -14,7 +14,7 @@ export function PfThemeProvider({ children }) {
     } catch {
       /* ignore */
     }
-    return 'light'
+    return 'dark'
   })
 
   const [systemDark, setSystemDark] = useState(() => {

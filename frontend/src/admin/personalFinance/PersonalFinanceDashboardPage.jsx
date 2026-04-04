@@ -35,7 +35,6 @@ import {
   YAxis,
 } from 'recharts'
 import { chartGridStroke, chartTooltipBox } from '../../components/dashboard/chartTheme.js'
-import { PageHeader } from '../../components/ui/PageHeader.jsx'
 import KpiCard from '../dashboard/KpiCard.jsx'
 import {
   getCashflowMonthSummary,
@@ -113,6 +112,17 @@ function tailChartRows(rows, n) {
   if (!rows?.length) return []
   const take = Math.max(1, Math.min(n, rows.length))
   return rows.slice(-take)
+}
+
+/** Monthly series (keys like YYYY-MM): keep rows through the selected dashboard month only. */
+function capMonthlySeriesToSelectedMonth(rows, year, month) {
+  if (!rows?.length) return []
+  const cap = `${year}-${String(month).padStart(2, '0')}`
+  return rows.filter((r) => {
+    const key = String(r.month ?? '').trim()
+    if (!key || key.length < 7) return true
+    return key <= cap
+  })
 }
 
 function dashboardInsightMeta(line) {
@@ -207,6 +217,16 @@ export default function PersonalFinanceDashboardPage() {
   const dashMonthLabel = useMemo(
     () => new Date(dashYear, dashMonth - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' }),
     [dashYear, dashMonth],
+  )
+
+  /** Align trend data with KPI month (backend bundle caps too; this covers cache / fallback paths). */
+  const incomeExpenseForCharts = useMemo(
+    () => capMonthlySeriesToSelectedMonth(incomeExpense, dashYear, dashMonth),
+    [incomeExpense, dashYear, dashMonth],
+  )
+  const networthForCharts = useMemo(
+    () => capMonthlySeriesToSelectedMonth(networth, dashYear, dashMonth),
+    [networth, dashYear, dashMonth],
   )
 
   const tooltipBox = useMemo(() => chartTooltipBox(isDark), [isDark])
@@ -371,12 +391,12 @@ export default function PersonalFinanceDashboardPage() {
 
   const barIeDataFull = useMemo(
     () =>
-      (incomeExpense || []).map((row) => ({
+      (incomeExpenseForCharts || []).map((row) => ({
         month: row.month,
         income: Number(row.income) || 0,
         expense: Number(row.expense) || 0,
       })),
-    [incomeExpense],
+    [incomeExpenseForCharts],
   )
 
   const barIeData = useMemo(
@@ -386,11 +406,11 @@ export default function PersonalFinanceDashboardPage() {
 
   const networthData = useMemo(
     () =>
-      (networth || []).map((row) => ({
+      (networthForCharts || []).map((row) => ({
         month: row.month,
         netWorth: Number(row.net_worth) || 0,
       })),
-    [networth],
+    [networthForCharts],
   )
 
   const networthDisplayData = useMemo(
@@ -483,35 +503,35 @@ export default function PersonalFinanceDashboardPage() {
   )
 
   const cashflowHealthData = useMemo(() => {
-    const rows = (incomeExpense || []).map((row) => {
+    const rows = (incomeExpenseForCharts || []).map((row) => {
       const inc = Number(row.income) || 0
       const exp = Number(row.expense) || 0
       return { month: row.month, moneyIn: inc, moneyOut: exp, net: inc - exp }
     })
     return tailChartRows(rows, overviewTimeRange)
-  }, [incomeExpense, overviewTimeRange])
+  }, [incomeExpenseForCharts, overviewTimeRange])
 
   const debtTrendData = useMemo(() => {
     const liab = Number(summary?.total_liabilities) || 0
     const cc = Number(creditCardsSummary?.used_limit) || 0
-    return (incomeExpense || []).map((row) => ({
+    return (incomeExpenseForCharts || []).map((row) => ({
       month: row.month,
       emi: row.month === dashMonthValue ? emiM : 0,
       loanOutstanding: liab,
       ccOutstanding: cc,
     }))
-  }, [incomeExpense, dashMonthValue, emiM, summary, creditCardsSummary])
+  }, [incomeExpenseForCharts, dashMonthValue, emiM, summary, creditCardsSummary])
 
   const savingsRateTrendData = useMemo(
     () =>
-      (incomeExpense || []).map((row) => {
+      (incomeExpenseForCharts || []).map((row) => {
         const inc = Number(row.income) || 0
         const exp = Number(row.expense) || 0
         const emi = row.month === dashMonthValue ? emiM : 0
         const rate = inc > 0.01 ? ((inc - exp - emi) / inc) * 100 : null
         return { month: row.month, rate: rate != null ? Math.round(rate * 10) / 10 : null }
       }),
-    [incomeExpense, dashMonthValue, emiM],
+    [incomeExpenseForCharts, dashMonthValue, emiM],
   )
 
   const financialHealth = useMemo(() => {
@@ -649,26 +669,26 @@ export default function PersonalFinanceDashboardPage() {
 
   const cashflowTrendData = useMemo(
     () =>
-      (incomeExpense || []).map((row) => ({
+      (incomeExpenseForCharts || []).map((row) => ({
         month: row.month,
         income: Number(row.income) || 0,
         expense: Number(row.expense) || 0,
         savings: (Number(row.income) || 0) - (Number(row.expense) || 0),
         emi: row.month === dashMonthValue ? emiM : 0,
       })),
-    [incomeExpense, dashMonthValue, emiM],
+    [incomeExpenseForCharts, dashMonthValue, emiM],
   )
 
   const cashflowMonthlyTableRows = useMemo(
     () =>
-      (incomeExpense || []).map((row) => ({
+      (incomeExpenseForCharts || []).map((row) => ({
         month: row.month,
         income: Number(row.income) || 0,
         expense: Number(row.expense) || 0,
         emi: row.month === dashMonthValue ? emiM : 0,
         savings: (Number(row.income) || 0) - (Number(row.expense) || 0),
       })),
-    [incomeExpense, dashMonthValue, emiM],
+    [incomeExpenseForCharts, dashMonthValue, emiM],
   )
 
   const loanExposurePie = useMemo(() => {
@@ -841,71 +861,99 @@ export default function PersonalFinanceDashboardPage() {
       ? `Showing ${dashMonthLabel} · add more from Income or Expenses`
       : 'Latest income and expense rows · add more from Income or Expenses in the sidebar'
 
+  const financialHealthCard = summary ? (
+    <div
+      className="w-full rounded-2xl border border-[var(--pf-border)] bg-[var(--pf-card)] px-3 py-2.5 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:max-w-[min(100%,13rem)] md:mr-auto md:w-auto"
+      title="Blended score: savings rate, credit utilization, EMI vs income, net worth change, cash cushion vs spending"
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">Financial health</p>
+      <p className="font-mono text-xl font-bold tabular-nums text-[var(--pf-text)]">
+        {financialHealth.score}
+        <span className="text-sm font-normal text-[var(--pf-text-muted)]"> / 100</span>
+      </p>
+      <p className="text-xs text-[var(--pf-text-muted)]">{financialHealth.label}</p>
+    </div>
+  ) : null
+
+  const overviewRangeControl =
+    activeTab === 'overview' ? (
+      <div
+        className="flex w-full flex-wrap gap-1 rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)]/70 p-1 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:w-auto"
+        title="How many recent months to show in Overview trend charts (through the selected calendar month below)"
+      >
+        {[
+          { v: 1, label: 'This month' },
+          { v: 3, label: '3M' },
+          { v: 6, label: '6M' },
+          { v: 12, label: '1Y' },
+        ].map(({ v, label }) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setOverviewTimeRange(v)}
+            className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition sm:px-3 sm:text-xs ${
+              overviewTimeRange === v
+                ? 'bg-[var(--pf-primary)] text-white shadow-sm'
+                : 'text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] hover:text-[var(--pf-text)]'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    ) : null
+
+  const monthSelectButton = (
+    <button
+      type="button"
+      onClick={() => setMonthModalOpen(true)}
+      title="KPIs, category breakdown, cashflow snapshot, and transactions use this month. Trend charts include months from January through this month (same year)."
+      className={`${pfSelectCompact} min-h-11 w-full min-w-0 text-left font-bold text-[var(--pf-text)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.97] sm:min-w-[6.5rem] sm:w-auto`}
+    >
+      {new Date(dashYear, dashMonth - 1, 1).toLocaleString(undefined, { month: 'short', year: 'numeric' })}
+    </button>
+  )
+
+  const accountFilterControl = (
+    <div
+      className="min-w-0 w-full flex-1 sm:max-w-[min(100%,16rem)]"
+      title="Limit dashboard KPIs, trends, category split, and recent activity to one bank account. “All accounts” uses your full profile."
+    >
+      <PfBankAccountSelect className="w-full" value={bankFilter} onChange={setBankFilter} accounts={accounts} />
+    </div>
+  )
+
   return (
     <div className="w-full min-w-0 max-w-full space-y-6 sm:space-y-8">
-      <PageHeader
-        title="Dashboard"
-        titleClassName="font-semibold leading-tight tracking-tight text-[var(--pf-text)] [font-size:clamp(1.125rem,2.8vw,1.75rem)]"
-        description={loading ? 'Updating…' : undefined}
-        action={
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-            {summary ? (
-              <div
-                className="mr-auto w-full max-w-full rounded-2xl border border-[var(--pf-border)] bg-[var(--pf-card)] px-3 py-2 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:mr-0 sm:w-auto sm:max-w-[min(100%,13rem)]"
-                title="Blended score: savings rate, credit utilization, EMI vs income, net worth change, cash cushion vs spending"
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">
-                  Financial health
-                </p>
-                <p className="font-mono text-xl font-bold tabular-nums text-[var(--pf-text)]">
-                  {financialHealth.score}
-                  <span className="text-sm font-normal text-[var(--pf-text-muted)]"> / 100</span>
-                </p>
-                <p className="text-xs text-[var(--pf-text-muted)]">{financialHealth.label}</p>
-              </div>
-            ) : null}
-            {activeTab === 'overview' ? (
-              <div
-                className="flex w-full flex-wrap gap-1 rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)]/70 p-1 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:w-auto"
-                title="Length of trend charts on Overview (income, net worth, cashflow)"
-              >
-                {[
-                  { v: 1, label: 'This month' },
-                  { v: 3, label: '3M' },
-                  { v: 6, label: '6M' },
-                  { v: 12, label: '1Y' },
-                ].map(({ v, label }) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setOverviewTimeRange(v)}
-                    className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition sm:px-3 sm:text-xs ${
-                      overviewTimeRange === v
-                        ? 'bg-[var(--pf-primary)] text-white shadow-sm'
-                        : 'text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] hover:text-[var(--pf-text)]'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setMonthModalOpen(true)}
-              className={`${pfSelectCompact} min-w-[6.5rem] text-left font-bold text-[var(--pf-text)] transition hover:bg-[var(--pf-card-hover)] active:scale-[0.97]`}
-            >
-              {new Date(dashYear, dashMonth - 1, 1).toLocaleString(undefined, { month: 'short', year: 'numeric' })}
-            </button>
-            <PfBankAccountSelect
-              className="min-w-0 flex-[1.2] sm:max-w-[min(100%,16rem)]"
-              value={bankFilter}
-              onChange={setBankFilter}
-              accounts={accounts}
-            />
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="font-semibold leading-tight tracking-tight text-[var(--pf-text)] [font-size:clamp(1.125rem,2.8vw,1.75rem)]">
+            Dashboard
+          </h1>
+          {loading ? <p className="mt-1 max-w-2xl text-sm text-[var(--pf-text-muted)]">Updating…</p> : null}
+        </div>
+        <div className="hidden w-full min-w-0 shrink-0 flex-col gap-2 sm:w-auto md:flex md:flex-row md:flex-wrap md:items-center md:justify-end">
+          {financialHealthCard}
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+            {overviewRangeControl}
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+              {monthSelectButton}
+              {accountFilterControl}
+            </div>
           </div>
-        }
-      />
+        </div>
+      </header>
+
+      <div className="flex flex-col gap-3 md:hidden">
+        {financialHealthCard}
+        <div className="flex flex-col gap-2">
+          {overviewRangeControl}
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
+            {monthSelectButton}
+            {accountFilterControl}
+          </div>
+        </div>
+      </div>
 
       {bankFilter ? (
         <p className="hidden rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-900 md:block">
@@ -1122,7 +1170,9 @@ export default function PersonalFinanceDashboardPage() {
         <div>
           <h2 className={sectionTitleCls}>Charts</h2>
           <p className={sectionSubCls}>
-            Trends for {dashYear} · window matches header ({overviewTimeRange === 1 ? '1 mo' : overviewTimeRange === 3 ? '3 mo' : overviewTimeRange === 6 ? '6 mo' : '12 mo'})
+            Monthly trends through {dashMonthLabel} · showing last{' '}
+            {overviewTimeRange === 1 ? '1 month' : overviewTimeRange === 3 ? '3 months' : overviewTimeRange === 6 ? '6 months' : '12 months'}{' '}
+            of data (This month / 3M / 6M / 1Y).
           </p>
         </div>
         {dashStage >= 1 ? (
