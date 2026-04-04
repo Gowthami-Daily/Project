@@ -788,6 +788,47 @@ def record_liability_payment(
     return row
 
 
+def add_liability_principal_draw(
+    db: Session,
+    profile_id: int,
+    liability_id: int,
+    *,
+    disbursement_date: date,
+    amount: float,
+    finance_account_id: int,
+) -> FinanceLiability:
+    """
+    Record additional borrowing on the same liability (proceeds credited to bank).
+    Only for liabilities **without** an EMI schedule. Mirrors lent-loan add-amount, inverted.
+    """
+    _ = disbursement_date
+    ln = get_liability_for_profile(db, liability_id, profile_id)
+    if ln is None:
+        raise ValueError('Liability not found')
+    if liability_has_emi_schedule(db, liability_id):
+        raise ValueError(
+            'Additional principal is not supported for EMI-schedule liabilities; create a new liability or contact support.'
+        )
+    if str(ln.status or '').upper() != 'ACTIVE':
+        raise ValueError('Liability is not active')
+    lt = (ln.liability_type or '').upper()
+    if lt == 'CREDIT_CARD_STATEMENT':
+        raise ValueError('Use credit card bill flows for card statement balances')
+    if lt == 'CREDIT_CARD':
+        raise ValueError('Use expenses or card billing to change credit card balances')
+    amt = float(amount)
+    if amt <= 0:
+        raise ValueError('Amount must be positive')
+    if get_account_for_profile(db, finance_account_id, profile_id) is None:
+        raise ValueError('Account not found or not in this profile')
+    _bump_account_balance(db, profile_id, finance_account_id, amt)
+    ln.total_amount = float(ln.total_amount or 0) + amt
+    ln.outstanding_amount = float(ln.outstanding_amount or 0) + amt
+    db.commit()
+    db.refresh(ln)
+    return ln
+
+
 def close_liability_if_zero(db: Session, profile_id: int, liability_id: int) -> FinanceLiability:
     ln = get_liability_for_profile(db, liability_id, profile_id)
     if ln is None:

@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
+  addLiabilityPrincipalAmount,
   closeFinanceLiability,
   createFinanceLiability,
   createLiabilityPayment,
@@ -128,6 +129,15 @@ function schedulePayFromLabel(s, accountNameById) {
     return accountNameById.get(s.finance_account_id) ?? `Account #${s.finance_account_id}`
   }
   return 'Not set — choose in Pay flow'
+}
+
+/** Same rules as Loans → + Add amount: manual book only, not EMI or card products. */
+function liabilityAllowsAdditionalPrincipal(r) {
+  if (!r || r.has_emi_schedule) return false
+  if (String(r.status || '').toUpperCase() !== 'ACTIVE') return false
+  const t = String(r.liability_type || '').toUpperCase()
+  if (t === 'CREDIT_CARD' || t === 'CREDIT_CARD_STATEMENT') return false
+  return true
 }
 
 function effectiveDueDateStr(r) {
@@ -250,7 +260,7 @@ function SectionHeaderPremium({ title, subtitle }) {
   )
 }
 
-function LiabilityPremiumCard({ r, onView, onEdit, onPay, onPayFull }) {
+function LiabilityPremiumCard({ r, onView, onEdit, onPay, onPayFull, onAddAmount }) {
   const due = effectiveDueDateStr(r)
   const days = daysFromToday(due)
   const tier = priorityTier(r)
@@ -367,6 +377,15 @@ function LiabilityPremiumCard({ r, onView, onEdit, onPay, onPayFull }) {
         <button type="button" className={`${btnSecondary} flex-1 min-w-[5.5rem] justify-center px-2 py-2 text-xs`} onClick={() => onView(r)}>
           Schedule
         </button>
+        {liabilityAllowsAdditionalPrincipal(r) ? (
+          <button
+            type="button"
+            className={`${btnSecondary} flex-1 min-w-[5.5rem] justify-center px-2 py-2 text-xs`}
+            onClick={() => onAddAmount?.(r)}
+          >
+            Add amount
+          </button>
+        ) : null}
         <Link
           to="/personal-finance/monthly-statements?tab=ledger"
           className={`${btnSecondary} inline-flex flex-1 min-w-[5.5rem] items-center justify-center px-2 py-2 text-xs`}
@@ -472,6 +491,13 @@ export default function PfLiabilitiesPage() {
   const [emiPaySubmitting, setEmiPaySubmitting] = useState(false)
   const payAmountInputRef = useRef(null)
 
+  const [showAddAmountForm, setShowAddAmountForm] = useState(false)
+  const [addDrawDate, setAddDrawDate] = useState(todayISODate)
+  const [addDrawAmount, setAddDrawAmount] = useState('')
+  const [addDrawNotes, setAddDrawNotes] = useState('')
+  const [addDrawAccountId, setAddDrawAccountId] = useState('')
+  const [submittingAddAmount, setSubmittingAddAmount] = useState(false)
+
   const accountNameById = useMemo(() => {
     const m = new Map()
     for (const a of accounts) m.set(a.id, a.account_name)
@@ -534,6 +560,7 @@ export default function PfLiabilitiesPage() {
       setPayments([])
       setDetailSchedule([])
       setEmiPayScheduleRow(null)
+      setShowAddAmountForm(false)
       return
     }
     let cancelled = false
@@ -689,7 +716,17 @@ export default function PfLiabilitiesPage() {
     }
   }
 
+  function openAddAmountFor(r) {
+    setAddDrawDate(todayISODate())
+    setAddDrawAmount('')
+    setAddDrawNotes('')
+    setAddDrawAccountId(accounts[0]?.id != null ? String(accounts[0].id) : '')
+    setShowAddAmountForm(true)
+    setViewId(r.id)
+  }
+
   function openPay(r, opts = {}) {
+    setShowAddAmountForm(false)
     const payoff = Boolean(opts.prefillOutstanding)
     setPayIntent(payoff ? 'payoff' : 'record')
     setPayId(r.id)
@@ -779,6 +816,45 @@ export default function PfLiabilitiesPage() {
       }
     } finally {
       setPaySubmitting(false)
+    }
+  }
+
+  async function handleAddAmountSubmit(e) {
+    e.preventDefault()
+    if (!viewId) return
+    const amt = Number(addDrawAmount)
+    if (!amt || amt <= 0 || Number.isNaN(amt)) {
+      setError('Enter a valid amount to add.')
+      return
+    }
+    const acc = Number(addDrawAccountId)
+    if (!acc || Number.isNaN(acc)) {
+      setError('Select the bank account that received the funds.')
+      return
+    }
+    setSubmittingAddAmount(true)
+    setError('')
+    const savedViewId = viewId
+    try {
+      await addLiabilityPrincipalAmount(viewId, {
+        amount: amt,
+        disbursement_date: addDrawDate,
+        finance_account_id: acc,
+        notes: addDrawNotes,
+      })
+      setShowAddAmountForm(false)
+      await load()
+      refresh()
+      setViewRow(await getFinanceLiability(savedViewId))
+    } catch (err) {
+      if (err.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        setError(err.message || 'Could not add amount')
+      }
+    } finally {
+      setSubmittingAddAmount(false)
     }
   }
 
@@ -1195,6 +1271,7 @@ export default function PfLiabilitiesPage() {
                     onEdit={openEdit}
                     onPay={(x) => openPay(x)}
                     onPayFull={(x) => openPay(x, { prefillOutstanding: true })}
+                    onAddAmount={openAddAmountFor}
                   />
                 ))}
               </div>
@@ -1212,6 +1289,7 @@ export default function PfLiabilitiesPage() {
                     onEdit={openEdit}
                     onPay={(x) => openPay(x)}
                     onPayFull={(x) => openPay(x, { prefillOutstanding: true })}
+                    onAddAmount={openAddAmountFor}
                   />
                 ))}
               </div>
@@ -1229,6 +1307,7 @@ export default function PfLiabilitiesPage() {
                     onEdit={openEdit}
                     onPay={(x) => openPay(x)}
                     onPayFull={(x) => openPay(x, { prefillOutstanding: true })}
+                    onAddAmount={openAddAmountFor}
                   />
                 ))}
               </div>
@@ -1930,6 +2009,21 @@ export default function PfLiabilitiesPage() {
                     <BanknotesIcon className="h-4 w-4" />
                     Record payment
                   </button>
+                  {liabilityAllowsAdditionalPrincipal(viewRow) ? (
+                    <button
+                      type="button"
+                      className={`${btnSecondary} text-xs`}
+                      onClick={() => {
+                        setAddDrawDate(todayISODate())
+                        setAddDrawAmount('')
+                        setAddDrawNotes('')
+                        setAddDrawAccountId(accounts[0]?.id != null ? String(accounts[0].id) : '')
+                        setShowAddAmountForm((v) => !v)
+                      }}
+                    >
+                      {showAddAmountForm ? 'Hide add amount' : '+ Add amount'}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     disabled={closingId === viewId || Number(viewRow.outstanding_amount) > 0.01}
@@ -1942,6 +2036,78 @@ export default function PfLiabilitiesPage() {
                     Delete
                   </button>
                 </div>
+                {!detailLoading && showAddAmountForm && liabilityAllowsAdditionalPrincipal(viewRow) ? (
+                  <div className="mt-6 rounded-[16px] border border-sky-200/70 bg-sky-50/40 p-4 ring-1 ring-sky-100/50 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]/80">
+                    <h3 className="text-sm font-bold text-sky-950 dark:text-sky-200">Add more amount</h3>
+                    <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+                      Increases principal and outstanding. Funds are credited to the bank you select (not available for
+                      EMI-schedule liabilities).
+                    </p>
+                    <form onSubmit={handleAddAmountSubmit} className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="pf-liab-add-date" className={labelCls}>
+                          Date
+                        </label>
+                        <input
+                          id="pf-liab-add-date"
+                          type="date"
+                          className={`${inputCls} mt-1`}
+                          value={addDrawDate}
+                          onChange={(e) => setAddDrawDate(e.target.value)}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="pf-liab-add-amt" className={labelCls}>
+                          Amount (₹)
+                        </label>
+                        <input
+                          id="pf-liab-add-amt"
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          className={`${inputCls} mt-1`}
+                          value={addDrawAmount}
+                          onChange={(e) => setAddDrawAmount(e.target.value)}
+                          required
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <PremiumSelect
+                          id="pf-liab-add-acc"
+                          label="Received into account"
+                          labelClassName={labelCls}
+                          value={addDrawAccountId}
+                          onChange={setAddDrawAccountId}
+                          required
+                          placeholder="— Select account —"
+                          options={[
+                            { value: '', label: '— Select account —' },
+                            ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+                          ]}
+                          searchable={accounts.length > 6}
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label htmlFor="pf-liab-add-notes" className={labelCls}>
+                          Notes (optional)
+                        </label>
+                        <input
+                          id="pf-liab-add-notes"
+                          className={`${inputCls} mt-1`}
+                          value={addDrawNotes}
+                          onChange={(e) => setAddDrawNotes(e.target.value)}
+                          placeholder="e.g. Top-up, second tranche"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <button type="submit" disabled={submittingAddAmount} className={btnPrimary}>
+                          {submittingAddAmount ? 'Saving…' : 'Add amount'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : null}
                 {detailSchedule.length > 0 ? (
                   <div className="mt-6">
                     <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">EMI schedule</h3>

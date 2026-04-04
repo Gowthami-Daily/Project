@@ -1097,6 +1097,15 @@ class LoanAddPrincipalBody(BaseModel):
     notes: str | None = Field(default=None, max_length=500)
 
 
+class LiabilityAddPrincipalBody(BaseModel):
+    """Extra principal borrowed on the same liability (no EMI schedule only)."""
+
+    amount: float = Field(gt=0)
+    disbursement_date: date
+    finance_account_id: int = Field(ge=1, description='Bank account that receives the loan proceeds')
+    notes: str | None = Field(default=None, max_length=500)
+
+
 class LoanPatch(BaseModel):
     """Optional borrower / notes fields for PATCH /loans/{id}."""
 

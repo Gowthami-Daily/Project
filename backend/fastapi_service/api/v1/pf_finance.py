@@ -54,6 +54,7 @@ from fastapi_service.schemas_extended import (
     LiabilityEmiPayBody,
     LiabilityPaymentCreate,
     LiabilityPaymentOut,
+    LiabilityAddPrincipalBody,
     LiabilityPendingEmiOut,
     LiabilityScheduleOut,
     LoanAddPrincipalBody,
@@ -1274,6 +1275,31 @@ def close_liability_api(
     _liability_for_profile(db, liability_id, profile_id)
     try:
         row = pf_finance_repo.close_liability_if_zero(db, profile_id, liability_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return pf_liability_ui_service.enrich_liability(db, row)
+
+
+@router.post('/liabilities/{liability_id}/add-amount', response_model=FinanceLiabilityOut)
+def add_liability_principal_amount(
+    liability_id: int,
+    body: LiabilityAddPrincipalBody,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceLiabilityOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _liability_for_profile(db, liability_id, profile_id)
+    try:
+        row = pf_finance_repo.add_liability_principal_draw(
+            db,
+            profile_id,
+            liability_id,
+            disbursement_date=body.disbursement_date,
+            amount=body.amount,
+            finance_account_id=body.finance_account_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return pf_liability_ui_service.enrich_liability(db, row)

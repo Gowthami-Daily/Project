@@ -713,6 +713,19 @@ export function closeFinanceLiability(liabilityId) {
   return fin(`/liabilities/${liabilityId}/close`, { method: 'POST' })
 }
 
+/** Extra principal for borrowed liabilities without an EMI schedule; credits the given bank account. */
+export function addLiabilityPrincipalAmount(liabilityId, body) {
+  return fin(`/liabilities/${liabilityId}/add-amount`, {
+    method: 'POST',
+    body: JSON.stringify({
+      amount: Number(body.amount),
+      disbursement_date: body.disbursement_date,
+      finance_account_id: Number(body.finance_account_id),
+      notes: body.notes?.trim() || null,
+    }),
+  })
+}
+
 export function listFinanceLoans(params = {}) {
   const q = new URLSearchParams()
   if (params.loan_type && params.loan_type !== 'ALL') q.set('loan_type', String(params.loan_type))
