@@ -1,5 +1,5 @@
-import { Outlet } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { Outlet, useLocation } from 'react-router-dom'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import AppShell from '../../components/layout/AppShell.jsx'
 import PersonalFinanceAuth from './PersonalFinanceAuth.jsx'
@@ -16,6 +16,8 @@ import { PfToastProvider } from './notifications/pfToastContext.jsx'
 import { PfRefreshProvider } from './pfRefreshContext.jsx'
 import { PfThemeProvider, usePfTheme } from './PfThemeContext.jsx'
 import './pfMobile.css'
+import './pfDesignSystem/dsTokens.css'
+import './pfMotion.css'
 
 const pfPageFallback = (
   <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-4">
@@ -27,7 +29,11 @@ const pfPageFallback = (
   </div>
 )
 
+const pfEase = [0.4, 0, 0.2, 1]
+
 function PersonalFinanceShellInner() {
+  const location = useLocation()
+  const reduceMotion = useReducedMotion()
   const { user, logout, invalidateSession } = usePfAuth()
   const { resolved } = usePfTheme()
   const { privacyBlur } = usePfPrivacy()
@@ -115,16 +121,27 @@ function PersonalFinanceShellInner() {
             bottomBar={<PfBottomNav />}
           >
             <main
-              className={`pf-main-scroll pf-page-enter min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-smooth px-4 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:px-8 md:py-6 md:pb-6 ${privacyBlur ? 'pf-main-privacy' : ''}`}
+              className={`pf-main-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-smooth px-3 py-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-4 lg:px-6 lg:py-6 lg:pb-6 ${privacyBlur ? 'pf-main-privacy' : ''}`}
             >
               <Suspense fallback={pfPageFallback}>
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
-                >
-                  <Outlet context={sessionCtx} />
-                </motion.div>
+                {reduceMotion ? (
+                  <div className="min-w-0">
+                    <Outlet context={sessionCtx} />
+                  </div>
+                ) : (
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.div
+                      key={location.pathname}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6, transition: { duration: 0.18, ease: pfEase } }}
+                      transition={{ duration: 0.26, ease: pfEase }}
+                      className="min-w-0"
+                    >
+                      <Outlet context={sessionCtx} />
+                    </motion.div>
+                  </AnimatePresence>
+                )}
               </Suspense>
             </main>
           </AppShell>

@@ -1,0 +1,37 @@
+/**
+ * Personal Finance — motion tokens & subtle utilities (.pf-app scoped).
+ * Durations: fast 120ms, normal 180ms, slow 260ms. Easing: cubic-bezier(0.4, 0, 0.2, 1).
+ * Do NOT use global * { transition } — hurts perf and causes jank.
+ */
+
+.pf-app {
+  --pf-motion-fast: 120ms;
+  --pf-motion-normal: 180ms;
+  --pf-motion-slow: 260ms;
+  --pf-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --pf-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --pf-ease-in: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Progress / utilization bars — width changes animate smoothly */
+.pf-app .pf-motion-progress-fill {
+  transition: width 800ms var(--pf-ease-standard);
+}
+
+/* Modal overlay — optional hook if not using Framer on a given dialog */
+.pf-app .pf-modal-overlay--motion {
+  transition: opacity var(--pf-motion-normal) var(--pf-ease-out);
+}
+
+.pf-app .pf-modal-overlay-backdrop-enter {
+  animation: pf-overlay-fade-in var(--pf-motion-normal) var(--pf-ease-out) forwards;
+}
+
+@keyframes pf-overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

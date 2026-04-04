@@ -20,6 +20,7 @@ import {
   setPfToken,
   switchProfile,
 } from './api.js'
+import { PremiumSelect } from '../../components/ui/PremiumSelect.jsx'
 import { usePfRefresh } from './pfRefreshContext.jsx'
 
 const rowCls =
@@ -75,7 +76,7 @@ export default function PfMorePage() {
   const activeProfile = profiles.find((p) => p.profile_id === activeProfileId)
 
   return (
-    <div className="pf-page-enter mx-auto max-w-lg space-y-4 pb-4">
+    <div className="pf-page-enter mx-auto w-full min-w-0 max-w-full space-y-4 pb-4 sm:max-w-lg">
       <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">More</h1>
 
       <section
@@ -92,22 +93,21 @@ export default function PfMorePage() {
             <p className="truncate text-xs text-slate-500">{activeProfile?.profile_type ?? ''}</p>
           </div>
         </div>
-        <label htmlFor="pf-more-profile" className="mt-3 block text-xs font-semibold text-slate-600 dark:text-slate-400">
-          Switch profile
-        </label>
-        <select
+        <PremiumSelect
           id="pf-more-profile"
-          className="mt-1 w-full rounded-[12px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 outline-none focus:ring-2 focus:ring-[#1E3A8A]/30 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-100"
-          value={activeProfileId ?? ''}
-          onChange={(e) => handleProfileChange(e.target.value)}
+          label="Switch profile"
+          labelClassName="mt-3 block text-xs font-semibold text-slate-600 dark:text-slate-400"
+          className="mt-1"
+          options={profiles.map((p) => ({
+            value: String(p.profile_id),
+            label: `${p.profile_name} (${p.profile_type})`,
+          }))}
+          value={activeProfileId != null ? String(activeProfileId) : ''}
+          onChange={(v) => handleProfileChange(v)}
+          placeholder="No profiles"
           disabled={loading || profiles.length === 0}
-        >
-          {profiles.map((p) => (
-            <option key={p.profile_id} value={p.profile_id}>
-              {p.profile_name} ({p.profile_type})
-            </option>
-          ))}
-        </select>
+          searchable={profiles.length > 6}
+        />
       </section>
 
       <nav className="flex flex-col gap-3" aria-label="More links">

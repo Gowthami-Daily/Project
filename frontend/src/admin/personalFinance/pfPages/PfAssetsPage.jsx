@@ -52,7 +52,6 @@ import {
   pfModalHeader,
   pfModalOverlay,
   pfModalSurface,
-  pfSelectCompact,
   pfTable,
   pfTableWrap,
   pfTd,
@@ -63,6 +62,7 @@ import {
   pfTrHover,
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
+import { PremiumSelect } from '../../../components/ui/PremiumSelect.jsx'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
 
@@ -640,34 +640,32 @@ export default function PfAssetsPage() {
 
       <div className={`flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end ${cardCls}`}>
         <div className="min-w-[10rem] flex-1">
-          <label className="text-[11px] font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Type</label>
-          <select
-            className={`${pfSelectCompact} mt-1 w-full`}
+          <PremiumSelect
+            label="Type"
+            labelClassName="text-[11px] font-bold uppercase tracking-wide text-[var(--pf-text-muted)]"
+            className="w-full"
             value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-          >
-            <option value="ALL">All types</option>
-            {ASSET_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+            onChange={setFilterType}
+            options={[
+              { value: 'ALL', label: 'All types' },
+              ...ASSET_TYPES.map((t) => ({ value: t.value, label: t.label })),
+            ]}
+          />
         </div>
         <div className="min-w-[10rem] flex-1">
-          <label className="text-[11px] font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Location</label>
-          <select
-            className={`${pfSelectCompact} mt-1 w-full`}
+          <PremiumSelect
+            label="Location"
+            labelClassName="text-[11px] font-bold uppercase tracking-wide text-[var(--pf-text-muted)]"
+            className="w-full"
+            placeholder="All locations"
             value={filterLocation}
-            onChange={(e) => setFilterLocation(e.target.value)}
-          >
-            <option value="">All locations</option>
-            {locationOptions.map((loc) => (
-              <option key={loc} value={loc}>
-                {loc}
-              </option>
-            ))}
-          </select>
+            onChange={setFilterLocation}
+            options={[
+              { value: '', label: 'All locations' },
+              ...locationOptions.map((loc) => ({ value: loc, label: loc })),
+            ]}
+            searchable={locationOptions.length > 6}
+          />
         </div>
         <div className="min-w-[12rem] flex-[2]">
           <label className="text-[11px] font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Search</label>
@@ -904,21 +902,14 @@ export default function PfAssetsPage() {
                 />
               </div>
               <div>
-                <label htmlFor="ast-tp" className={labelCls}>
-                  Type
-                </label>
-                <select
+                <PremiumSelect
                   id="ast-tp"
-                  className={inputCls}
+                  label="Type"
+                  labelClassName={labelCls}
                   value={form.asset_type}
-                  onChange={(e) => setForm((f) => ({ ...f, asset_type: e.target.value }))}
-                >
-                  {ASSET_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm((f) => ({ ...f, asset_type: v }))}
+                  options={ASSET_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+                />
               </div>
               <div>
                 <label htmlFor="ast-lo" className={labelCls}>
@@ -1016,22 +1007,22 @@ export default function PfAssetsPage() {
           <div className="border-t border-[var(--pf-border)] pt-5">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--pf-text-muted)]">Loan</p>
             <div className="mt-3">
-              <label htmlFor="ast-ll" className={labelCls}>
-                Linked liability
-              </label>
-              <select
+              <PremiumSelect
                 id="ast-ll"
-                className={inputCls}
+                label="Linked liability"
+                labelClassName={labelCls}
+                placeholder="None"
                 value={form.linked_liability_id}
-                onChange={(e) => setForm((f) => ({ ...f, linked_liability_id: e.target.value }))}
-              >
-                <option value="">None</option>
-                {liabilities.map((ln) => (
-                  <option key={ln.id} value={String(ln.id)}>
-                    {ln.liability_name} · {formatInr(ln.outstanding_amount)} outst.
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setForm((f) => ({ ...f, linked_liability_id: v }))}
+                options={[
+                  { value: '', label: 'None' },
+                  ...liabilities.map((ln) => ({
+                    value: String(ln.id),
+                    label: `${ln.liability_name} · ${formatInr(ln.outstanding_amount)} outst.`,
+                  })),
+                ]}
+                searchable={liabilities.length > 6}
+              />
             </div>
           </div>
 

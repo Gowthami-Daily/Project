@@ -4,7 +4,7 @@
 export function PageHeader({ title, description, action, className = '', titleClassName = '' }) {
   const h1Cls =
     titleClassName ||
-    'text-xl font-semibold tracking-tight text-[var(--pf-text)] sm:text-2xl md:text-[1.75rem] md:leading-tight'
+    'font-semibold leading-tight tracking-tight text-[var(--pf-text)] [font-size:clamp(1.125rem,2.5vw,1.75rem)]'
   return (
     <header
       className={[
@@ -20,7 +20,7 @@ export function PageHeader({ title, description, action, className = '', titleCl
           <p className="mt-1 max-w-2xl text-sm text-[var(--pf-text-muted)]">{description}</p>
         ) : null}
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {action ? <div className="w-full min-w-0 shrink-0 sm:w-auto">{action}</div> : null}
     </header>
   )
 }

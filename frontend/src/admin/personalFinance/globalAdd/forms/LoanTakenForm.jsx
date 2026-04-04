@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { createFinanceLiability, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppInput, AppTextarea } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 
 const LIABILITY_TYPES = [
   { value: 'PERSONAL_LOAN_BORROWED', label: 'Personal loan' },
+  { value: 'AGRICULTURE_LOAN', label: 'Agriculture loan' },
+  { value: 'GOLD_LOAN', label: 'Gold loan' },
   { value: 'HOME_LOAN', label: 'Home loan' },
   { value: 'VEHICLE_LOAN', label: 'Vehicle loan' },
   { value: 'CREDIT_CARD', label: 'Credit card' },
@@ -111,21 +114,15 @@ export default function LoanTakenForm({ formId, onSuccess, onSessionInvalid }) {
           />
         </div>
         <div>
-          <label className={labelCls} htmlFor="pf-ge-lt-type">
-            Type
-          </label>
-          <select
+          <PremiumSelect
             id="pf-ge-lt-type"
-            className={inputCls}
+            label="Type"
+            labelClassName={labelCls}
+            options={LIABILITY_TYPES}
             value={liabilityType}
-            onChange={(e) => setLiabilityType(e.target.value)}
-          >
-            {LIABILITY_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+            onChange={setLiabilityType}
+            searchable
+          />
         </div>
         <div>
           <label className={labelCls} htmlFor="pf-ge-lt-due">

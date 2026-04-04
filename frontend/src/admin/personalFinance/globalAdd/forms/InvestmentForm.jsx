@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createFinanceInvestment, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppInput, AppTextarea } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { todayISODate } from '../pfToday.js'
@@ -119,23 +120,15 @@ export default function InvestmentForm({ formId, defaultType, defaultPlatform, o
             onChange={(e) => setInvestmentDate(e.target.value)}
           />
         </div>
-        <div>
-          <label className={labelCls} htmlFor="pf-ge-inv-type">
-            Type
-          </label>
-          <select
-            id="pf-ge-inv-type"
-            className={inputCls}
-            value={investmentType}
-            onChange={(e) => setInvestmentType(e.target.value)}
-          >
-            {INVESTMENT_TYPE_OPTIONS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <PremiumSelect
+          id="pf-ge-inv-type"
+          label="Type"
+          labelClassName={labelCls}
+          options={INVESTMENT_TYPE_OPTIONS}
+          value={investmentType}
+          onChange={setInvestmentType}
+          searchable
+        />
         <div className="sm:col-span-2">
           <AppInput id="pf-ge-inv-name" label="Name" required value={name} onChange={(e) => setName(e.target.value)} />
         </div>

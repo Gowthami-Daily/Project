@@ -8,19 +8,24 @@ const dsInput =
 const dsAmount = dsInput + ' text-right font-mono tabular-nums'
 
 /**
- * Design-system field. `variant="ds"` = underline / transparent (modal premium). `variant="boxed"` = shared pf input.
+ * Design-system field. Default `boxed` = 40px token input. `variant="ds"` = underline (legacy modals).
  */
 export function AppInput({
   id,
   label,
   hint,
-  variant = 'ds',
+  variant = 'boxed',
   amount = false,
   className = '',
   inputClassName = '',
   ...inputProps
 }) {
-  const fieldCls = variant === 'boxed' ? inputCls : amount ? dsAmount : dsInput
+  const fieldCls =
+    variant === 'boxed'
+      ? `${inputCls}${amount ? ' text-right font-mono tabular-nums' : ''}`
+      : amount
+        ? dsAmount
+        : dsInput
   return (
     <div className={className}>
       {label ? (
@@ -29,7 +34,7 @@ export function AppInput({
         </label>
       ) : null}
       <input id={id} className={[fieldCls, inputClassName].filter(Boolean).join(' ')} {...inputProps} />
-      {hint ? <p className="mt-1 text-xs text-[var(--pf-text-muted)]">{hint}</p> : null}
+      {hint ? <p className="mt-2 text-[12px] text-[var(--pf-text-muted)]">{hint}</p> : null}
     </div>
   )
 }
@@ -59,7 +64,7 @@ export function AppTextarea({
         </label>
       ) : null}
       <textarea id={id} rows={rows} className={[fieldCls, inputClassName].filter(Boolean).join(' ')} {...props} />
-      {hint ? <p className="mt-1 text-xs text-[var(--pf-text-muted)]">{hint}</p> : null}
+      {hint ? <p className="mt-2 text-[12px] text-[var(--pf-text-muted)]">{hint}</p> : null}
     </div>
   )
 }

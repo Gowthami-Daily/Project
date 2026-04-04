@@ -37,6 +37,7 @@ import {
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
+import { PremiumSelect } from '../../../components/ui/PremiumSelect.jsx'
 
 function todayISODate() {
   const d = new Date()
@@ -514,6 +515,29 @@ export default function PfExpensesPage() {
     [],
   )
 
+  const editExpensePayWithOptions = useMemo(() => {
+    const opts = []
+    if (editPaymentStatus === 'PENDING') {
+      opts.push({ value: '', label: '— Optional while pending —' })
+    }
+    for (const a of accounts) {
+      const sub = paymentMethodForAccount(a) === 'cash' ? 'Cash' : 'Bank / transfer'
+      opts.push({ value: `acc:${a.id}`, label: `Account · ${a.account_name} · ${sub}` })
+    }
+    for (const i of instruments.filter((x) => x.finance_account_id != null)) {
+      const kindLabel = i.kind === 'card' ? 'Card' : 'UPI'
+      const accNm = accountNameById.get(i.finance_account_id) ?? `#${i.finance_account_id}`
+      opts.push({ value: `pi:${i.id}`, label: `Saved ${kindLabel} (legacy) · ${i.label} · ${accNm}` })
+    }
+    for (const c of creditCards) {
+      opts.push({
+        value: `cc:${c.id}`,
+        label: `Credit card · ${c.card_name}${c.bank_name ? ` · ${c.bank_name}` : ''}`,
+      })
+    }
+    return opts
+  }, [editPaymentStatus, accounts, instruments, creditCards, accountNameById])
+
   async function handleExpenseExport() {
     setExpenseExportBusy(true)
     try {
@@ -831,18 +855,17 @@ export default function PfExpensesPage() {
                             value={editEntryDate}
                             onChange={(e) => setEditEntryDate(e.target.value)}
                           />
-                          <select
-                            className={inputCls}
+                          <PremiumSelect
+                            className="w-full"
+                            placeholder="Category…"
                             value={editCategoryId}
-                            onChange={(e) => setEditCategoryId(e.target.value)}
-                          >
-                            <option value="">Category…</option>
-                            {categories.map((c) => (
-                              <option key={c.id} value={String(c.id)}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={setEditCategoryId}
+                            options={[
+                              { value: '', label: 'Category…' },
+                              ...categories.map((c) => ({ value: String(c.id), label: c.name })),
+                            ]}
+                            searchable={categories.length > 6}
+                          />
                           <input
                             type="number"
                             inputMode="decimal"
@@ -852,67 +875,29 @@ export default function PfExpensesPage() {
                             value={editAmount}
                             onChange={(e) => setEditAmount(e.target.value)}
                           />
-                          <select
-                            className={`${inputCls} sm:col-span-2`}
+                          <PremiumSelect
+                            className="w-full sm:col-span-2"
+                            placeholder="Pay with…"
                             value={editPayWith}
-                            onChange={(e) => setEditPayWith(e.target.value)}
-                          >
-                            {editPaymentStatus === 'PENDING' ? (
-                              <option value="">— Optional while pending —</option>
-                            ) : null}
-                            {accounts.length ? (
-                              <optgroup label="Accounts">
-                                {accounts.map((a) => {
-                                  const sub = paymentMethodForAccount(a) === 'cash' ? 'Cash' : 'Bank / transfer'
-                                  return (
-                                    <option key={`e-acc-${a.id}`} value={`acc:${a.id}`}>
-                                      {a.account_name} · {sub}
-                                    </option>
-                                  )
-                                })}
-                              </optgroup>
-                            ) : null}
-                            {instruments.some((i) => i.finance_account_id != null) ? (
-                              <optgroup label="Saved card/UPI (legacy — old expenses only)">
-                                {instruments
-                                  .filter((i) => i.finance_account_id != null)
-                                  .map((i) => {
-                                    const kindLabel = i.kind === 'card' ? 'Card' : 'UPI'
-                                    const accNm =
-                                      accountNameById.get(i.finance_account_id) ?? `#${i.finance_account_id}`
-                                    return (
-                                      <option key={`e-pi-${i.id}`} value={`pi:${i.id}`}>
-                                        {kindLabel}: {i.label} · {accNm}
-                                      </option>
-                                    )
-                                  })}
-                              </optgroup>
-                            ) : null}
-                            {creditCards.length ? (
-                              <optgroup label="Registered credit cards (statement)">
-                                {creditCards.map((c) => (
-                                  <option key={`e-cc-${c.id}`} value={`cc:${c.id}`}>
-                                    {c.card_name}
-                                    {c.bank_name ? ` · ${c.bank_name}` : ''}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            ) : null}
-                          </select>
+                            onChange={setEditPayWith}
+                            options={editExpensePayWithOptions}
+                            searchable={editExpensePayWithOptions.length > 6}
+                          />
                           <input
                             className={inputCls}
                             value={editPaidBy}
                             onChange={(e) => setEditPaidBy(e.target.value)}
                             placeholder="Paid by"
                           />
-                          <select
-                            className={inputCls}
+                          <PremiumSelect
+                            className="w-full"
                             value={editPaymentStatus}
-                            onChange={(e) => setEditPaymentStatus(e.target.value)}
-                          >
-                            <option value="PAID">Paid</option>
-                            <option value="PENDING">Pending</option>
-                          </select>
+                            onChange={setEditPaymentStatus}
+                            options={[
+                              { value: 'PAID', label: 'Paid' },
+                              { value: 'PENDING', label: 'Pending' },
+                            ]}
+                          />
                           <label className="flex items-center gap-2 text-sm">
                             <input
                               type="checkbox"
@@ -922,14 +907,12 @@ export default function PfExpensesPage() {
                             Recurring
                           </label>
                           {editIsRecurring ? (
-                            <select
-                              className={inputCls}
+                            <PremiumSelect
+                              className="w-full"
                               value={editRecurringType}
-                              onChange={(e) => setEditRecurringType(e.target.value)}
-                            >
-                              <option value="monthly">Monthly</option>
-                              <option value="weekly">Weekly</option>
-                            </select>
+                              onChange={setEditRecurringType}
+                              options={recurringTypeExpenseOptions}
+                            />
                           ) : null}
                           <input
                             className={`${inputCls} sm:col-span-2`}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createFinanceAsset, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppInput, AppTextarea } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { todayISODate } from '../pfToday.js'
@@ -116,18 +117,15 @@ export default function AssetForm({ formId, onSuccess, onSessionInvalid }) {
             onChange={(e) => setPurchaseDate(e.target.value)}
           />
         </div>
-        <div>
-          <label className={labelCls} htmlFor="pf-ge-as-type">
-            Type
-          </label>
-          <select id="pf-ge-as-type" className={inputCls} value={assetType} onChange={(e) => setAssetType(e.target.value)}>
-            {ASSET_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <PremiumSelect
+          id="pf-ge-as-type"
+          label="Type"
+          labelClassName={labelCls}
+          options={ASSET_TYPES}
+          value={assetType}
+          onChange={setAssetType}
+          searchable
+        />
         <div className="sm:col-span-2">
           <AppInput id="pf-ge-as-name" label="Name" required value={assetName} onChange={(e) => setAssetName(e.target.value)} />
         </div>

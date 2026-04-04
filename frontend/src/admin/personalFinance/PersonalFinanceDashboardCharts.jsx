@@ -16,6 +16,7 @@ import {
   YAxis,
 } from 'recharts'
 import { chartGridStroke, chartTooltipBox } from '../../components/dashboard/chartTheme.js'
+import { PF_CHART_ANIMATION } from './pfChartAnimation.js'
 import { formatInr } from './pfFormat.js'
 
 const CHART_COLORS_LIGHT = ['#1E3A8A', '#0ea5e9', '#22c55e', '#a855f7', '#f59e0b', '#ec4899', '#64748b']
@@ -232,10 +233,43 @@ function PersonalFinanceDashboardCharts({
               <YAxis tick={{ fontSize: 11, fill: axisStroke }} stroke={axisStroke} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} />
               <Tooltip formatter={(v) => formatInr(v)} contentStyle={tooltipBox} animationDuration={200} />
               <Legend verticalAlign="bottom" height={28} />
-              <Line type="monotone" dataKey="income" name="Income" stroke="#22c55e" strokeWidth={2} dot={{ r: 2 }} />
-              <Line type="monotone" dataKey="expense" name="Expense" stroke="#ea580c" strokeWidth={2} dot={{ r: 2 }} />
-              <Line type="monotone" dataKey="emi" name="EMI" stroke={emiLineColor} strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2 }} />
-              <Line type="monotone" dataKey="savings" name="Savings" stroke="#2563eb" strokeWidth={2} dot={{ r: 2 }} />
+              <Line
+                type="monotone"
+                dataKey="income"
+                name="Income"
+                stroke="#22c55e"
+                strokeWidth={2}
+                dot={{ r: 2 }}
+                {...PF_CHART_ANIMATION}
+              />
+              <Line
+                type="monotone"
+                dataKey="expense"
+                name="Expense"
+                stroke="#ea580c"
+                strokeWidth={2}
+                dot={{ r: 2 }}
+                {...PF_CHART_ANIMATION}
+              />
+              <Line
+                type="monotone"
+                dataKey="emi"
+                name="EMI"
+                stroke={emiLineColor}
+                strokeWidth={2}
+                strokeDasharray="4 3"
+                dot={{ r: 2 }}
+                {...PF_CHART_ANIMATION}
+              />
+              <Line
+                type="monotone"
+                dataKey="savings"
+                name="Savings"
+                stroke="#2563eb"
+                strokeWidth={2}
+                dot={{ r: 2 }}
+                {...PF_CHART_ANIMATION}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>

@@ -351,19 +351,18 @@ def create_liability_with_emi_schedule(
     emi_interest_method: str = 'FLAT',
     interest_free_days: int | None = None,
 ) -> FinanceLiability:
-    """Persist liability and build flat or reducing EMI rows. Principal = opening outstanding."""
+    """Persist liability and build flat, simple-interest, or reducing EMI rows. Principal = opening outstanding."""
     principal = float(row.outstanding_amount)
     tm = int(term_months)
     rate = float(row.interest_rate or 0)
     if tm < 1 or rate <= 0:
         raise ValueError('EMI schedule requires term_months and interest_rate')
     method = str(emi_interest_method or 'FLAT').strip().upper()
-    if method not in ('FLAT', 'REDUCING_BALANCE'):
+    if method not in ('FLAT', 'REDUCING_BALANCE', 'SIMPLE_INTEREST'):
         method = 'FLAT'
     row.emi_interest_method = method
     row.term_months = tm
     row.emi_schedule_start_date = emi_start_date
-    row.interest_free_days = int(interest_free_days) if interest_free_days else None
     row.total_amount = max(float(row.total_amount), principal)
 
     if method == 'REDUCING_BALANCE':
@@ -375,7 +374,14 @@ def create_liability_with_emi_schedule(
         row.installment_amount = emi_rep
         row.outstanding_amount = total_repay
     else:
-        ifd = int(interest_free_days or 0)
+        # FLAT: optional interest-free days reduce the interest-bearing fraction of the term.
+        # SIMPLE_INTEREST: interest on full principal for the full term (no grace); matches P×r×(term/12).
+        if method == 'SIMPLE_INTEREST':
+            row.interest_free_days = None
+            ifd = 0
+        else:
+            ifd = int(interest_free_days or 0)
+            row.interest_free_days = int(interest_free_days) if interest_free_days else None
         grace_months = max(0.0, float(ifd) / 30.4375)
         effective_months = max(0.0, float(tm) - grace_months)
         years = effective_months / 12.0
@@ -2502,7 +2508,7 @@ def create_loan_with_schedule_options(
         row.commission_amount = float(row.loan_amount) * float(commission_percent) / 100.0
     tm = term_months
     method = str(emi_interest_method or getattr(row, 'emi_interest_method', None) or 'FLAT').strip().upper()
-    if method not in ('FLAT', 'REDUCING_BALANCE'):
+    if method not in ('FLAT', 'REDUCING_BALANCE', 'SIMPLE_INTEREST'):
         method = 'FLAT'
     row.emi_interest_method = method
     if tm and tm > 0 and row.interest_rate is not None:
@@ -2526,6 +2532,9 @@ def create_loan_with_schedule_options(
             db.commit()
             db.refresh(row)
             return row
+        if method == 'SIMPLE_INTEREST':
+            row.interest_free_days = None
+            effective_months = float(tm)
         years = effective_months / 12.0
         total_interest = principal * (rate / 100.0) * years
         total_amount = principal + total_interest

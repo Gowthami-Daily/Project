@@ -14,6 +14,7 @@ import {
   TableCellsIcon,
   WalletIcon,
 } from '@heroicons/react/24/solid'
+import { motion } from 'framer-motion'
 import { NavLink } from 'react-router-dom'
 import { usePfTheme } from './PfThemeContext.jsx'
 import RiverLogo from '../RiverLogo.jsx'
@@ -27,7 +28,7 @@ function isAdminPanelVisible(user) {
 function SectionLabel({ children, collapsed, showDividerBefore }) {
   if (collapsed) {
     if (!showDividerBefore) return null
-    return <div className="mx-2 mt-3 hidden h-px bg-[var(--pf-border)] md:block" aria-hidden />
+    return <div className="mx-2 mt-3 hidden h-px bg-[var(--pf-border)] lg:block" aria-hidden />
   }
   return (
     <p className="sidebar-section-title mx-4 mt-5 mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--pf-text-muted)] first:mt-3">
@@ -45,19 +46,34 @@ function NavItem({ to, end, icon: Icon, label, collapsed, onNavigate }) {
       onClick={onNavigate}
       className={({ isActive }) =>
         [
-          'sidebar-item flex items-center gap-3 rounded-lg py-2.5 pl-4 pr-3 text-sm font-semibold transition-colors duration-200 md:pr-4',
-          'mx-2 my-1',
-          collapsed ? 'md:mx-1 md:justify-center md:gap-0 md:px-0 md:pl-0 md:pr-0' : '',
+          'sidebar-item relative z-0 flex items-center gap-3 overflow-hidden rounded-lg py-2.5 pl-4 pr-3 text-sm font-semibold lg:pr-4',
+          'mx-2 my-1 transition-colors duration-[var(--pf-motion-normal,180ms)] [transition-timing-function:var(--pf-ease-standard,cubic-bezier(0.4,0,0.2,1))]',
+          collapsed ? 'lg:mx-1 lg:justify-center lg:gap-0 lg:px-0 lg:pl-0 lg:pr-0' : '',
           isActive
-            ? 'bg-[var(--pf-primary)] text-white shadow-sm'
+            ? 'text-white'
             : 'text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] hover:text-[var(--pf-text)]',
         ].join(' ')
       }
     >
-      <Icon className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
-      <span className={`min-w-0 flex-1 truncate text-left transition-opacity duration-300 ${collapsed ? 'md:hidden' : ''}`}>
-        {label}
-      </span>
+      {({ isActive }) => (
+        <>
+          {isActive ? (
+            <motion.span
+              layoutId={collapsed ? undefined : 'pf-sidebar-active-pill'}
+              className={[
+                'absolute -z-10 rounded-lg bg-[var(--pf-primary)] shadow-sm',
+                collapsed ? 'inset-y-1 left-1 right-1' : 'inset-y-1 left-2 right-2',
+              ].join(' ')}
+              initial={false}
+              transition={{ type: 'spring', stiffness: 440, damping: 34 }}
+            />
+          ) : null}
+          <Icon className="relative z-10 h-5 w-5 shrink-0 opacity-90" aria-hidden />
+          <span className={`relative z-10 min-w-0 flex-1 truncate text-left transition-opacity duration-300 ${collapsed ? 'lg:hidden' : ''}`}>
+            {label}
+          </span>
+        </>
+      )}
     </NavLink>
   )
 }
@@ -72,17 +88,17 @@ function DarkModeSwitch({ collapsed, isDark, onToggle }) {
       title={collapsed ? label : undefined}
       onClick={onToggle}
       className={[
-        'sidebar-item flex w-full items-center gap-3 rounded-lg py-2.5 pl-4 pr-3 text-left text-sm font-semibold transition-colors duration-200 md:pr-4',
+        'sidebar-item flex w-full items-center gap-3 rounded-lg py-2.5 pl-4 pr-3 text-left text-sm font-semibold transition-colors duration-200 lg:pr-4',
         'mx-2 my-1 text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] hover:text-[var(--pf-text)]',
-        collapsed ? 'md:mx-1 md:justify-center md:gap-0 md:px-0 md:pl-0 md:pr-0' : 'md:justify-between',
+        collapsed ? 'lg:mx-1 lg:justify-center lg:gap-0 lg:px-0 lg:pl-0 lg:pr-0' : 'lg:justify-between',
       ].join(' ')}
     >
-      <span className={`min-w-0 truncate ${collapsed ? 'md:hidden' : ''}`}>{label}</span>
+      <span className={`min-w-0 truncate ${collapsed ? 'lg:hidden' : ''}`}>{label}</span>
       <span
         className={[
           'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-[var(--pf-border)] transition-colors duration-200',
           isDark ? 'bg-[var(--pf-primary)]' : 'bg-[var(--pf-card-hover)]',
-          collapsed ? '' : 'md:ml-auto',
+          collapsed ? '' : 'lg:ml-auto',
         ].join(' ')}
         aria-hidden
       >
@@ -123,7 +139,7 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
       <button
         type="button"
         aria-label="Close menu"
-        className={`fixed inset-0 z-[54] bg-slate-900/45 backdrop-blur-[2px] transition-opacity duration-300 md:hidden ${
+        className={`fixed inset-0 z-[54] bg-slate-900/45 backdrop-blur-[2px] transition-opacity duration-300 lg:hidden ${
           mobileOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
         onClick={onCloseMobile}
@@ -131,20 +147,20 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
 
       <aside
         className={[
-          'fixed inset-y-0 left-0 z-[55] flex w-[min(280px,88vw)] max-w-[280px] flex-col border-r border-[var(--pf-border)] bg-[var(--pf-sidebar)] shadow-[var(--pf-shadow)] transition-[width,transform] duration-300 ease-out md:max-w-none md:translate-x-0 md:shadow-none',
-          'pf-sidebar-rail md:relative md:z-0 md:h-full md:min-h-0 md:max-h-full md:shrink-0',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
-          collapsed ? 'md:w-[72px] md:min-w-[72px]' : 'md:w-[240px] md:min-w-[240px]',
+          'fixed inset-y-0 left-0 z-[55] flex w-[min(88vw,17.5rem)] max-w-[min(88vw,17.5rem)] flex-col border-r border-[var(--pf-border)] bg-[var(--pf-sidebar)] shadow-[var(--pf-shadow)] transition-[width,transform] duration-[var(--pf-motion-slow,260ms)] [transition-timing-function:var(--pf-ease-standard,cubic-bezier(0.4,0,0.2,1))] lg:max-w-none lg:translate-x-0 lg:shadow-none',
+          'pf-sidebar-rail lg:relative lg:z-0 lg:h-full lg:min-h-0 lg:max-h-full lg:shrink-0',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+          collapsed ? 'lg:w-[4.5rem] lg:min-w-[4.5rem]' : 'lg:w-[15rem] lg:min-w-[15rem]',
         ].join(' ')}
         aria-label="Personal finance navigation"
       >
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--pf-border)] px-3 py-3 md:px-4">
-          <div className={`flex min-w-0 flex-1 items-center gap-2 ${collapsed ? 'md:justify-center md:overflow-hidden' : ''}`}>
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--pf-border)] px-3 py-3 lg:px-4">
+          <div className={`flex min-w-0 flex-1 items-center gap-2 ${collapsed ? 'lg:justify-center lg:overflow-hidden' : ''}`}>
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--pf-primary)] text-white shadow-inner">
               <RiverLogo className="h-5 w-5 text-white" />
             </div>
             <span
-              className={`truncate text-sm font-bold text-[var(--pf-text)] transition-opacity duration-300 ${collapsed ? 'md:hidden' : ''}`}
+              className={`truncate text-sm font-bold text-[var(--pf-text)] transition-opacity duration-300 ${collapsed ? 'lg:hidden' : ''}`}
             >
               Personal finance
             </span>
@@ -152,7 +168,7 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
           <button
             type="button"
             onClick={onCloseMobile}
-            className="rounded-lg px-3 py-1.5 text-sm font-semibold text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] md:hidden"
+            className="rounded-lg px-3 py-1.5 text-sm font-semibold text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] lg:hidden"
           >
             Close
           </button>
@@ -237,46 +253,24 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
             System
           </SectionLabel>
           <div className="flex flex-col">
-            <NavLink
+            <NavItem
               to="/personal-finance/settings"
-              title={collapsed ? 'Settings' : undefined}
-              onClick={closeIfMobile}
-              className={({ isActive }) =>
-                [
-                  'sidebar-item flex items-center gap-3 rounded-lg py-2.5 pl-4 pr-3 text-sm font-semibold transition-colors duration-200 md:pr-4',
-                  'mx-2 my-1',
-                  collapsed ? 'md:mx-1 md:justify-center md:gap-0 md:px-0 md:pl-0 md:pr-0' : '',
-                  isActive
-                    ? 'bg-[var(--pf-primary)] text-white shadow-sm'
-                    : 'text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] hover:text-[var(--pf-text)]',
-                ].join(' ')
-              }
-            >
-              <Cog6ToothIcon className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
-              <span className={`min-w-0 flex-1 truncate text-left ${collapsed ? 'md:hidden' : ''}`}>Settings</span>
-            </NavLink>
+              icon={Cog6ToothIcon}
+              label="Settings"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
 
             <DarkModeSwitch collapsed={collapsed} isDark={isDark} onToggle={toggleTheme} />
 
             {showAdmin ? (
-              <NavLink
+              <NavItem
                 to="/super-admin"
-                title={collapsed ? 'Admin panel' : undefined}
-                onClick={closeIfMobile}
-                className={({ isActive }) =>
-                  [
-                    'sidebar-item flex items-center gap-3 rounded-lg py-2.5 pl-4 pr-3 text-sm font-semibold transition-colors duration-200 md:pr-4',
-                    'mx-2 my-1',
-                    collapsed ? 'md:mx-1 md:justify-center md:gap-0 md:px-0 md:pl-0 md:pr-0' : '',
-                    isActive
-                      ? 'bg-[var(--pf-primary)] text-white shadow-sm'
-                      : 'text-[var(--pf-text-muted)] hover:bg-[var(--pf-card-hover)] hover:text-[var(--pf-text)]',
-                  ].join(' ')
-                }
-              >
-                <ShieldCheckIcon className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
-                <span className={`min-w-0 flex-1 truncate text-left ${collapsed ? 'md:hidden' : ''}`}>Admin panel</span>
-              </NavLink>
+                icon={ShieldCheckIcon}
+                label="Admin panel"
+                collapsed={collapsed}
+                onNavigate={closeIfMobile}
+              />
             ) : null}
 
             <button
@@ -287,13 +281,13 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
                 onLogout?.()
               }}
               className={[
-                'sidebar-item logout flex w-full items-center gap-3 rounded-lg py-2.5 pl-4 pr-3 text-left text-sm font-semibold transition-colors duration-200 md:pr-4',
+                'sidebar-item logout flex w-full items-center gap-3 rounded-lg py-2.5 pl-4 pr-3 text-left text-sm font-semibold transition-colors duration-200 lg:pr-4',
                 'mx-2 my-1 text-[#EF4444] hover:bg-red-500/10 dark:hover:bg-red-500/15',
-                collapsed ? 'md:mx-1 md:justify-center md:gap-0 md:px-0 md:pl-0 md:pr-0' : '',
+                collapsed ? 'lg:mx-1 lg:justify-center lg:gap-0 lg:px-0 lg:pl-0 lg:pr-0' : '',
               ].join(' ')}
             >
               <ArrowRightOnRectangleIcon className="h-5 w-5 shrink-0" aria-hidden />
-              <span className={`min-w-0 flex-1 truncate text-left ${collapsed ? 'md:hidden' : ''}`}>Logout</span>
+              <span className={`min-w-0 flex-1 truncate text-left ${collapsed ? 'lg:hidden' : ''}`}>Logout</span>
             </button>
           </div>
         </div>

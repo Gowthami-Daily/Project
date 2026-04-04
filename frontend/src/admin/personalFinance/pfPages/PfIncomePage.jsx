@@ -35,6 +35,7 @@ import {
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
+import { PremiumSelect } from '../../../components/ui/PremiumSelect.jsx'
 
 function todayISODate() {
   const d = new Date()
@@ -649,53 +650,46 @@ export default function PfIncomePage() {
                             value={editEntryDate}
                             onChange={(e) => setEditEntryDate(e.target.value)}
                           />
-                          <select
-                            className={inputCls}
+                          <PremiumSelect
+                            className="w-full"
+                            placeholder="Category"
                             value={editCategoryId}
-                            onChange={(e) => setEditCategoryId(e.target.value)}
-                          >
-                            <option value="">Category</option>
-                            {categories.map((c) => (
-                              <option key={c.id} value={String(c.id)}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={setEditCategoryId}
+                            options={[
+                              { value: '', label: 'Category' },
+                              ...categories.map((c) => ({ value: String(c.id), label: c.name })),
+                            ]}
+                            searchable={categories.length > 6}
+                          />
                           <input
                             className={inputCls}
                             value={editIncomeType}
                             onChange={(e) => setEditIncomeType(e.target.value)}
                             placeholder="Type"
                           />
-                          <select
-                            className={inputCls}
+                          <PremiumSelect
+                            className="w-full"
+                            placeholder="Account"
                             value={editAccountId}
-                            onChange={(e) => setEditAccountId(e.target.value)}
-                          >
-                            <option value="">Account</option>
-                            {accounts.map((a) => (
-                              <option key={a.id} value={String(a.id)}>
-                                {a.account_name}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={setEditAccountId}
+                            options={[
+                              { value: '', label: 'Account' },
+                              ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+                            ]}
+                            searchable={accounts.length > 6}
+                          />
                           <input
                             className={inputCls}
                             value={editReceivedFrom}
                             onChange={(e) => setEditReceivedFrom(e.target.value)}
                             placeholder="Received from"
                           />
-                          <select
-                            className={inputCls}
+                          <PremiumSelect
+                            className="w-full"
                             value={editPaymentMethod}
-                            onChange={(e) => setEditPaymentMethod(e.target.value)}
-                          >
-                            {PAY_METHODS.map((m) => (
-                              <option key={m.value} value={m.value}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={setEditPaymentMethod}
+                            options={PAY_METHODS.map((m) => ({ value: m.value, label: m.label }))}
+                          />
                           <input
                             type="number"
                             step="0.01"
@@ -713,14 +707,15 @@ export default function PfIncomePage() {
                             Recurring
                           </label>
                           {editIsRecurring ? (
-                            <select
-                              className={inputCls}
+                            <PremiumSelect
+                              className="w-full"
                               value={editRecurringType}
-                              onChange={(e) => setEditRecurringType(e.target.value)}
-                            >
-                              <option value="monthly">Monthly</option>
-                              <option value="weekly">Weekly</option>
-                            </select>
+                              onChange={setEditRecurringType}
+                              options={[
+                                { value: 'monthly', label: 'Monthly' },
+                                { value: 'weekly', label: 'Weekly' },
+                              ]}
+                            />
                           ) : null}
                           <input
                             className={`${inputCls} sm:col-span-2`}

@@ -842,16 +842,16 @@ export default function PersonalFinanceDashboardPage() {
       : 'Latest income and expense rows · add more from Income or Expenses in the sidebar'
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-8 px-1 sm:px-0">
+    <div className="w-full min-w-0 max-w-full space-y-6 sm:space-y-8">
       <PageHeader
         title="Dashboard"
-        titleClassName="text-[1.75rem] font-semibold tracking-tight text-[var(--pf-text)] leading-tight"
+        titleClassName="font-semibold leading-tight tracking-tight text-[var(--pf-text)] [font-size:clamp(1.125rem,2.8vw,1.75rem)]"
         description={loading ? 'Updating…' : undefined}
         action={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             {summary ? (
               <div
-                className="mr-auto w-full rounded-2xl border border-[var(--pf-border)] bg-[var(--pf-card)] px-3 py-2 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:mr-0 sm:w-auto sm:max-w-[13rem]"
+                className="mr-auto w-full max-w-full rounded-2xl border border-[var(--pf-border)] bg-[var(--pf-card)] px-3 py-2 shadow-[var(--pf-shadow)] backdrop-blur-sm sm:mr-0 sm:w-auto sm:max-w-[min(100%,13rem)]"
                 title="Blended score: savings rate, credit utilization, EMI vs income, net worth change, cash cushion vs spending"
               >
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--pf-text-muted)]">
@@ -898,7 +898,7 @@ export default function PersonalFinanceDashboardPage() {
               {new Date(dashYear, dashMonth - 1, 1).toLocaleString(undefined, { month: 'short', year: 'numeric' })}
             </button>
             <PfBankAccountSelect
-              className="flex-[1.2] sm:max-w-[16rem]"
+              className="min-w-0 flex-[1.2] sm:max-w-[min(100%,16rem)]"
               value={bankFilter}
               onChange={setBankFilter}
               accounts={accounts}
@@ -965,17 +965,17 @@ export default function PersonalFinanceDashboardPage() {
       {loading && !summary ? (
         <div className="space-y-8" aria-hidden>
           <div className="h-48 animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10 sm:h-52" />
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="pf-grid-cards gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-28 animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10" />
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="pf-grid-cards gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={`w-${i}`} className="h-28 animate-pulse rounded-2xl bg-slate-200/50 dark:bg-white/10" />
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="pf-grid-cards gap-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={`r-${i}`} className="h-24 animate-pulse rounded-xl bg-slate-200/50 dark:bg-white/10" />
             ))}
@@ -1032,7 +1032,7 @@ export default function PersonalFinanceDashboardPage() {
 
           <motion.div variants={bentoItem}>
             <p className="mb-3 text-xs font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Liquid</p>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="pf-grid-cards gap-4">
               <KpiCard
                 title="Bank"
                 value={formatInr(liquidBankKpi)}
@@ -1066,7 +1066,7 @@ export default function PersonalFinanceDashboardPage() {
 
           <motion.div variants={bentoItem}>
             <p className="mb-3 text-xs font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Wealth & debt</p>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <div className="pf-grid-cards gap-4">
               <KpiCard
                 title="Investments"
                 value={formatInr(summary?.total_investment)}
@@ -1100,7 +1100,7 @@ export default function PersonalFinanceDashboardPage() {
 
           <motion.div variants={bentoItem}>
             <p className="mb-3 text-xs font-bold uppercase tracking-wide text-[var(--pf-text-muted)]">Ratios</p>
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+            <div className="pf-grid-cards gap-3 sm:gap-4">
               {ratioRowCards.map((r) => (
                 <div
                   key={r.label}

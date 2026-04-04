@@ -1,31 +1,34 @@
-/** Inputs & focus — theme tokens in dark */
+/** Inputs — 40px height, 10px radius, 13px body text (design system) */
 export const inputCls =
-  'mt-1 w-full rounded-[10px] border px-3 py-2 text-sm outline-none transition-[border-color,box-shadow] duration-200 ' +
-  'border-sky-200/80 bg-white text-slate-800 ring-sky-400/30 focus:border-sky-300 focus:ring-2 ' +
-  'dark:border-[var(--pf-border)] dark:bg-[var(--pf-input-bg)] dark:text-[var(--pf-text)] dark:placeholder:text-[var(--pf-text-muted)] dark:ring-blue-500/25 dark:focus:border-[var(--pf-primary)] dark:focus:ring-2'
+  'mt-1 box-border h-10 w-full rounded-[10px] border px-3 text-[13px] leading-10 outline-none transition-[border-color,box-shadow] duration-200 ' +
+  'border-sky-200/80 bg-white text-slate-800 placeholder:text-slate-400 ring-sky-400/30 focus:border-sky-300 focus:ring-2 ' +
+  'dark:border-[var(--pf-border)] dark:bg-[var(--pf-input-bg)] dark:text-[var(--pf-text)] dark:placeholder:text-[var(--pf-text-muted)] dark:ring-[var(--pf-primary)]/25 dark:focus:border-[var(--pf-primary)] dark:focus:ring-2'
 
 export const labelCls =
-  'block text-sm font-medium text-sky-950/80 dark:text-[var(--pf-text-muted)]'
+  'block text-[12px] font-medium text-sky-950/80 dark:text-[var(--pf-text-muted)]'
 
 /** Cards — 14px radius, layered dark surfaces */
 export const cardCls =
-  'rounded-[14px] border p-4 shadow-[var(--pf-shadow)] transition-all duration-200 sm:p-5 ' +
-  'border-sky-200/55 bg-white text-slate-900 ring-1 ring-sky-100/30 hover:shadow-[var(--pf-shadow-hover)] ' +
-  'dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)] dark:text-[var(--pf-text)] dark:ring-[var(--pf-border)]/50 dark:hover:bg-[var(--pf-card-hover)]'
+  'rounded-[14px] border p-4 shadow-[var(--pf-shadow)] transition-[transform,box-shadow,background-color,border-color] duration-150 ease-out will-change-transform sm:p-5 ' +
+  'border-sky-200/55 bg-white text-slate-900 ring-1 ring-sky-100/30 hover:-translate-y-0.5 hover:shadow-[var(--pf-shadow-hover)] ' +
+  'dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)] dark:text-[var(--pf-text)] dark:ring-[var(--pf-border)]/50 dark:hover:-translate-y-0.5 dark:hover:bg-[var(--pf-card-hover)]'
 
-/** Primary — token-driven */
+/** Page root — fluid width inside shell */
+export const pfPageContainer = 'w-full min-w-0 max-w-full'
+
+/** Primary — token-driven (44px min touch target) */
 export const btnPrimary =
-  'h-[42px] min-h-[42px] inline-flex items-center justify-center rounded-[10px] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60 ' +
+  'min-h-11 h-11 inline-flex w-full items-center justify-center rounded-[10px] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60 sm:h-[42px] sm:min-h-[42px] sm:w-auto ' +
   'bg-[var(--pf-primary)] shadow-slate-900/10 hover:bg-[var(--pf-primary-hover)]'
 
 /** Secondary — outline primary */
 export const btnSecondary =
-  'h-[42px] min-h-[42px] inline-flex items-center justify-center rounded-[10px] border-2 px-4 text-sm font-semibold transition-all duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60 ' +
+  'min-h-11 h-11 inline-flex w-full items-center justify-center rounded-[10px] border-2 px-4 text-sm font-semibold transition-all duration-200 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60 sm:h-[42px] sm:min-h-[42px] sm:w-auto ' +
   'border-[var(--pf-primary)] bg-white text-[var(--pf-primary)] hover:bg-slate-50 dark:bg-[var(--pf-card)] dark:hover:bg-[var(--pf-card-hover)]'
 
 /** Danger — red fill */
 export const btnDanger =
-  'h-[42px] min-h-[42px] inline-flex items-center justify-center rounded-[10px] bg-[var(--pf-danger)] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-red-600 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60'
+  'min-h-11 h-11 inline-flex w-full items-center justify-center rounded-[10px] bg-[var(--pf-danger)] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-red-600 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-60 sm:h-[42px] sm:min-h-[42px] sm:w-auto'
 
 /** Compact native select */
 export const pfSelectCompact =
@@ -33,9 +36,23 @@ export const pfSelectCompact =
   'border-slate-200/90 bg-white text-slate-800 ' +
   'dark:border-[var(--pf-border)] dark:bg-[var(--pf-input-bg)] dark:text-[var(--pf-text)] dark:focus:ring-[var(--pf-primary)]/30'
 
-/** Table shell */
+/**
+ * Filter / toolbar native select — use inside a `relative` wrapper with a decorative chevron overlay.
+ * (`appearance-none` + horizontal padding leaves room for the icon.)
+ */
+export const pfFilterSelect =
+  'w-full cursor-pointer appearance-none rounded-xl border py-2.5 pl-3.5 pr-10 text-sm font-medium ' +
+  'shadow-[var(--pf-shadow)] outline-none transition-[border-color,box-shadow,background-color] duration-200 ' +
+  'border-sky-200/85 bg-white text-slate-800 ' +
+  'hover:border-sky-300 hover:shadow-[var(--pf-shadow-hover)] hover:bg-sky-50/20 ' +
+  'focus:border-[var(--pf-primary)] focus:ring-2 focus:ring-[var(--pf-primary)]/25 ' +
+  'dark:border-[var(--pf-border)] dark:bg-[var(--pf-input-bg)] dark:text-[var(--pf-text)] ' +
+  'dark:hover:border-[var(--pf-border)] dark:hover:bg-[var(--pf-card-hover)] ' +
+  'dark:focus:border-[var(--pf-primary)] dark:focus:ring-[var(--pf-primary)]/30'
+
+/** Table shell — horizontal scroll; add class `ds-app-table` on `<table>` for sticky header */
 export const pfTableWrap =
-  'overflow-x-auto rounded-[14px] border border-sky-200/60 bg-white shadow-[var(--pf-shadow)] dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]'
+  'max-w-full overflow-x-auto rounded-[14px] border border-sky-200/60 bg-white shadow-[var(--pf-shadow)] [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]'
 
 export const pfTable = 'w-full min-w-0 border-collapse text-left text-sm'
 
@@ -58,12 +75,13 @@ export const pfTdRight =
   'border-sky-100/90 text-slate-800 dark:border-[var(--pf-border)] dark:text-[var(--pf-text)]'
 
 export const pfTrHover =
-  'transition-colors duration-200 hover:bg-sky-50/60 dark:hover:bg-[var(--pf-card-hover)]'
+  'group/tr transition-[background-color] duration-[var(--pf-motion-normal,180ms)] ease-out hover:bg-sky-50/60 dark:hover:bg-[var(--pf-card-hover)]'
 
 export const pfThActions = 'min-w-[10.5rem] whitespace-nowrap'
 export const pfThActionsWide = 'min-w-[16rem] whitespace-nowrap'
 export const pfTdActions = `${pfTdRight} whitespace-nowrap`
-export const pfActionRow = 'flex flex-nowrap items-center justify-end gap-2'
+export const pfActionRow =
+  'pf-row-actions flex flex-nowrap items-center justify-end gap-2 transition-opacity duration-[var(--pf-motion-normal,180ms)] ease-out max-md:opacity-100 md:opacity-90 md:group-hover/tr:opacity-100'
 
 export const pfThSm =
   'border-b px-2 py-2 text-left text-[10px] font-bold uppercase tracking-wider first:pl-2 ' +

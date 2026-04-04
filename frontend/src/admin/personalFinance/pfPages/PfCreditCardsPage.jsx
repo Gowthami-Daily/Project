@@ -53,6 +53,7 @@ import {
   setPfToken,
   updateCreditCard,
 } from '../api.js'
+import { PF_CHART_ANIMATION } from '../pfChartAnimation.js'
 import {
   btnPrimary,
   btnSecondary,
@@ -60,7 +61,6 @@ import {
   inputCls,
   labelCls,
   pfChartCard,
-  pfSelectCompact,
   pfTable,
   pfTableWrap,
   pfTd,
@@ -72,6 +72,7 @@ import {
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+import { PremiumSelect } from '../../../components/ui/PremiumSelect.jsx'
 import { AppButton, AppModal } from '../pfDesignSystem/index.js'
 
 function todayISODate() {
@@ -1081,7 +1082,7 @@ export default function PfCreditCardsPage() {
     'rounded-2xl border border-[var(--pf-border)] bg-white/[0.03] p-4 shadow-[var(--pf-shadow)] backdrop-blur-md dark:bg-white/[0.04]'
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-8 pb-16">
+    <div className="w-full min-w-0 max-w-full space-y-8 pb-16">
       <PageHeader
         title="Credit cards"
         description="Swipe → unbilled → statement → paid. Track limits, utilization, and spend like a modern card app."
@@ -1192,7 +1193,7 @@ export default function PfCreditCardsPage() {
                 </p>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--pf-border)]">
                   <div
-                    className={`h-full rounded-full ${utilizationBarColorClass(Number(dash.utilization_pct ?? 0))}`}
+                    className={`pf-motion-progress-fill h-full rounded-full ${utilizationBarColorClass(Number(dash.utilization_pct ?? 0))}`}
                     style={{ width: `${Math.min(100, Number(dash.utilization_pct ?? 0))}%` }}
                   />
                 </div>
@@ -1290,7 +1291,7 @@ export default function PfCreditCardsPage() {
                   return (
                     <div
                       key={c.id}
-                      className={`relative min-w-[280px] max-w-[320px] shrink-0 rounded-2xl border p-5 shadow-lg transition hover:-translate-y-0.5 ${
+                      className={`relative w-[min(100%,20rem)] min-w-[min(100%,17.5rem)] max-w-full shrink-0 rounded-2xl border p-5 shadow-lg transition hover:-translate-y-0.5 ${
                         overdue
                           ? 'border-red-500/40 bg-gradient-to-br from-red-500/10 to-slate-900/80'
                           : 'border-[var(--pf-border)] bg-gradient-to-br from-indigo-600/90 via-slate-900 to-slate-950 text-white'
@@ -1329,7 +1330,7 @@ export default function PfCreditCardsPage() {
                       </dl>
                       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
                         <div
-                          className="h-full rounded-full bg-white"
+                          className="pf-motion-progress-fill h-full rounded-full bg-white"
                           style={{ width: `${Math.min(100, pct)}%`, opacity: pct >= 75 ? 0.85 : 1 }}
                         />
                       </div>
@@ -1394,17 +1395,16 @@ export default function PfCreditCardsPage() {
                   <h3 className={chartTitle}>Spend by category</h3>
                   <p className={chartSub}>Year {yearlyChartYear} · all cards</p>
                 </div>
-                <select
-                  className={`${pfSelectCompact} max-w-[7rem]`}
-                  value={yearlyChartYear}
-                  onChange={(e) => setYearlyChartYear(Number(e.target.value))}
-                >
-                  {(yearlyYears.length ? yearlyYears : [yearlyChartYear]).map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  className="max-w-[7rem]"
+                  aria-label="Chart year"
+                  value={String(yearlyChartYear)}
+                  onChange={(v) => setYearlyChartYear(Number(v))}
+                  options={(yearlyYears.length ? yearlyYears : [yearlyChartYear]).map((y) => ({
+                    value: String(y),
+                    label: String(y),
+                  }))}
+                />
               </div>
               <div className="mt-3 h-[260px] w-full">
                 {!categoryPieData.length || categoryPieData.every((d) => d.value === 0) ? (
@@ -1541,17 +1541,16 @@ export default function PfCreditCardsPage() {
                   <h3 className={chartTitle}>Yearly spend per card</h3>
                   <p className={chartSub}>Swipe totals by card for the selected year</p>
                 </div>
-                <select
-                  className={`${inputCls} max-w-[8rem]`}
-                  value={yearlyChartYear}
-                  onChange={(e) => setYearlyChartYear(Number(e.target.value))}
-                >
-                  {(yearlyYears.length ? yearlyYears : [yearlyChartYear]).map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  className="max-w-[8rem]"
+                  aria-label="Chart year"
+                  value={String(yearlyChartYear)}
+                  onChange={(v) => setYearlyChartYear(Number(v))}
+                  options={(yearlyYears.length ? yearlyYears : [yearlyChartYear]).map((y) => ({
+                    value: String(y),
+                    label: String(y),
+                  }))}
+                />
               </div>
               <div className="mt-3 flex flex-wrap gap-3 text-sm text-[var(--pf-text-muted)]">
                 <span>
@@ -1609,44 +1608,37 @@ export default function PfCreditCardsPage() {
                   <p className={chartSub}>By card, year, and category filter</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    className="min-w-[10rem]"
+                    aria-label="Card for trend"
                     value={selectedCardId}
-                    onChange={(e) => setSelectedCardId(e.target.value)}
-                  >
-                    {cards.map((c) => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.card_name}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className={inputCls}
-                    value={selectedYear}
-                    onChange={(e) => setSelectedYear(Number(e.target.value))}
-                  >
-                    {yearlyYears.length ? (
-                      yearlyYears.map((y) => (
-                        <option key={y} value={y}>
-                          {y}
-                        </option>
-                      ))
-                    ) : (
-                      <option value={selectedYear}>{selectedYear}</option>
-                    )}
-                  </select>
-                  <select
-                    className={inputCls}
+                    onChange={setSelectedCardId}
+                    options={cards.map((c) => ({ value: String(c.id), label: c.card_name }))}
+                    searchable={cards.length > 6}
+                  />
+                  <PremiumSelect
+                    className="min-w-[5rem]"
+                    aria-label="Year for trend"
+                    value={String(selectedYear)}
+                    onChange={(v) => setSelectedYear(Number(v))}
+                    options={
+                      yearlyYears.length
+                        ? yearlyYears.map((y) => ({ value: String(y), label: String(y) }))
+                        : [{ value: String(selectedYear), label: String(selectedYear) }]
+                    }
+                  />
+                  <PremiumSelect
+                    className="min-w-[10rem]"
+                    aria-label="Category filter"
+                    placeholder="All categories"
                     value={monthlyCategoryFilter}
-                    onChange={(e) => setMonthlyCategoryFilter(e.target.value)}
-                  >
-                    <option value="">All categories</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setMonthlyCategoryFilter}
+                    options={[
+                      { value: '', label: 'All categories' },
+                      ...categories.map((c) => ({ value: String(c.id), label: c.name })),
+                    ]}
+                    searchable={categories.length > 6}
+                  />
                 </div>
               </div>
               {monthlyLineData.length > 0 ? (
@@ -1721,7 +1713,7 @@ export default function PfCreditCardsPage() {
                       </div>
                       <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200/30 dark:bg-slate-700/50">
                         <div
-                          className="h-full rounded-full bg-[var(--pf-primary)] transition-[width]"
+                          className="pf-motion-progress-fill h-full rounded-full bg-[var(--pf-primary)]"
                           style={{
                             width: `${Math.min(100, Number(row.utilization_pct ?? 0))}%`,
                             backgroundColor:
@@ -1762,8 +1754,24 @@ export default function PfCreditCardsPage() {
                     />
                     <Tooltip formatter={(v) => formatInr(v)} />
                     <Legend />
-                    <Line type="monotone" dataKey="billed" name="Statement total" stroke="#0ea5e9" strokeWidth={2} dot />
-                    <Line type="monotone" dataKey="paid" name="Paid" stroke="#22c55e" strokeWidth={2} dot />
+                    <Line
+                      type="monotone"
+                      dataKey="billed"
+                      name="Statement total"
+                      stroke="#0ea5e9"
+                      strokeWidth={2}
+                      dot
+                      {...PF_CHART_ANIMATION}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="paid"
+                      name="Paid"
+                      stroke="#22c55e"
+                      strokeWidth={2}
+                      dot
+                      {...PF_CHART_ANIMATION}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -1888,7 +1896,7 @@ export default function PfCreditCardsPage() {
                         </p>
                         <div className="mt-1.5 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-700/80">
                           <div
-                            className={`h-full min-w-0 transition-all ${utilizationBarColorClass(pct)}`}
+                            className={`pf-motion-progress-fill h-full min-w-0 ${utilizationBarColorClass(pct)}`}
                             style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
                           />
                         </div>
@@ -1986,34 +1994,32 @@ export default function PfCreditCardsPage() {
               />
             </div>
             <div>
-              <label className={labelCls}>Card</label>
-              <select
-                className={inputCls}
+              <PremiumSelect
+                label="Card"
+                labelClassName={labelCls}
+                placeholder="All cards"
                 value={txFilterCardId}
-                onChange={(e) => setTxFilterCardId(e.target.value)}
-              >
-                <option value="">All cards</option>
-                {cards.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.card_name}
-                  </option>
-                ))}
-              </select>
+                onChange={setTxFilterCardId}
+                options={[
+                  { value: '', label: 'All cards' },
+                  ...cards.map((c) => ({ value: String(c.id), label: c.card_name })),
+                ]}
+                searchable={cards.length > 6}
+              />
             </div>
             <div>
-              <label className={labelCls}>Category</label>
-              <select
-                className={inputCls}
+              <PremiumSelect
+                label="Category"
+                labelClassName={labelCls}
+                placeholder="All categories"
                 value={txFilterCategoryId}
-                onChange={(e) => setTxFilterCategoryId(e.target.value)}
-              >
-                <option value="">All categories</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setTxFilterCategoryId}
+                options={[
+                  { value: '', label: 'All categories' },
+                  ...categories.map((c) => ({ value: String(c.id), label: c.name })),
+                ]}
+                searchable={categories.length > 6}
+              />
             </div>
           </div>
 
@@ -2179,15 +2185,19 @@ export default function PfCreditCardsPage() {
               </div>
             </div>
             <div>
-              <label className={labelCls}>Card</label>
-              <select className={inputCls} value={genCardId} onChange={(e) => setGenCardId(e.target.value)} required>
-                <option value="">— Select —</option>
-                {cards.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.card_name}
-                  </option>
-                ))}
-              </select>
+              <PremiumSelect
+                label="Card"
+                labelClassName={labelCls}
+                required
+                placeholder="Select…"
+                value={genCardId}
+                onChange={setGenCardId}
+                options={[
+                  { value: '', label: '— Select —' },
+                  ...cards.map((c) => ({ value: String(c.id), label: c.card_name })),
+                ]}
+                searchable={cards.length > 6}
+              />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -2291,30 +2301,34 @@ export default function PfCreditCardsPage() {
         <form id="cc-swipe-form" onSubmit={handleManualSwipe} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label className={labelCls}>Card</label>
-              <select
-                className={inputCls}
-                value={txCardId}
-                onChange={(e) => setTxCardId(e.target.value)}
+              <PremiumSelect
+                label="Card"
+                labelClassName={labelCls}
                 required
-              >
-                <option value="">— Select —</option>
-                {cards.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.card_name}
-                  </option>
-                ))}
-              </select>
+                placeholder="Select…"
+                value={txCardId}
+                onChange={setTxCardId}
+                options={[
+                  { value: '', label: '— Select —' },
+                  ...cards.map((c) => ({ value: String(c.id), label: c.card_name })),
+                ]}
+                searchable={cards.length > 6}
+              />
             </div>
             <div>
-              <label className={labelCls}>Transaction type</label>
-              <select className={inputCls} value={txType} onChange={(e) => setTxType(e.target.value)}>
-                <option value="swipe">Swipe</option>
-                <option value="refund">Refund</option>
-                <option value="fee">Fee</option>
-                <option value="interest">Interest</option>
-                <option value="emi">EMI</option>
-              </select>
+              <PremiumSelect
+                label="Transaction type"
+                labelClassName={labelCls}
+                value={txType}
+                onChange={setTxType}
+                options={[
+                  { value: 'swipe', label: 'Swipe' },
+                  { value: 'refund', label: 'Refund' },
+                  { value: 'fee', label: 'Fee' },
+                  { value: 'interest', label: 'Interest' },
+                  { value: 'emi', label: 'EMI' },
+                ]}
+              />
             </div>
             <div>
               <label className={labelCls}>Amount (₹)</label>
@@ -2342,30 +2356,34 @@ export default function PfCreditCardsPage() {
               />
             </div>
             <div>
-              <label className={labelCls}>Category</label>
-              <select className={inputCls} value={txCategoryId} onChange={(e) => setTxCategoryId(e.target.value)}>
-                <option value="">— General —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <PremiumSelect
+                label="Category"
+                labelClassName={labelCls}
+                placeholder="— General —"
+                value={txCategoryId}
+                onChange={setTxCategoryId}
+                options={[
+                  { value: '', label: '— General —' },
+                  ...categories.map((c) => ({ value: String(c.id), label: c.name })),
+                ]}
+                searchable={categories.length > 6}
+              />
             </div>
             <div>
               <label className={labelCls}>Billing cycle</label>
               <input className={`${inputCls} opacity-90`} readOnly value={txBillingCyclePreview} />
             </div>
             <div>
-              <label className={labelCls}>Mark as EMI</label>
-              <select
-                className={inputCls}
+              <PremiumSelect
+                label="Mark as EMI"
+                labelClassName={labelCls}
                 value={txIsEmiForm ? 'yes' : 'no'}
-                onChange={(e) => setTxIsEmiForm(e.target.value === 'yes')}
-              >
-                <option value="no">No</option>
-                <option value="yes">Yes</option>
-              </select>
+                onChange={(v) => setTxIsEmiForm(v === 'yes')}
+                options={[
+                  { value: 'no', label: 'No' },
+                  { value: 'yes', label: 'Yes' },
+                ]}
+              />
             </div>
           </div>
           <div>
@@ -2407,17 +2425,26 @@ export default function PfCreditCardsPage() {
       >
         <form id="cc-pay-modal-form" onSubmit={handlePayBill} className="space-y-4">
           <div>
-            <label className={labelCls}>Bill</label>
-            <select className={inputCls} value={payBillId} onChange={(e) => setPayBillId(e.target.value)} required>
-              <option value="">— Select —</option>
-              {bills
-                .filter((b) => b.status !== 'PAID')
-                .map((b) => (
-                  <option key={b.id} value={String(b.id)}>
-                    #{b.id} · due {b.due_date} · rem {formatInr(b.remaining ?? b.total_amount - b.amount_paid)}
-                  </option>
-                ))}
-            </select>
+            <PremiumSelect
+              label="Bill"
+              labelClassName={labelCls}
+              required
+              placeholder="Select…"
+              value={payBillId}
+              onChange={setPayBillId}
+              options={[
+                { value: '', label: '— Select —' },
+                ...bills
+                  .filter((b) => b.status !== 'PAID')
+                  .map((b) => ({
+                    value: String(b.id),
+                    label: `#${b.id} · due ${b.due_date} · rem ${formatInr(b.remaining ?? b.total_amount - b.amount_paid)}`,
+                  })),
+              ]}
+              searchable={
+                bills.filter((b) => b.status !== 'PAID').length > 6
+              }
+            />
           </div>
           <div>
             <label className={labelCls}>Amount (₹)</label>
@@ -2436,15 +2463,19 @@ export default function PfCreditCardsPage() {
             <input className={inputCls} type="date" value={payPaymentDate} onChange={(e) => setPayPaymentDate(e.target.value)} />
           </div>
           <div>
-            <label className={labelCls}>From account</label>
-            <select className={inputCls} value={payFromAcc} onChange={(e) => setPayFromAcc(e.target.value)} required>
-              <option value="">— Select —</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={String(a.id)}>
-                  {a.account_name}
-                </option>
-              ))}
-            </select>
+            <PremiumSelect
+              label="From account"
+              labelClassName={labelCls}
+              required
+              placeholder="Select…"
+              value={payFromAcc}
+              onChange={setPayFromAcc}
+              options={[
+                { value: '', label: '— Select —' },
+                ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+              ]}
+              searchable={accounts.length > 6}
+            />
           </div>
           <div>
             <label className={labelCls}>Reference (optional)</label>
@@ -2481,24 +2512,36 @@ export default function PfCreditCardsPage() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>Network</label>
-              <select className={inputCls} value={cardNetwork} onChange={(e) => setCardNetwork(e.target.value)}>
-                <option value="">—</option>
-                <option value="Visa">Visa</option>
-                <option value="Mastercard">Mastercard</option>
-                <option value="RuPay">RuPay</option>
-                <option value="Other">Other</option>
-              </select>
+              <PremiumSelect
+                label="Network"
+                labelClassName={labelCls}
+                placeholder="—"
+                value={cardNetwork}
+                onChange={setCardNetwork}
+                options={[
+                  { value: '', label: '—' },
+                  { value: 'Visa', label: 'Visa' },
+                  { value: 'Mastercard', label: 'Mastercard' },
+                  { value: 'RuPay', label: 'RuPay' },
+                  { value: 'Other', label: 'Other' },
+                ]}
+              />
             </div>
             <div>
-              <label className={labelCls}>Type</label>
-              <select className={inputCls} value={cardType} onChange={(e) => setCardType(e.target.value)}>
-                <option value="">—</option>
-                <option value="Rewards">Rewards</option>
-                <option value="Cashback">Cashback</option>
-                <option value="Business">Business</option>
-                <option value="Other">Other</option>
-              </select>
+              <PremiumSelect
+                label="Type"
+                labelClassName={labelCls}
+                placeholder="—"
+                value={cardType}
+                onChange={setCardType}
+                options={[
+                  { value: '', label: '—' },
+                  { value: 'Rewards', label: 'Rewards' },
+                  { value: 'Cashback', label: 'Cashback' },
+                  { value: 'Business', label: 'Business' },
+                  { value: 'Other', label: 'Other' },
+                ]}
+              />
             </div>
           </div>
           <div>
@@ -2568,15 +2611,16 @@ export default function PfCreditCardsPage() {
             </div>
           </div>
           <div>
-            <label className={labelCls}>Active</label>
-            <select
-              className={inputCls}
+            <PremiumSelect
+              label="Active"
+              labelClassName={labelCls}
               value={isActiveAdd ? 'yes' : 'no'}
-              onChange={(e) => setIsActiveAdd(e.target.value === 'yes')}
-            >
-              <option value="yes">Yes</option>
-              <option value="no">No</option>
-            </select>
+              onChange={(v) => setIsActiveAdd(v === 'yes')}
+              options={[
+                { value: 'yes', label: 'Yes' },
+                { value: 'no', label: 'No' },
+              ]}
+            />
           </div>
         </form>
       </AppModal>
@@ -2621,32 +2665,36 @@ export default function PfCreditCardsPage() {
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className={labelCls}>Card network</label>
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    label="Card network"
+                    labelClassName={labelCls}
+                    placeholder="—"
                     value={editForm.card_network || ''}
-                    onChange={(e) => setEditForm({ ...editForm, card_network: e.target.value })}
-                  >
-                    <option value="">—</option>
-                    <option value="Visa">Visa</option>
-                    <option value="Mastercard">Mastercard</option>
-                    <option value="RuPay">RuPay</option>
-                    <option value="Other">Other</option>
-                  </select>
+                    onChange={(v) => setEditForm({ ...editForm, card_network: v })}
+                    options={[
+                      { value: '', label: '—' },
+                      { value: 'Visa', label: 'Visa' },
+                      { value: 'Mastercard', label: 'Mastercard' },
+                      { value: 'RuPay', label: 'RuPay' },
+                      { value: 'Other', label: 'Other' },
+                    ]}
+                  />
                 </div>
                 <div>
-                  <label className={labelCls}>Card type</label>
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    label="Card type"
+                    labelClassName={labelCls}
+                    placeholder="—"
                     value={editForm.card_type || ''}
-                    onChange={(e) => setEditForm({ ...editForm, card_type: e.target.value })}
-                  >
-                    <option value="">—</option>
-                    <option value="Rewards">Rewards</option>
-                    <option value="Cashback">Cashback</option>
-                    <option value="Business">Business</option>
-                    <option value="Other">Other</option>
-                  </select>
+                    onChange={(v) => setEditForm({ ...editForm, card_type: v })}
+                    options={[
+                      { value: '', label: '—' },
+                      { value: 'Rewards', label: 'Rewards' },
+                      { value: 'Cashback', label: 'Cashback' },
+                      { value: 'Business', label: 'Business' },
+                      { value: 'Other', label: 'Other' },
+                    ]}
+                  />
                 </div>
               </div>
               <div>
@@ -2719,15 +2767,16 @@ export default function PfCreditCardsPage() {
                 </div>
               </div>
               <div>
-                <label className={labelCls}>Is active</label>
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  label="Is active"
+                  labelClassName={labelCls}
                   value={editForm.is_active ? 'yes' : 'no'}
-                  onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value === 'yes' })}
-                >
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
-                </select>
+                  onChange={(v) => setEditForm({ ...editForm, is_active: v === 'yes' })}
+                  options={[
+                    { value: 'yes', label: 'Yes' },
+                    { value: 'no', label: 'No' },
+                  ]}
+                />
               </div>
               <div className="flex flex-wrap gap-2 pt-1">
                 <button type="submit" disabled={busy} className={btnPrimary}>
@@ -2771,18 +2820,19 @@ export default function PfCreditCardsPage() {
                 />
               </div>
               <div>
-                <label className={labelCls}>Type</label>
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  label="Type"
+                  labelClassName={labelCls}
                   value={txEdit.transaction_type}
-                  onChange={(e) => setTxEdit({ ...txEdit, transaction_type: e.target.value })}
-                >
-                  <option value="swipe">Swipe</option>
-                  <option value="refund">Refund</option>
-                  <option value="fee">Fee</option>
-                  <option value="interest">Interest</option>
-                  <option value="emi">EMI</option>
-                </select>
+                  onChange={(v) => setTxEdit({ ...txEdit, transaction_type: v })}
+                  options={[
+                    { value: 'swipe', label: 'Swipe' },
+                    { value: 'refund', label: 'Refund' },
+                    { value: 'fee', label: 'Fee' },
+                    { value: 'interest', label: 'Interest' },
+                    { value: 'emi', label: 'EMI' },
+                  ]}
+                />
               </div>
               <div>
                 <label className={labelCls}>Amount (positive; refund stored as credit)</label>
@@ -2805,19 +2855,18 @@ export default function PfCreditCardsPage() {
                 />
               </div>
               <div>
-                <label className={labelCls}>Category</label>
-                <select
-                  className={inputCls}
-                  value={txEdit.category_id}
-                  onChange={(e) => setTxEdit({ ...txEdit, category_id: e.target.value })}
-                >
-                  <option value="">— General —</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={String(c.id)}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  label="Category"
+                  labelClassName={labelCls}
+                  placeholder="— General —"
+                  value={String(txEdit.category_id ?? '')}
+                  onChange={(v) => setTxEdit({ ...txEdit, category_id: v })}
+                  options={[
+                    { value: '', label: '— General —' },
+                    ...categories.map((c) => ({ value: String(c.id), label: c.name })),
+                  ]}
+                  searchable={categories.length > 6}
+                />
               </div>
               <div>
                 <label className={labelCls}>Description</label>
@@ -2844,15 +2893,16 @@ export default function PfCreditCardsPage() {
                 />
               </div>
               <div>
-                <label className={labelCls}>EMI</label>
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  label="EMI"
+                  labelClassName={labelCls}
                   value={txEdit.is_emi ? 'yes' : 'no'}
-                  onChange={(e) => setTxEdit({ ...txEdit, is_emi: e.target.value === 'yes' })}
-                >
-                  <option value="no">No</option>
-                  <option value="yes">Yes</option>
-                </select>
+                  onChange={(v) => setTxEdit({ ...txEdit, is_emi: v === 'yes' })}
+                  options={[
+                    { value: 'no', label: 'No' },
+                    { value: 'yes', label: 'Yes' },
+                  ]}
+                />
               </div>
               <div className="flex flex-wrap gap-2 pt-1">
                 <button type="submit" disabled={busy} className={btnPrimary}>
@@ -2877,22 +2927,26 @@ export default function PfCreditCardsPage() {
             </p>
             <form onSubmit={handleConfirmAssignBill} className="space-y-3">
               <div>
-                <label className={labelCls}>Bill</label>
-                <select
-                  className={inputCls}
-                  value={txAssignBillPick}
-                  onChange={(e) => setTxAssignBillPick(e.target.value)}
+                <PremiumSelect
+                  label="Bill"
+                  labelClassName={labelCls}
                   required
-                >
-                  <option value="">— Select —</option>
-                  {bills
-                    .filter((b) => b.card_id === txAssign.card_id && b.status !== 'PAID')
-                    .map((b) => (
-                      <option key={b.id} value={String(b.id)}>
-                        #{b.id} · {b.bill_start_date} – {b.bill_end_date} · {b.status}
-                      </option>
-                    ))}
-                </select>
+                  placeholder="Select…"
+                  value={txAssignBillPick}
+                  onChange={setTxAssignBillPick}
+                  options={[
+                    { value: '', label: '— Select —' },
+                    ...bills
+                      .filter((b) => b.card_id === txAssign.card_id && b.status !== 'PAID')
+                      .map((b) => ({
+                        value: String(b.id),
+                        label: `#${b.id} · ${b.bill_start_date} – ${b.bill_end_date} · ${b.status}`,
+                      })),
+                  ]}
+                  searchable={
+                    bills.filter((b) => b.card_id === txAssign.card_id && b.status !== 'PAID').length > 6
+                  }
+                />
               </div>
               <div className="flex flex-wrap gap-2">
                 <button type="submit" disabled={busy} className={btnPrimary}>

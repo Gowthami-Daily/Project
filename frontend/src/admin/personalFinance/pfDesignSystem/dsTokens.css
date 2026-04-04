@@ -1,0 +1,210 @@
+/**
+ * Personal Finance — Fintech design system tokens (scoped under .pf-app).
+ * Spacing scale: 4, 8, 12, 16, 20, 24, 32px only.
+ */
+
+.pf-app {
+  --ds-space-1: 4px;
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  --ds-space-4: 16px;
+  --ds-space-5: 20px;
+  --ds-space-6: 24px;
+  --ds-space-8: 32px;
+
+  --ds-radius-input: 10px;
+  --ds-radius-button: 10px;
+  --ds-radius-dropdown: 12px;
+  --ds-radius-card: 14px;
+  --ds-radius-modal: 16px;
+
+  --ds-text-page: 22px;
+  --ds-text-section: 16px;
+  --ds-text-card-title: 14px;
+  --ds-text-body: 13px;
+  --ds-text-small: 12px;
+}
+
+/* Dark theme — canonical fintech palette */
+.pf-app.dark {
+  --pf-bg: #0b0e13;
+  --pf-content: #0b0e13;
+  --pf-sidebar: rgba(11, 14, 19, 0.96);
+  --pf-header: rgba(11, 14, 19, 0.92);
+  --pf-card: #121722;
+  --pf-card-hover: #151b28;
+  --pf-border: rgba(255, 255, 255, 0.08);
+  --pf-text: #e6eaf2;
+  --pf-text-muted: #9aa4b2;
+  --pf-primary: #3b82f6;
+  --pf-primary-hover: #2563eb;
+  --pf-success: #22c55e;
+  --pf-warning: #f59e0b;
+  --pf-danger: #ef4444;
+  --pf-input-bg: #121722;
+  --pf-th-bg: rgba(255, 255, 255, 0.04);
+  --pf-modal-surface: #121722;
+  --pf-modal-header-bg: #121722;
+  --pf-modal-footer-bg: #121722;
+  --pf-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  --pf-shadow-hover: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --pf-modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+
+  background-color: var(--pf-bg);
+  color: var(--pf-text);
+}
+
+/* Typography utilities */
+.pf-app .ds-page-title {
+  font-size: var(--ds-text-page);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--pf-text);
+}
+
+.pf-app .ds-section-title {
+  font-size: var(--ds-text-section);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--pf-text);
+}
+
+.pf-app .ds-card-title {
+  font-size: var(--ds-text-card-title);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--pf-text);
+}
+
+.pf-app .ds-body {
+  font-size: var(--ds-text-body);
+  line-height: 1.5;
+  color: var(--pf-text);
+}
+
+.pf-app .ds-small {
+  font-size: var(--ds-text-small);
+  line-height: 1.45;
+  color: var(--pf-text-muted);
+}
+
+@keyframes ds-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.pf-app .ds-modal-surface--enter {
+  animation: ds-modal-in 0.22s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+}
+
+@media (max-width: 640px) {
+  .pf-app .ds-modal-surface--enter {
+    animation: pf-sheet-up 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  }
+}
+
+/* react-day-picker — dark surface inside PF */
+.pf-app .ds-rdp {
+  --rdp-accent-color: var(--pf-primary);
+  --rdp-background-color: var(--pf-card);
+  margin: 0;
+  font-size: var(--ds-text-small);
+}
+
+.pf-app .ds-rdp .rdp-months {
+  background: var(--pf-card);
+}
+
+.pf-app .ds-rdp .rdp-month_caption,
+.pf-app .ds-rdp .rdp-dropdown_root {
+  color: var(--pf-text);
+}
+
+.pf-app .ds-rdp .rdp-day_button {
+  border-radius: var(--ds-radius-input);
+  color: var(--pf-text);
+}
+
+.pf-app .ds-rdp .rdp-day_button:hover:not([disabled]) {
+  background: var(--pf-card-hover);
+}
+
+.pf-app .ds-rdp .rdp-selected .rdp-day_button {
+  background: var(--pf-primary);
+  color: #fff;
+}
+
+.pf-app .ds-rdp .rdp-today:not(.rdp-outside) .rdp-day_button {
+  border: 1px solid var(--pf-primary);
+}
+
+.pf-app .ds-rdp .rdp-outside .rdp-day_button {
+  color: var(--pf-text-muted);
+  opacity: 0.55;
+}
+
+.pf-app .ds-rdp select.rdp-dropdown {
+  background: var(--pf-input-bg);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--ds-radius-input);
+  color: var(--pf-text);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  font-size: var(--ds-text-small);
+}
+
+/* Sticky table header — use on `<table class="… ds-app-table">` inside `pfTableWrap` */
+.pf-app table.ds-app-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.pf-app table.ds-app-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--pf-th-bg);
+  box-shadow: 0 1px 0 var(--pf-border);
+}
+
+.pf-app .ds-card-interactive {
+  transition:
+    box-shadow 0.15s ease-out,
+    transform 0.15s ease-out,
+    background-color 0.18s var(--pf-ease-standard, cubic-bezier(0.4, 0, 0.2, 1));
+  will-change: transform;
+}
+
+.pf-app .ds-card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--pf-shadow-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-app .ds-card-interactive,
+  .pf-app .ds-card-interactive:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+@keyframes ds-dd-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pf-app .ds-dropdown-panel--enter {
+  animation: ds-dd-in 0.2s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+}

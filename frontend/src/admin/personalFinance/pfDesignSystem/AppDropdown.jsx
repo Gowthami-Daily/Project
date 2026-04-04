@@ -3,18 +3,17 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom'
 
 const triggerCls =
-  'flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-[10px] border px-3 text-left text-sm font-medium shadow-sm outline-none transition-all ' +
+  'flex h-10 min-h-10 w-full min-w-0 items-center justify-between gap-2 rounded-[10px] border px-4 text-left text-[13px] font-medium shadow-sm outline-none transition-all ' +
   'border-slate-200/90 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50 ' +
-  'focus-visible:ring-2 focus-visible:ring-[var(--pf-primary)] focus-visible:ring-offset-2 ' +
-  'dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-[var(--pf-text)] dark:hover:border-white/20 dark:hover:bg-white/[0.06] ' +
-  'dark:focus-visible:ring-offset-[var(--pf-modal-surface)]'
+  'focus-visible:ring-2 focus-visible:ring-[var(--pf-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-white ' +
+  'dark:border-[var(--pf-border)] dark:bg-[var(--pf-input-bg)] dark:text-[var(--pf-text)] dark:hover:bg-[var(--pf-card-hover)] dark:focus-visible:ring-offset-[var(--pf-bg)]'
 
 const panelCls =
-  'fixed z-[70] max-h-72 min-w-[var(--dd-w,12rem)] overflow-y-auto rounded-xl border py-1.5 shadow-[0_10px_30px_rgba(0,0,0,0.15)] ' +
-  'border-slate-200/90 bg-white text-slate-900 dark:border-[var(--pf-border)] dark:bg-[#111] dark:text-[var(--pf-text)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.4)]'
+  'fixed z-[70] max-h-72 min-w-[var(--dd-w,12rem)] overflow-y-auto rounded-[12px] border py-2 shadow-[var(--pf-modal-shadow)] ' +
+  'border-slate-200/90 bg-white text-slate-900 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)] dark:text-[var(--pf-text)]'
 
 const itemCls =
-  'flex w-full items-start gap-2 px-3 py-2.5 text-left text-sm transition hover:bg-slate-100 disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-white/[0.06]'
+  'flex w-full items-start gap-2 px-3 py-2.5 text-left text-[13px] transition hover:bg-slate-100 disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-[var(--pf-card-hover)]'
 
 function portalEl() {
   return document.querySelector('.pf-app') || document.body
@@ -105,7 +104,7 @@ export function AppDropdown({
     ? createPortal(
         <div
           role="listbox"
-          className={panelCls}
+          className={`${panelCls} ds-dropdown-panel--enter`}
           style={{
             top: pos.top,
             left: pos.left,

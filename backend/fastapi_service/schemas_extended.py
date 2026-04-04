@@ -787,6 +787,8 @@ _LIABILITY_TYPES = frozenset(
         'PERSONAL_LOAN_BORROWED',
         'HOME_LOAN',
         'VEHICLE_LOAN',
+        'AGRICULTURE_LOAN',
+        'GOLD_LOAN',
         'EMI_PURCHASE',
         'BNPL',
         'BORROWED_PERSON',
@@ -802,7 +804,7 @@ class FinanceLiabilityCreate(BaseModel):
         ...,
         description=(
             'CREDIT_CARD | PERSONAL_LOAN_BORROWED | HOME_LOAN | VEHICLE_LOAN | '
-            'EMI_PURCHASE | BNPL | BORROWED_PERSON | BILLS_PAYABLE | OTHER'
+            'AGRICULTURE_LOAN | GOLD_LOAN | EMI_PURCHASE | BNPL | BORROWED_PERSON | BILLS_PAYABLE | OTHER'
         ),
     )
     total_amount: float = Field(ge=0)
@@ -821,11 +823,15 @@ class FinanceLiabilityCreate(BaseModel):
     status: str = 'ACTIVE'
     build_emi_schedule: bool = Field(
         default=False,
-        description='If true, generates flat or reducing EMI rows from outstanding principal.',
+        description='If true, generates flat, simple-interest, or reducing EMI rows from outstanding principal.',
     )
-    emi_interest_method: Literal['flat', 'reducing_balance'] = Field(
+    emi_interest_method: Literal['flat', 'reducing_balance', 'simple_interest'] = Field(
         default='flat',
-        description='Only used when build_emi_schedule is true.',
+        description=(
+            'Only used when build_emi_schedule is true. '
+            'simple_interest: P×annual_rate×(term/12) on full principal, equal principal+interest per month; '
+            'no interest-free days. flat: same formula with optional interest_free_days.'
+        ),
     )
     term_months: int | None = Field(default=None, ge=1)
     emi_schedule_start_date: date | None = Field(

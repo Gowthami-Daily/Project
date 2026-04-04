@@ -1,0 +1,71 @@
+/* Personal Finance — notification panel (Slack / Notion–style) */
+
+.pf-notif-panel {
+  animation: pf-notif-panel-in 0.25s ease;
+}
+
+@keyframes pf-notif-panel-in {
+  from {
+    transform: translateX(30px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.pf-notif-item {
+  transition:
+    transform 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.2s ease;
+}
+
+.pf-notif-item:hover {
+  transform: translateX(4px);
+  background: var(--pf-card-hover);
+}
+
+.pf-notif-item--unread {
+  background: color-mix(in srgb, var(--pf-primary) 8%, var(--pf-card));
+}
+
+.dark .pf-notif-item--unread {
+  background: color-mix(in srgb, var(--pf-primary) 12%, var(--pf-card));
+}
+
+.pf-notif-item--read {
+  opacity: 0.72;
+}
+
+.pf-notif-item--read:hover {
+  opacity: 0.9;
+}
+
+.pf-notif-danger {
+  border-left: 3px solid #ef4444;
+}
+
+.pf-notif-warning {
+  border-left: 3px solid #f59e0b;
+}
+
+.pf-notif-info {
+  border-left: 3px solid #3b82f6;
+}
+
+.pf-notif-success {
+  border-left: 3px solid #22c55e;
+}
+
+.pf-notif-tab {
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.pf-notif-section-title {
+  letter-spacing: 0.04em;
+}

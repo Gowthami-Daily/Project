@@ -14,6 +14,7 @@ import {
   setPfToken,
 } from '../api.js'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+import { PremiumSelect } from '../../../components/ui/PremiumSelect.jsx'
 import { AppButton, AppModal } from '../pfDesignSystem/index.js'
 import {
   btnPrimary,
@@ -111,17 +112,16 @@ function StatementModal({ accounts, onClose, onSessionInvalid }) {
           </button>
         </div>
         <div className="mt-2">
-          <label className={labelCls} htmlFor="stmt-acc">
-            Account
-          </label>
-          <select id="stmt-acc" className={inputCls} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">Select…</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={String(a.id)}>
-                {a.account_name}
-              </option>
-            ))}
-          </select>
+          <PremiumSelect
+            id="stmt-acc"
+            label="Account"
+            labelClassName={labelCls}
+            options={accounts.map((a) => ({ value: String(a.id), label: a.account_name }))}
+            value={accountId}
+            onChange={setAccountId}
+            placeholder="Select…"
+            searchable={accounts.length > 6}
+          />
         </div>
         <div className="mt-4 max-h-[50vh] overflow-y-auto">
           {loading ? (
@@ -518,7 +518,7 @@ export default function PfTransferPage() {
   const internalOk = accounts.length >= 2
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-6">
+    <div className="w-full min-w-0 max-w-full space-y-6">
       <PageHeader
         title="Money movement"
         description="Internal transfers, cash in/out of accounts, card bill pay from bank, and borrowed-loan flows — all update balances and the account ledger."
@@ -571,65 +571,55 @@ export default function PfTransferPage() {
         ) : (
           <form id="pf-transfer-movement-form" onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <label className={labelCls} htmlFor="pf-mov-type">
-                Transfer type
-              </label>
-              <select
+              <PremiumSelect
                 id="pf-mov-type"
-                className={inputCls}
+                label="Transfer type"
+                labelClassName={labelCls}
+                options={MOVEMENT_TYPES.map((t) => ({ value: t.id, label: t.label }))}
                 value={movementType}
-                onChange={(e) => {
-                  setMovementType(e.target.value)
+                onChange={(v) => {
+                  setMovementType(v)
                   setError('')
                 }}
-              >
-                {MOVEMENT_TYPES.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
+                searchable={MOVEMENT_TYPES.length > 6}
+              />
             </div>
 
             {movementType === 'internal_transfer' ? (
               <>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-from">
-                    From account
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-from"
-                    className={inputCls}
-                    value={fromId}
-                    onChange={(e) => setFromId(e.target.value)}
+                    label="From account"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={String(a.id)} disabled={String(a.id) === toId}>
-                        {a.account_name} ({a.account_type}) · {formatInr(a.balance)}
-                      </option>
-                    ))}
-                  </select>
+                    options={accounts.map((a) => ({
+                      value: String(a.id),
+                      label: `${a.account_name} (${a.account_type}) · ${formatInr(a.balance)}`,
+                      disabled: String(a.id) === toId,
+                    }))}
+                    value={fromId}
+                    onChange={setFromId}
+                    placeholder="Select…"
+                    searchable={accounts.length > 5}
+                  />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-to">
-                    To account
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-to"
-                    className={inputCls}
-                    value={toId}
-                    onChange={(e) => setToId(e.target.value)}
+                    label="To account"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={String(a.id)} disabled={String(a.id) === fromId}>
-                        {a.account_name} ({a.account_type}) · {formatInr(a.balance)}
-                      </option>
-                    ))}
-                  </select>
+                    options={accounts.map((a) => ({
+                      value: String(a.id),
+                      label: `${a.account_name} (${a.account_type}) · ${formatInr(a.balance)}`,
+                      disabled: String(a.id) === fromId,
+                    }))}
+                    value={toId}
+                    onChange={setToId}
+                    placeholder="Select…"
+                    searchable={accounts.length > 5}
+                  />
                 </div>
               </>
             ) : null}
@@ -637,35 +627,30 @@ export default function PfTransferPage() {
             {movementType === 'external_deposit' ? (
               <>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-to-ext">
-                    To account
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-to-ext"
-                    className={inputCls}
-                    value={toId}
-                    onChange={(e) => setToId(e.target.value)}
+                    label="To account"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={String(a.id)}>
-                        {a.account_name} ({a.account_type})
-                      </option>
-                    ))}
-                  </select>
+                    options={accounts.map((a) => ({
+                      value: String(a.id),
+                      label: `${a.account_name} (${a.account_type})`,
+                    }))}
+                    value={toId}
+                    onChange={setToId}
+                    placeholder="Select…"
+                    searchable={accounts.length > 5}
+                  />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-src">
-                    Source
-                  </label>
-                  <select id="pf-mov-src" className={inputCls} value={depositSource} onChange={(e) => setDepositSource(e.target.value)}>
-                    {DEPOSIT_SOURCES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
+                  <PremiumSelect
+                    id="pf-mov-src"
+                    label="Source"
+                    labelClassName={labelCls}
+                    options={DEPOSIT_SOURCES.map((s) => ({ value: s, label: s }))}
+                    value={depositSource}
+                    onChange={setDepositSource}
+                  />
                 </div>
                 <div className="flex items-center gap-2 sm:col-span-2">
                   <input id="pf-mov-lk-inc" type="checkbox" checked={linkIncome} onChange={(e) => setLinkIncome(e.target.checked)} />
@@ -679,35 +664,30 @@ export default function PfTransferPage() {
             {movementType === 'external_withdrawal' ? (
               <>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-from-ext">
-                    From account
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-from-ext"
-                    className={inputCls}
-                    value={fromId}
-                    onChange={(e) => setFromId(e.target.value)}
+                    label="From account"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={String(a.id)}>
-                        {a.account_name} ({a.account_type})
-                      </option>
-                    ))}
-                  </select>
+                    options={accounts.map((a) => ({
+                      value: String(a.id),
+                      label: `${a.account_name} (${a.account_type})`,
+                    }))}
+                    value={fromId}
+                    onChange={setFromId}
+                    placeholder="Select…"
+                    searchable={accounts.length > 5}
+                  />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-purpose">
-                    Purpose
-                  </label>
-                  <select id="pf-mov-purpose" className={inputCls} value={withdrawPurpose} onChange={(e) => setWithdrawPurpose(e.target.value)}>
-                    {WITHDRAW_PURPOSES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
+                  <PremiumSelect
+                    id="pf-mov-purpose"
+                    label="Purpose"
+                    labelClassName={labelCls}
+                    options={WITHDRAW_PURPOSES.map((s) => ({ value: s, label: s }))}
+                    value={withdrawPurpose}
+                    onChange={setWithdrawPurpose}
+                  />
                 </div>
                 <div className="flex items-center gap-2 sm:col-span-2">
                   <input id="pf-mov-lk-exp" type="checkbox" checked={linkExpense} onChange={(e) => setLinkExpense(e.target.checked)} />
@@ -721,40 +701,37 @@ export default function PfTransferPage() {
             {movementType === 'credit_card_payment' ? (
               <>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-cc-from">
-                    From account (bank)
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-cc-from"
-                    className={inputCls}
-                    value={fromId}
-                    onChange={(e) => setFromId(e.target.value)}
+                    label="From account (bank)"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={String(a.id)}>
-                        {a.account_name}
-                      </option>
-                    ))}
-                  </select>
+                    options={accounts.map((a) => ({ value: String(a.id), label: a.account_name }))}
+                    value={fromId}
+                    onChange={setFromId}
+                    placeholder="Select…"
+                    searchable={accounts.length > 6}
+                  />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-bill">
-                    Statement / bill
-                  </label>
-                  <select id="pf-mov-bill" className={inputCls} value={ccBillId} onChange={(e) => setCcBillId(e.target.value)} required>
-                    <option value="">Select unpaid bill…</option>
-                    {openBills.map((b) => {
+                  <PremiumSelect
+                    id="pf-mov-bill"
+                    label="Statement / bill"
+                    labelClassName={labelCls}
+                    required
+                    options={openBills.map((b) => {
                       const card = cards.find((c) => c.id === b.card_id)
                       const due = Number(b.total_amount || 0) - Number(b.amount_paid || 0)
-                      return (
-                        <option key={b.id} value={String(b.id)}>
-                          {card ? card.card_name : `Card ${b.card_id}`} · due {formatInr(due)} · {b.due_date}
-                        </option>
-                      )
+                      return {
+                        value: String(b.id),
+                        label: `${card ? card.card_name : `Card ${b.card_id}`} · due ${formatInr(due)} · ${b.due_date}`,
+                      }
                     })}
-                  </select>
+                    value={ccBillId}
+                    onChange={setCcBillId}
+                    placeholder="Select unpaid bill…"
+                    searchable={openBills.length > 5}
+                  />
                   {openBills.length === 0 ? (
                     <p className="mt-1 text-xs text-[var(--pf-text-muted)]">Generate a statement on Credit cards first if nothing appears.</p>
                   ) : null}
@@ -765,42 +742,33 @@ export default function PfTransferPage() {
             {movementType === 'loan_disbursement' ? (
               <>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-liab">
-                    Liability (money you owe)
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-liab"
-                    className={inputCls}
-                    value={liabilityId}
-                    onChange={(e) => setLiabilityId(e.target.value)}
+                    label="Liability (money you owe)"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {borrowLiabilities.map((l) => (
-                      <option key={l.id} value={String(l.id)}>
-                        {l.liability_name} · {l.liability_type} · out {formatInr(l.outstanding_amount)}
-                      </option>
-                    ))}
-                  </select>
+                    options={borrowLiabilities.map((l) => ({
+                      value: String(l.id),
+                      label: `${l.liability_name} · ${l.liability_type} · out ${formatInr(l.outstanding_amount)}`,
+                    }))}
+                    value={liabilityId}
+                    onChange={setLiabilityId}
+                    placeholder="Select…"
+                    searchable={borrowLiabilities.length > 5}
+                  />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-disb-to">
-                    Deposit to account
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-disb-to"
-                    className={inputCls}
-                    value={toId}
-                    onChange={(e) => setToId(e.target.value)}
+                    label="Deposit to account"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={String(a.id)}>
-                        {a.account_name}
-                      </option>
-                    ))}
-                  </select>
+                    options={accounts.map((a) => ({ value: String(a.id), label: a.account_name }))}
+                    value={toId}
+                    onChange={setToId}
+                    placeholder="Select…"
+                    searchable={accounts.length > 6}
+                  />
                 </div>
               </>
             ) : null}
@@ -808,61 +776,55 @@ export default function PfTransferPage() {
             {movementType === 'loan_emi_payment' ? (
               <>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-liab-emi">
-                    Liability
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-liab-emi"
-                    className={inputCls}
+                    label="Liability"
+                    labelClassName={labelCls}
+                    required
+                    options={borrowLiabilities.map((l) => ({
+                      value: String(l.id),
+                      label: `${l.liability_name} · out ${formatInr(l.outstanding_amount)}`,
+                    }))}
                     value={liabilityId}
-                    onChange={(e) => {
-                      setLiabilityId(e.target.value)
+                    onChange={(v) => {
+                      setLiabilityId(v)
                       setEmiNumber('')
                     }}
-                    required
-                  >
-                    <option value="">Select…</option>
-                    {borrowLiabilities.map((l) => (
-                      <option key={l.id} value={String(l.id)}>
-                        {l.liability_name} · out {formatInr(l.outstanding_amount)}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Select…"
+                    searchable={borrowLiabilities.length > 5}
+                  />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={labelCls} htmlFor="pf-mov-emi-from">
-                    From account
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-mov-emi-from"
-                    className={inputCls}
-                    value={fromId}
-                    onChange={(e) => setFromId(e.target.value)}
+                    label="From account"
+                    labelClassName={labelCls}
                     required
-                  >
-                    <option value="">Select…</option>
-                    {accounts.map((a) => (
-                      <option key={a.id} value={String(a.id)}>
-                        {a.account_name}
-                      </option>
-                    ))}
-                  </select>
+                    options={accounts.map((a) => ({ value: String(a.id), label: a.account_name }))}
+                    value={fromId}
+                    onChange={setFromId}
+                    placeholder="Select…"
+                    searchable={accounts.length > 6}
+                  />
                 </div>
                 {emiSchedule.length > 0 ? (
                   <div className="sm:col-span-2">
-                    <label className={labelCls} htmlFor="pf-mov-emi-n">
-                      EMI installment
-                    </label>
-                    <select id="pf-mov-emi-n" className={inputCls} value={emiNumber} onChange={(e) => setEmiNumber(e.target.value)} required>
-                      <option value="">Select…</option>
-                      {emiSchedule
+                    <PremiumSelect
+                      id="pf-mov-emi-n"
+                      label="EMI installment"
+                      labelClassName={labelCls}
+                      required
+                      options={emiSchedule
                         .filter((r) => String(r.payment_status || '').toLowerCase() !== 'paid')
-                        .map((r) => (
-                          <option key={r.emi_number} value={String(r.emi_number)}>
-                            #{r.emi_number} · {r.due_date} · {formatInr(r.emi_amount)}
-                          </option>
-                        ))}
-                    </select>
+                        .map((r) => ({
+                          value: String(r.emi_number),
+                          label: `#${r.emi_number} · ${r.due_date} · ${formatInr(r.emi_amount)}`,
+                        }))}
+                      value={emiNumber}
+                      onChange={setEmiNumber}
+                      placeholder="Select…"
+                      searchable={emiSchedule.length > 6}
+                    />
                   </div>
                 ) : (
                   <div className="sm:col-span-2">
@@ -912,16 +874,17 @@ export default function PfTransferPage() {
 
             {showInternalMethod ? (
               <div className="sm:col-span-2">
-                <label className={labelCls} htmlFor="pf-mov-channel">
-                  Channel / rail (optional)
-                </label>
-                <select id="pf-mov-channel" className={inputCls} value={method} onChange={(e) => setMethod(e.target.value)}>
-                  {['INTERNAL', 'NEFT', 'RTGS', 'IMPS', 'UPI', 'CASH_DEPOSIT', 'OTHER'].map((m) => (
-                    <option key={m} value={m}>
-                      {m.replace(/_/g, ' ')}
-                    </option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  id="pf-mov-channel"
+                  label="Channel / rail (optional)"
+                  labelClassName={labelCls}
+                  options={['INTERNAL', 'NEFT', 'RTGS', 'IMPS', 'UPI', 'CASH_DEPOSIT', 'OTHER'].map((m) => ({
+                    value: m,
+                    label: m.replace(/_/g, ' '),
+                  }))}
+                  value={method}
+                  onChange={setMethod}
+                />
               </div>
             ) : null}
 

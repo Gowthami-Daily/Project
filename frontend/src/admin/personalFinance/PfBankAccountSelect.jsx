@@ -43,7 +43,7 @@ export default function PfBankAccountSelect({ value, onChange, accounts = [], cl
   const triggerLabel = selected ? displayAccountName(selected.account_name) : 'All accounts'
 
   const triggerCls =
-    'flex w-full min-w-[10.5rem] max-w-[16rem] items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-semibold shadow-[var(--pf-shadow)] outline-none backdrop-blur-md transition-all duration-200 ' +
+    'flex h-11 min-h-[44px] w-full min-w-0 max-w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-xs font-semibold shadow-[var(--pf-shadow)] outline-none backdrop-blur-md transition-all duration-200 sm:h-auto sm:min-h-0 sm:min-w-[10.5rem] sm:max-w-[min(100%,16rem)] ' +
     'border-[var(--pf-border)] bg-[var(--pf-card)]/85 text-[var(--pf-text)] hover:border-[var(--pf-border)] hover:bg-[var(--pf-card-hover)] active:scale-[0.98] ' +
     'focus-visible:ring-2 focus-visible:ring-[var(--pf-primary)]/40 dark:bg-white/[0.06] dark:hover:bg-white/[0.09]'
 

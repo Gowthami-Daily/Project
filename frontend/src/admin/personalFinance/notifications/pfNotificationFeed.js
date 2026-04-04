@@ -12,7 +12,23 @@ import { loadPfAppPrefs } from '../pfSettingsPrefs.js'
 
 /**
  * @typedef {'high' | 'medium' | 'low' | 'info'} PfNotifPriority
- * @typedef {{ id: string, title: string, subtitle?: string, priority: PfNotifPriority, link: string, kind: string }} PfNotifItem
+ * @typedef {'danger' | 'warning' | 'info' | 'success'} PfNotifVariant
+ * @typedef {'due' | 'alerts' | 'payments' | 'system'} PfNotifFilterTab
+ * @typedef {{ id: string, label: string, navigate?: string, openEntry?: string }} PfNotifAction
+ * @typedef {{
+ *   id: string,
+ *   title: string,
+ *   subtitle?: string,
+ *   priority: PfNotifPriority,
+ *   link: string,
+ *   kind: string,
+ *   variant: PfNotifVariant,
+ *   filterTabs: PfNotifFilterTab[],
+ *   amount?: number,
+ *   daysUntilDue: number | null,
+ *   statusBadge?: string,
+ *   actions: PfNotifAction[],
+ * }} PfNotifItem
  */
 
 function daysFromToday(isoDate) {
@@ -30,6 +46,92 @@ function dueLabel(days) {
   if (days === 0) return 'Due today'
   if (days === 1) return 'Due tomorrow'
   return `Due in ${days} days`
+}
+
+/** @param {number | null} days */
+function dueItemVariant(days) {
+  if (days == null) return 'info'
+  if (days <= 0) return 'danger'
+  return 'info'
+}
+
+/** @param {number | null} days */
+function statusBadgeFromDays(days) {
+  if (days == null) return undefined
+  if (days < 0) return 'Overdue'
+  if (days === 0) return 'Due today'
+  if (days === 1) return 'Tomorrow'
+  if (days <= 7) return `In ${days} days`
+  return undefined
+}
+
+/**
+ * @param {string} kind
+ * @param {string} link
+ * @param {string} [loanSettlement]
+ */
+function buildPayActions(kind, link, loanSettlement) {
+  const u = link || '/personal-finance'
+  /** @type {{ id: string, label: string, navigate?: string, openEntry?: string }[]} */
+  const actions = []
+  if (kind === 'liability_emi') {
+    actions.push({ id: 'pay', label: 'Pay', openEntry: 'emi' }, { id: 'view', label: 'View', navigate: u })
+  } else if (kind === 'loan_emi') {
+    if (String(loanSettlement || '').toUpperCase() === 'PAYMENT') {
+      actions.push({ id: 'pay', label: 'Pay now', openEntry: 'emi' })
+    } else {
+      actions.push({ id: 'schedule', label: 'Schedule', navigate: u })
+    }
+    actions.push({ id: 'view', label: 'View', navigate: u })
+  } else if (kind === 'cc_bill') {
+    actions.push({ id: 'pay', label: 'Pay', openEntry: 'cc_pay' }, { id: 'view', label: 'View', navigate: u })
+  }
+  return actions
+}
+
+/**
+ * @param {string} kind
+ * @param {string} [loanSettlement]
+ */
+function filterTabsForKind(kind, loanSettlement) {
+  /** @type {('due' | 'alerts' | 'payments' | 'system')[]} */
+  const tabs = []
+  if (kind === 'liability_emi' || kind === 'loan_emi' || kind === 'cc_bill') tabs.push('due')
+  if (kind === 'liability_emi' || kind === 'cc_bill') tabs.push('payments')
+  if (kind === 'loan_emi' && String(loanSettlement || '').toUpperCase() === 'PAYMENT') tabs.push('payments')
+  if (kind === 'low_balance' || kind === 'net_worth' || kind === 'large_expense') tabs.push('alerts')
+  if (kind === 'sip' || kind === 'monthly_report') tabs.push('system')
+  return tabs
+}
+
+/** @param {any[]} items */
+function sortNotifItems(items) {
+  const variantRank = { danger: 0, warning: 1, info: 2, success: 3 }
+  const pr = { high: 0, medium: 1, low: 2, info: 3 }
+  const tier = (it) => {
+    const d = it.daysUntilDue
+    if (d != null && d < 0) return 0
+    if (d === 0) return 1
+    if (it.kind === 'low_balance') return 2
+    if (d != null && d >= 1 && d <= 3) return 3
+    if (d != null && d >= 4 && d <= 14) return 4
+    if (d != null && d > 14) return 5
+    if (it.kind === 'net_worth' || it.kind === 'large_expense') return 6
+    return 7
+  }
+  return [...items].sort((a, b) => {
+    const ta = tier(a)
+    const tb = tier(b)
+    if (ta !== tb) return ta - tb
+    const ad = a.daysUntilDue
+    const bd = b.daysUntilDue
+    if (ad != null && bd != null && ad !== bd) return ad - bd
+    if (ad != null && bd == null) return -1
+    if (ad == null && bd != null) return 1
+    const p = pr[a.priority] - pr[b.priority]
+    if (p !== 0) return p
+    return variantRank[a.variant] - variantRank[b.variant]
+  })
 }
 
 /**
@@ -116,6 +218,12 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: overdue ? 'high' : soon ? 'medium' : 'low',
         link: '/personal-finance/liabilities',
         kind: 'liability_emi',
+        variant: dueItemVariant(days),
+        filterTabs: filterTabsForKind('liability_emi'),
+        amount: Number(row.emi_amount),
+        daysUntilDue: days,
+        statusBadge: statusBadgeFromDays(days),
+        actions: buildPayActions('liability_emi', '/personal-finance/liabilities'),
       })
     }
   }
@@ -134,6 +242,12 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: overdue ? 'high' : soon ? 'medium' : 'low',
         link: '/personal-finance/loans',
         kind: 'loan_emi',
+        variant: dueItemVariant(days),
+        filterTabs: filterTabsForKind('loan_emi', settlement),
+        amount: Number(row.emi_amount),
+        daysUntilDue: days,
+        statusBadge: statusBadgeFromDays(days),
+        actions: buildPayActions('loan_emi', '/personal-finance/loans', settlement),
       })
     }
   }
@@ -153,6 +267,12 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: overdue ? 'high' : soon ? 'medium' : 'low',
         link: '/personal-finance/credit-cards',
         kind: 'cc_bill',
+        variant: dueItemVariant(days),
+        filterTabs: filterTabsForKind('cc_bill'),
+        amount: rem,
+        daysUntilDue: days,
+        statusBadge: statusBadgeFromDays(days),
+        actions: buildPayActions('cc_bill', '/personal-finance/credit-cards'),
       })
     }
   }
@@ -170,6 +290,15 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: 'medium',
         link: '/personal-finance/accounts',
         kind: 'low_balance',
+        variant: 'warning',
+        filterTabs: filterTabsForKind('low_balance'),
+        amount: bal,
+        daysUntilDue: null,
+        statusBadge: 'Below threshold',
+        actions: [
+          { id: 'transfer', label: 'Transfer', openEntry: 'transfer' },
+          { id: 'view', label: 'View', navigate: '/personal-finance/accounts' },
+        ],
       })
     }
   }
@@ -188,6 +317,11 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: pct <= -3 ? 'high' : 'medium',
         link: '/personal-finance/reports',
         kind: 'net_worth',
+        variant: pct <= -3 ? 'danger' : 'warning',
+        filterTabs: filterTabsForKind('net_worth'),
+        daysUntilDue: null,
+        statusBadge: 'Trend',
+        actions: [{ id: 'view', label: 'View', navigate: '/personal-finance/reports' }],
       })
     }
   }
@@ -210,6 +344,12 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: 'medium',
         link: '/personal-finance/expenses',
         kind: 'large_expense',
+        variant: 'warning',
+        filterTabs: filterTabsForKind('large_expense'),
+        amount: best.amount,
+        daysUntilDue: null,
+        statusBadge: 'This month',
+        actions: [{ id: 'view', label: 'View', navigate: '/personal-finance/expenses' }],
       })
     }
   }
@@ -225,6 +365,10 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: 'info',
         link: '/personal-finance/investments',
         kind: 'sip',
+        variant: 'info',
+        filterTabs: filterTabsForKind('sip'),
+        daysUntilDue: null,
+        actions: [{ id: 'view', label: 'View', navigate: '/personal-finance/investments' }],
       })
     }
   }
@@ -239,14 +383,17 @@ export async function loadPfNotificationFeed(ctx = {}) {
         priority: 'info',
         link: '/personal-finance/reports',
         kind: 'monthly_report',
+        variant: 'info',
+        filterTabs: filterTabsForKind('monthly_report'),
+        daysUntilDue: null,
+        actions: [{ id: 'view', label: 'View', navigate: '/personal-finance/reports' }],
       })
     }
   }
 
-  items.sort((a, b) => {
-    const rank = { high: 0, medium: 1, low: 2, info: 3 }
-    return rank[a.priority] - rank[b.priority]
-  })
+  const sorted = sortNotifItems(items)
+  items.length = 0
+  items.push(...sorted)
 
   const highCount = items.filter((i) => i.priority === 'high').length
   const mediumCount = items.filter((i) => i.priority === 'medium').length

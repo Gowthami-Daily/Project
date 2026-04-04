@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { createFinanceIncome, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppDropdown, AppInput, AppTextarea } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { todayISODate } from '../pfToday.js'
@@ -10,6 +11,11 @@ const PAY_METHODS = [
   { value: 'bank_transfer', label: 'Bank' },
   { value: 'upi', label: 'UPI' },
   { value: 'card', label: 'Card' },
+]
+
+const RECURRING_TYPE_OPTIONS = [
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'weekly', label: 'Weekly' },
 ]
 
 export default function IncomeForm({
@@ -128,41 +134,23 @@ export default function IncomeForm({
             />
           </div>
         </div>
-        <div>
-          <label className={labelCls} htmlFor="pf-ge-inc-acc">
-            Account
-          </label>
-          <select
-            id="pf-ge-inc-acc"
-            className={inputCls}
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-          >
-            <option value="">— None —</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={String(a.id)}>
-                {a.account_name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelCls} htmlFor="pf-ge-inc-pm">
-            Payment method
-          </label>
-          <select
-            id="pf-ge-inc-pm"
-            className={inputCls}
-            value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value)}
-          >
-            {PAY_METHODS.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <PremiumSelect
+          id="pf-ge-inc-acc"
+          label="Account"
+          labelClassName={labelCls}
+          options={[{ value: '', label: '— None —' }, ...accounts.map((a) => ({ value: String(a.id), label: a.account_name }))]}
+          value={accountId}
+          onChange={setAccountId}
+          searchable={accounts.length > 6}
+        />
+        <PremiumSelect
+          id="pf-ge-inc-pm"
+          label="Payment method"
+          labelClassName={labelCls}
+          options={PAY_METHODS}
+          value={paymentMethod}
+          onChange={setPaymentMethod}
+        />
         <AppInput id="pf-ge-inc-type" label="Income type" value={incomeType} onChange={(e) => setIncomeType(e.target.value)} />
         <AppInput id="pf-ge-inc-from" label="Received from (optional)" value={receivedFrom} onChange={(e) => setReceivedFrom(e.target.value)} />
         <div className="flex flex-col gap-2 sm:col-span-2">
@@ -171,10 +159,12 @@ export default function IncomeForm({
             Recurring
           </label>
           {isRecurring ? (
-            <select className={inputCls} value={recurringType} onChange={(e) => setRecurringType(e.target.value)}>
-              <option value="monthly">Monthly</option>
-              <option value="weekly">Weekly</option>
-            </select>
+            <PremiumSelect
+              options={RECURRING_TYPE_OPTIONS}
+              value={recurringType}
+              onChange={setRecurringType}
+              aria-label="Recurring frequency"
+            />
           ) : null}
         </div>
         <div className="sm:col-span-2">

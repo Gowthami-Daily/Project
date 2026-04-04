@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { postAccountMovement, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppInput, AppTextarea } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { formatInr } from '../../pfFormat.js'
@@ -91,42 +92,38 @@ export default function TransferForm({ formId, accounts, defaultFromId, defaultT
           />
         </div>
         <div className="sm:col-span-2">
-          <label className={labelCls} htmlFor="pf-ge-tr-from">
-            From account
-          </label>
-          <select
+          <PremiumSelect
             id="pf-ge-tr-from"
-            className={inputCls}
+            label="From account"
+            labelClassName={labelCls}
             required
+            options={accounts.map((a) => ({
+              value: String(a.id),
+              label: `${a.account_name} (${a.account_type}) · ${formatInr(a.balance)}`,
+              disabled: String(a.id) === toId,
+            }))}
             value={fromId}
-            onChange={(e) => setFromId(e.target.value)}
-          >
-            <option value="">Select…</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={String(a.id)} disabled={String(a.id) === toId}>
-                {a.account_name} ({a.account_type}) · {formatInr(a.balance)}
-              </option>
-            ))}
-          </select>
+            onChange={setFromId}
+            placeholder="Select…"
+            searchable={accounts.length > 5}
+          />
         </div>
         <div className="sm:col-span-2">
-          <label className={labelCls} htmlFor="pf-ge-tr-to">
-            To account
-          </label>
-          <select
+          <PremiumSelect
             id="pf-ge-tr-to"
-            className={inputCls}
+            label="To account"
+            labelClassName={labelCls}
             required
+            options={accounts.map((a) => ({
+              value: String(a.id),
+              label: `${a.account_name} (${a.account_type}) · ${formatInr(a.balance)}`,
+              disabled: String(a.id) === fromId,
+            }))}
             value={toId}
-            onChange={(e) => setToId(e.target.value)}
-          >
-            <option value="">Select…</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={String(a.id)} disabled={String(a.id) === fromId}>
-                {a.account_name} ({a.account_type}) · {formatInr(a.balance)}
-              </option>
-            ))}
-          </select>
+            onChange={setToId}
+            placeholder="Select…"
+            searchable={accounts.length > 5}
+          />
         </div>
         <AppInput id="pf-ge-tr-ref" label="Reference (optional)" value={reference} onChange={(e) => setReference(e.target.value)} />
         <div className="sm:col-span-2">

@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../../components/ui/PageHeader.jsx'
+import { PremiumSelect } from '../../components/ui/PremiumSelect.jsx'
 import {
   fetchPfMe,
   listCreditCards,
@@ -35,7 +36,6 @@ import {
   cardCls,
   inputCls,
   labelCls,
-  pfSelectCompact,
 } from './pfFormStyles.js'
 import { usePfToast } from './notifications/pfToastContext.jsx'
 import { defaultPrefs, loadPfAppPrefs, savePfAppPrefs } from './pfSettingsPrefs.js'
@@ -219,14 +219,14 @@ export default function PfSettingsPage() {
                   />
                 </Field>
                 <Field label="Default profile type">
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    options={[
+                      { value: 'personal', label: 'Personal' },
+                      { value: 'business', label: 'Business' },
+                    ]}
                     value={prefs.profile.profileKind}
-                    onChange={(e) => patchPrefs({ profile: { ...prefs.profile, profileKind: e.target.value } })}
-                  >
-                    <option value="personal">Personal</option>
-                    <option value="business">Business</option>
-                  </select>
+                    onChange={(v) => patchPrefs({ profile: { ...prefs.profile, profileKind: v } })}
+                  />
                 </Field>
                 <Field label="Timezone">
                   <input
@@ -275,121 +275,111 @@ export default function PfSettingsPage() {
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Currency">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'INR', label: '₹ INR' },
+                    { value: 'USD', label: '$ USD' },
+                  ]}
                   value={prefs.preferences.currency}
-                  onChange={(e) => patchPrefs({ preferences: { ...prefs.preferences, currency: e.target.value } })}
-                >
-                  <option value="INR">₹ INR</option>
-                  <option value="USD">$ USD</option>
-                </select>
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, currency: v } })}
+                />
               </Field>
               <Field label="Number format">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'indian', label: 'Indian (1,00,000)' },
+                    { value: 'intl', label: 'International (100,000)' },
+                  ]}
                   value={prefs.preferences.numberFormat}
-                  onChange={(e) => patchPrefs({ preferences: { ...prefs.preferences, numberFormat: e.target.value } })}
-                >
-                  <option value="indian">Indian (1,00,000)</option>
-                  <option value="intl">International (100,000)</option>
-                </select>
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, numberFormat: v } })}
+                />
               </Field>
               <Field label="Date format">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'locale', label: 'System locale' },
+                    { value: 'iso', label: 'YYYY-MM-DD' },
+                    { value: 'in', label: 'DD/MM/YYYY' },
+                  ]}
                   value={prefs.preferences.dateFormat}
-                  onChange={(e) => patchPrefs({ preferences: { ...prefs.preferences, dateFormat: e.target.value } })}
-                >
-                  <option value="locale">System locale</option>
-                  <option value="iso">YYYY-MM-DD</option>
-                  <option value="in">DD/MM/YYYY</option>
-                </select>
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, dateFormat: v } })}
+                />
               </Field>
               <Field label="Financial year starts">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: '1', label: 'January' },
+                    { value: '4', label: 'April (India)' },
+                    { value: '7', label: 'July' },
+                  ]}
                   value={String(prefs.preferences.financialYearStartMonth)}
-                  onChange={(e) =>
+                  onChange={(v) =>
                     patchPrefs({
                       preferences: {
                         ...prefs.preferences,
-                        financialYearStartMonth: Number(e.target.value),
+                        financialYearStartMonth: Number(v),
                       },
                     })
                   }
-                >
-                  <option value="1">January</option>
-                  <option value="4">April (India)</option>
-                  <option value="7">July</option>
-                </select>
+                />
               </Field>
               <Field label="Week starts on">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'monday', label: 'Monday' },
+                    { value: 'sunday', label: 'Sunday' },
+                  ]}
                   value={prefs.preferences.weekStartsOn}
-                  onChange={(e) => patchPrefs({ preferences: { ...prefs.preferences, weekStartsOn: e.target.value } })}
-                >
-                  <option value="monday">Monday</option>
-                  <option value="sunday">Sunday</option>
-                </select>
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, weekStartsOn: v } })}
+                />
               </Field>
               <Field label="Default bank / cash account" hint="Suggested pre-selection on forms (client-side).">
-                <select
-                  className={inputCls}
-                  value={prefs.preferences.defaultAccountId}
-                  onChange={(e) => patchPrefs({ preferences: { ...prefs.preferences, defaultAccountId: e.target.value } })}
-                >
-                  <option value="">None</option>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={String(a.id)}>
-                      {a.account_name}
-                    </option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  placeholder="None"
+                  options={[
+                    { value: '', label: 'None' },
+                    ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+                  ]}
+                  value={String(prefs.preferences.defaultAccountId ?? '')}
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, defaultAccountId: v } })}
+                  searchable={accounts.length > 6}
+                />
               </Field>
               <Field label="Default payment method">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'bank_transfer', label: 'Bank transfer' },
+                    { value: 'upi', label: 'UPI' },
+                    { value: 'cash', label: 'Cash' },
+                    { value: 'credit_card', label: 'Credit card' },
+                  ]}
                   value={prefs.preferences.defaultPaymentMethod}
-                  onChange={(e) =>
-                    patchPrefs({ preferences: { ...prefs.preferences, defaultPaymentMethod: e.target.value } })
-                  }
-                >
-                  <option value="bank_transfer">Bank transfer</option>
-                  <option value="upi">UPI</option>
-                  <option value="cash">Cash</option>
-                  <option value="credit_card">Credit card</option>
-                </select>
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, defaultPaymentMethod: v } })}
+                />
               </Field>
               <Field label="Default investment type">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'mutual_fund', label: 'Mutual fund' },
+                    { value: 'stock', label: 'Stock' },
+                    { value: 'fd', label: 'Fixed deposit' },
+                    { value: 'other', label: 'Other' },
+                  ]}
                   value={prefs.preferences.defaultInvestmentType}
-                  onChange={(e) =>
-                    patchPrefs({ preferences: { ...prefs.preferences, defaultInvestmentType: e.target.value } })
-                  }
-                >
-                  <option value="mutual_fund">Mutual fund</option>
-                  <option value="stock">Stock</option>
-                  <option value="fd">Fixed deposit</option>
-                  <option value="other">Other</option>
-                </select>
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, defaultInvestmentType: v } })}
+                />
               </Field>
               <Field label="Default credit card" hint="Optional quick-select on card forms.">
-                <select
-                  className={inputCls}
-                  value={prefs.preferences.defaultCreditCardId}
-                  onChange={(e) =>
-                    patchPrefs({ preferences: { ...prefs.preferences, defaultCreditCardId: e.target.value } })
-                  }
-                >
-                  <option value="">None</option>
-                  {creditCards.map((c) => (
-                    <option key={c.id} value={String(c.id)}>
-                      {c.card_name}
-                    </option>
-                  ))}
-                </select>
+                <PremiumSelect
+                  placeholder="None"
+                  options={[
+                    { value: '', label: 'None' },
+                    ...creditCards.map((c) => ({ value: String(c.id), label: c.card_name })),
+                  ]}
+                  value={String(prefs.preferences.defaultCreditCardId ?? '')}
+                  onChange={(v) => patchPrefs({ preferences: { ...prefs.preferences, defaultCreditCardId: v } })}
+                  searchable={creditCards.length > 6}
+                />
               </Field>
             </div>
             <p className="rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card-hover)]/40 px-4 py-3 text-xs text-[var(--pf-text-muted)]">
@@ -407,17 +397,15 @@ export default function PfSettingsPage() {
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Opening balance default" hint="When adding a new account.">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'zero', label: 'Start at zero' },
+                    { value: 'ask', label: 'Ask every time' },
+                    { value: 'last', label: 'Copy from similar account' },
+                  ]}
                   value={ac.openingBalanceBehavior}
-                  onChange={(e) =>
-                    patchPrefs({ accountsCards: { ...ac, openingBalanceBehavior: e.target.value } })
-                  }
-                >
-                  <option value="zero">Start at zero</option>
-                  <option value="ask">Ask every time</option>
-                  <option value="last">Copy from similar account</option>
-                </select>
+                  onChange={(v) => patchPrefs({ accountsCards: { ...ac, openingBalanceBehavior: v } })}
+                />
               </Field>
             </div>
             <label className="mt-2 flex cursor-pointer items-center gap-3">
@@ -515,15 +503,15 @@ export default function PfSettingsPage() {
           <SectionCard title="Loans & interest" description="Defaults for new loans you originate or record.">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Default interest method">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'FLAT', label: 'Flat' },
+                    { value: 'REDUCING', label: 'Reducing balance' },
+                    { value: 'SIMPLE', label: 'Simple' },
+                  ]}
                   value={L.defaultInterestMethod}
-                  onChange={(e) => patchPrefs({ loans: { ...L, defaultInterestMethod: e.target.value } })}
-                >
-                  <option value="FLAT">Flat</option>
-                  <option value="REDUCING">Reducing balance</option>
-                  <option value="SIMPLE">Simple</option>
-                </select>
+                  onChange={(v) => patchPrefs({ loans: { ...L, defaultInterestMethod: v } })}
+                />
               </Field>
               <Field label="Default EMI day (1–28)">
                 <input
@@ -555,15 +543,15 @@ export default function PfSettingsPage() {
                 />
               </Field>
               <Field label="Compound frequency">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'monthly', label: 'Monthly' },
+                    { value: 'quarterly', label: 'Quarterly' },
+                    { value: 'yearly', label: 'Yearly' },
+                  ]}
                   value={L.compoundFrequency}
-                  onChange={(e) => patchPrefs({ loans: { ...L, compoundFrequency: e.target.value } })}
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="yearly">Yearly</option>
-                </select>
+                  onChange={(v) => patchPrefs({ loans: { ...L, compoundFrequency: v } })}
+                />
               </Field>
             </div>
           </SectionCard>
@@ -859,15 +847,15 @@ export default function PfSettingsPage() {
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Preferred bank statement format (planner)">
-                <select
-                  className={inputCls}
+                <PremiumSelect
+                  options={[
+                    { value: 'csv', label: 'CSV' },
+                    { value: 'xlsx', label: 'Excel' },
+                    { value: 'mt940', label: 'MT940' },
+                  ]}
                   value={prefs.importPrefs.bankStatementFormat}
-                  onChange={(e) => patchPrefs({ importPrefs: { ...prefs.importPrefs, bankStatementFormat: e.target.value } })}
-                >
-                  <option value="csv">CSV</option>
-                  <option value="xlsx">Excel</option>
-                  <option value="mt940">MT940</option>
-                </select>
+                  onChange={(v) => patchPrefs({ importPrefs: { ...prefs.importPrefs, bankStatementFormat: v } })}
+                />
               </Field>
             </div>
             <button type="button" disabled className={`${btnPrimary} opacity-50`}>
@@ -941,47 +929,47 @@ export default function PfSettingsPage() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Accent (saved for future theming)">
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    options={[
+                      { value: 'indigo', label: 'Indigo' },
+                      { value: 'emerald', label: 'Emerald' },
+                      { value: 'rose', label: 'Rose' },
+                      { value: 'amber', label: 'Amber' },
+                    ]}
                     value={Ap.accent}
-                    onChange={(e) => patchPrefs({ appearance: { ...Ap, accent: e.target.value } })}
-                  >
-                    <option value="indigo">Indigo</option>
-                    <option value="emerald">Emerald</option>
-                    <option value="rose">Rose</option>
-                    <option value="amber">Amber</option>
-                  </select>
+                    onChange={(v) => patchPrefs({ appearance: { ...Ap, accent: v } })}
+                  />
                 </Field>
                 <Field label="Font size">
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    options={[
+                      { value: 'compact', label: 'Compact' },
+                      { value: 'comfortable', label: 'Comfortable' },
+                      { value: 'large', label: 'Large' },
+                    ]}
                     value={Ap.fontSize}
-                    onChange={(e) => patchPrefs({ appearance: { ...Ap, fontSize: e.target.value } })}
-                  >
-                    <option value="compact">Compact</option>
-                    <option value="comfortable">Comfortable</option>
-                    <option value="large">Large</option>
-                  </select>
+                    onChange={(v) => patchPrefs({ appearance: { ...Ap, fontSize: v } })}
+                  />
                 </Field>
                 <Field label="Chart style">
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    options={[
+                      { value: 'smooth', label: 'Smooth' },
+                      { value: 'sharp', label: 'Sharp / stepped' },
+                    ]}
                     value={Ap.chartStyle}
-                    onChange={(e) => patchPrefs({ appearance: { ...Ap, chartStyle: e.target.value } })}
-                  >
-                    <option value="smooth">Smooth</option>
-                    <option value="sharp">Sharp / stepped</option>
-                  </select>
+                    onChange={(v) => patchPrefs({ appearance: { ...Ap, chartStyle: v } })}
+                  />
                 </Field>
                 <Field label="Card style">
-                  <select
-                    className={inputCls}
+                  <PremiumSelect
+                    options={[
+                      { value: 'glass', label: 'Glass' },
+                      { value: 'solid', label: 'Solid' },
+                    ]}
                     value={Ap.cardStyle}
-                    onChange={(e) => patchPrefs({ appearance: { ...Ap, cardStyle: e.target.value } })}
-                  >
-                    <option value="glass">Glass</option>
-                    <option value="solid">Solid</option>
-                  </select>
+                    onChange={(v) => patchPrefs({ appearance: { ...Ap, cardStyle: v } })}
+                  />
                 </Field>
               </div>
               <label className="flex cursor-pointer items-center gap-3">
@@ -1067,7 +1055,7 @@ export default function PfSettingsPage() {
   })()
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-6 pb-12">
+    <div className="w-full min-w-0 max-w-full space-y-6 pb-12">
       <PageHeader
         title="Settings"
         description="System control panel for your Personal Finance workspace — profile, defaults, categories, data, and safety."
@@ -1084,21 +1072,16 @@ export default function PfSettingsPage() {
             </nav>
           </div>
           <div className="mt-3 lg:hidden">
-            <label htmlFor="pf-settings-mobile-nav" className={labelCls}>
-              Jump to section
-            </label>
-            <select
+            <PremiumSelect
               id="pf-settings-mobile-nav"
-              className={`${pfSelectCompact} mt-1 w-full`}
+              label="Jump to section"
+              labelClassName={labelCls}
+              className="w-full"
               value={activeSection}
-              onChange={(e) => goSection(e.target.value)}
-            >
-              {SECTIONS.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
+              onChange={goSection}
+              options={SECTIONS.map((s) => ({ value: s.id, label: s.label }))}
+              searchable={SECTIONS.length > 6}
+            />
           </div>
         </aside>
 

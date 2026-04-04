@@ -74,12 +74,12 @@ import {
   pfThSmRight,
   pfTrHover,
   pfChartCard,
-  pfSelectCompact,
 } from '../pfFormStyles.js'
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 import PfSegmentedControl from '../PfSegmentedControl.jsx'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+import { PremiumSelect } from '../../../components/ui/PremiumSelect.jsx'
 
 const LOAN_PIE_COLORS = ['#3b82f6', '#10b981']
 
@@ -1126,37 +1126,37 @@ export default function PfLoansPage() {
 
       <div className={`${cardCls} flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end`}>
         <div className="min-w-[10rem] flex-1">
-          <label className={labelCls} htmlFor="pf-loan-filter-type">
-            Loan type
-          </label>
-          <select
+          <PremiumSelect
             id="pf-loan-filter-type"
-            className={`${pfSelectCompact} mt-1 w-full sm:w-auto`}
+            label="Loan type"
+            labelClassName={labelCls}
+            className="w-full sm:w-auto"
             value={filterLoanType}
-            onChange={(e) => setFilterLoanType(e.target.value)}
-          >
-            <option value="ALL">All types</option>
-            <option value="EMI">EMI</option>
-            <option value="INTEREST_FREE">Interest-free</option>
-            <option value="SIMPLE_INTEREST">Simple interest</option>
-          </select>
+            onChange={setFilterLoanType}
+            options={[
+              { value: 'ALL', label: 'All types' },
+              { value: 'EMI', label: 'EMI' },
+              { value: 'INTEREST_FREE', label: 'Interest-free' },
+              { value: 'SIMPLE_INTEREST', label: 'Simple interest' },
+            ]}
+          />
         </div>
         <div className="min-w-[10rem] flex-1">
-          <label className={labelCls} htmlFor="pf-loan-filter-status">
-            Status
-          </label>
-          <select
+          <PremiumSelect
             id="pf-loan-filter-status"
-            className={`${pfSelectCompact} mt-1 w-full sm:w-auto`}
+            label="Status"
+            labelClassName={labelCls}
+            className="w-full sm:w-auto"
             value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-          >
-            <option value="ALL">All</option>
-            <option value="ACTIVE">Active</option>
-            <option value="CLOSED">Closed</option>
-            <option value="OVERDUE">Overdue</option>
-            <option value="COMPLETED">Completed</option>
-          </select>
+            onChange={setFilterStatus}
+            options={[
+              { value: 'ALL', label: 'All' },
+              { value: 'ACTIVE', label: 'Active' },
+              { value: 'CLOSED', label: 'Closed' },
+              { value: 'OVERDUE', label: 'Overdue' },
+              { value: 'COMPLETED', label: 'Completed' },
+            ]}
+          />
         </div>
         <div className="min-w-[12rem] flex-[2]">
           <label className={labelCls} htmlFor="pf-loan-search">
@@ -1361,23 +1361,22 @@ export default function PfLoansPage() {
                 Collections and interest by month ({analyticsYear}). Snapshot KPIs from your book.
               </p>
             </div>
-            <label className="flex flex-col text-xs font-medium text-[var(--pf-text-muted)] sm:items-end">
-              Year
-              <select
-                className={`${pfSelectCompact} mt-1`}
-                value={analyticsYear}
-                onChange={(e) => setAnalyticsYear(Number(e.target.value))}
-              >
-                {(() => {
+            <div className="flex flex-col sm:items-end">
+              <PremiumSelect
+                label="Year"
+                labelClassName="text-xs font-medium text-[var(--pf-text-muted)]"
+                className="mt-0 sm:min-w-[5.5rem]"
+                value={String(analyticsYear)}
+                onChange={(v) => setAnalyticsYear(Number(v))}
+                options={(() => {
                   const cy = new Date().getFullYear()
-                  return Array.from({ length: 7 }, (_, i) => cy - 5 + i).map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))
+                  return Array.from({ length: 7 }, (_, i) => cy - 5 + i).map((y) => ({
+                    value: String(y),
+                    label: String(y),
+                  }))
                 })()}
-              </select>
-            </label>
+              />
+            </div>
           </div>
           <div className="grid gap-6 lg:grid-cols-2">
             <div className={`${pfChartCard} min-h-[280px]`}>
@@ -2063,21 +2062,20 @@ export default function PfLoansPage() {
                             {paid ? (
                               <span className="text-slate-700">{paidAsLabel}</span>
                             ) : (
-                              <select
-                                className={`${inputCls} py-1 text-xs max-w-[12rem]`}
+                              <PremiumSelect
+                                className="max-w-[12rem]"
                                 disabled={patchingKey === pk}
                                 value={creditSelectValue(s)}
-                                onChange={(e) => onCreditChange(viewLoan.id, s.emi_number, e.target.value)}
+                                onChange={(v) => onCreditChange(viewLoan.id, s.emi_number, v)}
                                 aria-label="Cash or bank for this EMI"
-                              >
-                                <option value="">— Not set —</option>
-                                <option value="cash">Cash</option>
-                                {accounts.map((a) => (
-                                  <option key={a.id} value={String(a.id)}>
-                                    {a.account_name}
-                                  </option>
-                                ))}
-                              </select>
+                                placeholder="— Not set —"
+                                options={[
+                                  { value: '', label: '— Not set —' },
+                                  { value: 'cash', label: 'Cash' },
+                                  ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+                                ]}
+                                searchable={accounts.length + 2 > 6}
+                              />
                             )}
                           </td>
                           <td className={pfTdSm}>
@@ -2274,19 +2272,18 @@ export default function PfLoansPage() {
                         Bank account
                       </label>
                       {recordReceiveMode === 'bank' ? (
-                        <select
-                          className={`${inputCls} max-w-md`}
+                        <PremiumSelect
+                          className="max-w-md"
                           value={recordAccountId}
-                          onChange={(e) => setRecordAccountId(e.target.value)}
+                          onChange={setRecordAccountId}
                           aria-label="Bank account to credit"
-                        >
-                          <option value="">— Select account —</option>
-                          {accounts.map((a) => (
-                            <option key={a.id} value={String(a.id)}>
-                              {a.account_name}
-                            </option>
-                          ))}
-                        </select>
+                          placeholder="— Select account —"
+                          options={[
+                            { value: '', label: '— Select account —' },
+                            ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+                          ]}
+                          searchable={accounts.length > 6}
+                        />
                       ) : null}
                     </div>
                   </div>
@@ -2342,23 +2339,20 @@ export default function PfLoansPage() {
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label htmlFor="pf-add-acc" className={labelCls}>
-                      Given from account
-                    </label>
-                    <select
+                    <PremiumSelect
                       id="pf-add-acc"
-                      className={`${inputCls} mt-1`}
+                      label="Given from account"
+                      labelClassName={labelCls}
                       value={addDisburseAccountId}
-                      onChange={(e) => setAddDisburseAccountId(e.target.value)}
+                      onChange={setAddDisburseAccountId}
                       required
-                    >
-                      <option value="">— Select account —</option>
-                      {accounts.map((a) => (
-                        <option key={a.id} value={String(a.id)}>
-                          {a.account_name}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="— Select account —"
+                      options={[
+                        { value: '', label: '— Select account —' },
+                        ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+                      ]}
+                      searchable={accounts.length > 6}
+                    />
                   </div>
                   <div className="sm:col-span-2">
                     <label htmlFor="pf-add-notes" className={labelCls}>

@@ -25,6 +25,8 @@ def normalize_emi_interest_method(raw: str | None) -> str:
     v = str(raw or 'flat').strip().lower()
     if v == 'reducing_balance':
         return 'REDUCING_BALANCE'
+    if v in ('simple_interest', 'simple'):
+        return 'SIMPLE_INTEREST'
     return 'FLAT'
 
 

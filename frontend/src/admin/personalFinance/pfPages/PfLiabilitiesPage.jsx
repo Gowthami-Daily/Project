@@ -1,4 +1,10 @@
-import { BanknotesIcon, CheckCircleIcon, ExclamationTriangleIcon, PlusIcon, XMarkIcon } from '@heroicons/react/24/solid'
+import {
+  BanknotesIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  PlusIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/solid'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -22,7 +28,7 @@ import {
 } from '../api.js'
 import PfExportMenu from '../PfExportMenu.jsx'
 import PfSegmentedControl from '../PfSegmentedControl.jsx'
-import { AppButton, AppModal } from '../pfDesignSystem/index.js'
+import { AppButton, AppModal, PremiumSelect } from '../pfDesignSystem/index.js'
 import {
   btnDanger,
   btnPrimary,
@@ -35,7 +41,6 @@ import {
   pfModalHeader,
   pfModalOverlay,
   pfModalSurface,
-  pfSelectCompact,
   pfTable,
   pfTableWrap,
   pfTd,
@@ -58,6 +63,8 @@ const PIE_COLORS = ['#3b82f6', '#8b5cf6', '#f97316', '#10b981', '#64748b']
 const LIABILITY_TYPES = [
   { value: 'CREDIT_CARD', label: 'Credit card' },
   { value: 'PERSONAL_LOAN_BORROWED', label: 'Personal loan (borrowed)' },
+  { value: 'AGRICULTURE_LOAN', label: 'Agriculture loan' },
+  { value: 'GOLD_LOAN', label: 'Gold loan' },
   { value: 'HOME_LOAN', label: 'Home loan' },
   { value: 'VEHICLE_LOAN', label: 'Vehicle loan' },
   { value: 'EMI_PURCHASE', label: 'EMI purchase' },
@@ -65,6 +72,24 @@ const LIABILITY_TYPES = [
   { value: 'BORROWED_PERSON', label: 'Borrowed from person' },
   { value: 'BILLS_PAYABLE', label: 'Bills payable' },
   { value: 'OTHER', label: 'Other' },
+]
+
+const FILTER_STATUS_OPTIONS = [
+  { value: 'ALL', label: 'All' },
+  { value: 'ACTIVE', label: 'Active' },
+  { value: 'OVERDUE', label: 'Overdue' },
+  { value: 'CLOSED', label: 'Closed' },
+  { value: 'PAID', label: 'Paid' },
+]
+
+const PAY_FROM_OPTIONS = [
+  { value: 'CASH', label: 'Cash' },
+  { value: 'BANK', label: 'Bank account' },
+]
+
+const LIABILITY_FORM_STATUS_OPTIONS = [
+  { value: 'ACTIVE', label: 'Active' },
+  { value: 'CLOSED', label: 'Closed' },
 ]
 
 function todayISODate() {
@@ -84,7 +109,16 @@ function typeLabel(v) {
 
 function liabilityEmiMethodFromApi(v) {
   const u = String(v || 'FLAT').toUpperCase().replace(/-/g, '_')
-  return u === 'REDUCING_BALANCE' ? 'reducing_balance' : 'flat'
+  if (u === 'REDUCING_BALANCE') return 'reducing_balance'
+  if (u === 'SIMPLE_INTEREST') return 'simple_interest'
+  return 'flat'
+}
+
+function liabilityEmiMethodLabelFromApi(v) {
+  const m = liabilityEmiMethodFromApi(v)
+  if (m === 'reducing_balance') return 'reducing balance'
+  if (m === 'simple_interest') return 'simple interest'
+  return 'flat'
 }
 
 function schedulePayFromLabel(s, accountNameById) {
@@ -116,7 +150,17 @@ function daysFromToday(iso) {
 function groupBucketForType(t) {
   const u = String(t || '').toUpperCase()
   if (u === 'CREDIT_CARD') return 'credit'
-  if (['HOME_LOAN', 'VEHICLE_LOAN', 'PERSONAL_LOAN_BORROWED', 'EMI_PURCHASE'].includes(u)) return 'loans'
+  if (
+    [
+      'HOME_LOAN',
+      'VEHICLE_LOAN',
+      'PERSONAL_LOAN_BORROWED',
+      'AGRICULTURE_LOAN',
+      'GOLD_LOAN',
+      'EMI_PURCHASE',
+    ].includes(u)
+  )
+    return 'loans'
   return 'other'
 }
 
@@ -278,7 +322,7 @@ function LiabilityPremiumCard({ r, onView, onEdit, onPay, onPayFull }) {
           </div>
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-[var(--pf-primary)] to-sky-400 transition-all duration-500"
+              className="pf-motion-progress-fill h-full rounded-full bg-gradient-to-r from-[var(--pf-primary)] to-sky-400"
               style={{ width: `${paidPct}%` }}
             />
           </div>
@@ -434,6 +478,13 @@ export default function PfLiabilitiesPage() {
     return m
   }, [accounts])
 
+  const filterTypeOptions = useMemo(() => [{ value: 'ALL', label: 'All types' }, ...LIABILITY_TYPES], [])
+
+  const accountSelectOptions = useMemo(
+    () => accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+    [accounts],
+  )
+
   const queryParams = useMemo(
     () => ({
       liability_type: filterType === 'ALL' ? undefined : filterType,
@@ -587,9 +638,11 @@ export default function PfLiabilitiesPage() {
       body.term_months = tm
       body.emi_schedule_start_date = form.emi_schedule_start_date
       body.interest_free_days =
-        form.interest_free_days === '' || form.interest_free_days == null
+        form.emi_interest_method === 'simple_interest'
           ? null
-          : Math.max(0, Math.floor(Number(form.interest_free_days)))
+          : form.interest_free_days === '' || form.interest_free_days == null
+            ? null
+            : Math.max(0, Math.floor(Number(form.interest_free_days)))
       body.installment_amount = null
       body.due_date = null
     }
@@ -1067,62 +1120,49 @@ export default function PfLiabilitiesPage() {
         </section>
       ) : null}
 
-      <div className={`${cardCls} flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end`}>
-        <div>
-          <label className={labelCls} htmlFor="lia-f-type">
-            Type
-          </label>
-          <select
+      <div className={`${cardCls} flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end`}>
+        <div className="w-full min-w-0 sm:w-auto sm:min-w-[15.5rem]">
+          <PremiumSelect
             id="lia-f-type"
-            className={`${pfSelectCompact} mt-1 w-full sm:w-auto`}
+            label="Type"
+            searchable
+            searchFromCount={6}
+            options={filterTypeOptions}
             value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-          >
-            <option value="ALL">All types</option>
-            {LIABILITY_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+            onChange={setFilterType}
+            placeholder="All types"
+          />
         </div>
-        <div>
-          <label className={labelCls} htmlFor="lia-f-st">
-            Status
-          </label>
-          <select
+        <div className="w-full min-w-0 sm:w-auto sm:min-w-[10.5rem]">
+          <PremiumSelect
             id="lia-f-st"
-            className={`${pfSelectCompact} mt-1 w-full sm:w-auto`}
+            label="Status"
+            options={FILTER_STATUS_OPTIONS}
             value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-          >
-            <option value="ALL">All</option>
-            <option value="ACTIVE">Active</option>
-            <option value="OVERDUE">Overdue</option>
-            <option value="CLOSED">Closed</option>
-            <option value="PAID">Paid</option>
-          </select>
+            onChange={setFilterStatus}
+            placeholder="Status"
+          />
         </div>
-        <div className="flex items-center gap-2 pt-6 sm:pt-0">
+        <div className="flex items-center gap-2.5 rounded-xl border border-sky-200/60 bg-white/80 px-3 py-2.5 dark:border-[var(--pf-border)] dark:bg-[var(--pf-input-bg)]/80 sm:pt-0">
           <input
             id="lia-f-due"
             type="checkbox"
-            className="h-4 w-4 rounded border-sky-300 text-[#1E3A8A]"
+            className="h-4 w-4 rounded border-sky-300 text-[var(--pf-primary)] focus:ring-[var(--pf-primary)]/30 dark:border-[var(--pf-border)] dark:bg-[var(--pf-card)]"
             checked={filterDueMonth}
             onChange={(e) => setFilterDueMonth(e.target.checked)}
           />
-          <label htmlFor="lia-f-due" className="text-sm text-slate-700 dark:text-slate-300">
+          <label htmlFor="lia-f-due" className="cursor-pointer text-sm font-medium text-slate-700 dark:text-[var(--pf-text)]">
             Due this month
           </label>
         </div>
-        <div className="min-w-[12rem] flex-1">
+        <div className="min-w-0 flex-1 sm:min-w-[12rem]">
           <label className={labelCls} htmlFor="lia-f-search">
             Search
           </label>
           <input
             id="lia-f-search"
             type="search"
-            className={inputCls}
+            className={`${inputCls} rounded-xl shadow-[var(--pf-shadow)] transition-shadow hover:shadow-[var(--pf-shadow-hover)]`}
             placeholder="Name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -1299,21 +1339,16 @@ export default function PfLiabilitiesPage() {
                     <input id="fm-name" className={inputCls} value={form.liability_name} onChange={(e) => setForm((f) => ({ ...f, liability_name: e.target.value }))} required />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className={labelCls} htmlFor="fm-type">
-                      Type
-                    </label>
-                    <select
+                    <PremiumSelect
                       id="fm-type"
-                      className={inputCls}
+                      label="Type"
+                      searchable
+                      searchFromCount={6}
+                      options={LIABILITY_TYPES}
                       value={form.liability_type}
-                      onChange={(e) => setForm((f) => ({ ...f, liability_type: e.target.value }))}
-                    >
-                      {LIABILITY_TYPES.map((t) => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => setForm((f) => ({ ...f, liability_type: v }))}
+                      placeholder="Choose type"
+                    />
                   </div>
                   <div className="sm:col-span-2">
                     <label className={labelCls} htmlFor="fm-lender">
@@ -1397,7 +1432,7 @@ export default function PfLiabilitiesPage() {
                       checked={form.build_emi_schedule}
                       onChange={(e) => setForm((f) => ({ ...f, build_emi_schedule: e.target.checked }))}
                     />
-                    Build EMI schedule (flat or reducing balance)
+                    Build EMI schedule (flat, simple interest, or reducing balance)
                   </label>
                   {form.build_emi_schedule ? (
                     <div className="mt-3 grid gap-3">
@@ -1409,11 +1444,20 @@ export default function PfLiabilitiesPage() {
                           className="mt-2 w-full"
                           options={[
                             { id: 'flat', label: 'Flat interest' },
+                            { id: 'simple_interest', label: 'Simple interest' },
                             { id: 'reducing_balance', label: 'Reducing balance' },
                           ]}
                           value={form.emi_interest_method}
                           onChange={(v) => setForm((f) => ({ ...f, emi_interest_method: v }))}
                         />
+                        {form.emi_interest_method === 'simple_interest' ? (
+                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                            Interest on the full principal for the whole term:{' '}
+                            <span className="font-medium text-slate-600 dark:text-slate-300">P × rate% × (term ÷ 12)</span>
+                            . Equal principal and interest each month (same schedule shape as flat, without interest-free
+                            days).
+                          </p>
+                        ) : null}
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <div>
@@ -1470,13 +1514,13 @@ export default function PfLiabilitiesPage() {
               ) : null}
               {editId ? (
                 <div className="sm:col-span-2 border-t border-[var(--pf-border)] pt-5">
-                  <label className={labelCls} htmlFor="fm-st">
-                    Status
-                  </label>
-                  <select id="fm-st" className={inputCls} value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
-                    <option value="ACTIVE">Active</option>
-                    <option value="CLOSED">Closed</option>
-                  </select>
+                  <PremiumSelect
+                    id="fm-st"
+                    label="Status"
+                    options={LIABILITY_FORM_STATUS_OPTIONS}
+                    value={form.status}
+                    onChange={(v) => setForm((f) => ({ ...f, status: v }))}
+                  />
                 </div>
               ) : null}
             </form>
@@ -1632,37 +1676,25 @@ export default function PfLiabilitiesPage() {
                 />
               </div>
               <div>
-                <label className={labelCls} htmlFor="pf-pay-mode">
-                  Pay from
-                </label>
-                <select
+                <PremiumSelect
                   id="pf-pay-mode"
-                  className={inputCls}
+                  label="Pay from"
+                  options={PAY_FROM_OPTIONS}
                   value={payMode}
-                  onChange={(e) => setPayMode(e.target.value)}
-                >
-                  <option value="CASH">Cash</option>
-                  <option value="BANK">Bank account</option>
-                </select>
+                  onChange={setPayMode}
+                />
               </div>
               {payMode === 'BANK' ? (
                 <div>
-                  <label className={labelCls} htmlFor="pf-pay-acc">
-                    Account
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-pay-acc"
-                    className={inputCls}
+                    label="Account"
+                    searchable
+                    options={accountSelectOptions}
                     value={payAccountId}
-                    onChange={(e) => setPayAccountId(e.target.value)}
-                    required
-                  >
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.account_name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setPayAccountId}
+                    placeholder="Select account"
+                  />
                 </div>
               ) : null}
               <div>
@@ -1784,37 +1816,25 @@ export default function PfLiabilitiesPage() {
                   />
                 </div>
                 <div>
-                  <label className={labelCls} htmlFor="pf-emipay-mode">
-                    Pay from
-                  </label>
-                  <select
+                  <PremiumSelect
                     id="pf-emipay-mode"
-                    className={inputCls}
+                    label="Pay from"
+                    options={PAY_FROM_OPTIONS}
                     value={payEmiMode}
-                    onChange={(e) => setPayEmiMode(e.target.value)}
-                  >
-                    <option value="CASH">Cash</option>
-                    <option value="BANK">Bank account</option>
-                  </select>
+                    onChange={setPayEmiMode}
+                  />
                 </div>
                 {payEmiMode === 'BANK' ? (
                   <div>
-                    <label className={labelCls} htmlFor="pf-emipay-acc">
-                      Account
-                    </label>
-                    <select
+                    <PremiumSelect
                       id="pf-emipay-acc"
-                      className={inputCls}
+                      label="Account"
+                      searchable
+                      options={accountSelectOptions}
                       value={payEmiAccountId}
-                      onChange={(e) => setPayEmiAccountId(e.target.value)}
-                      required
-                    >
-                      {accounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.account_name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setPayEmiAccountId}
+                      placeholder="Select account"
+                    />
                   </div>
                 ) : null}
               </div>
@@ -1887,9 +1907,7 @@ export default function PfLiabilitiesPage() {
                   <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
                     EMI method:{' '}
                     <span className="font-semibold text-slate-600 dark:text-slate-300">
-                      {liabilityEmiMethodFromApi(viewRow.emi_interest_method) === 'reducing_balance'
-                        ? 'reducing balance'
-                        : 'flat'}
+                      {liabilityEmiMethodLabelFromApi(viewRow.emi_interest_method)}
                     </span>
                     {viewRow.term_months != null ? ` · ${viewRow.term_months} mo` : ''}
                     {viewRow.next_emi_due ? (

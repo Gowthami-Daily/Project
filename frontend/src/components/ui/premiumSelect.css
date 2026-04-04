@@ -1,0 +1,41 @@
+/**
+ * Personal Finance — Premium select (scoped under .pf-app).
+ * Trigger + panel also use Tailwind in JSX; this file holds shared motion + scrollbar.
+ */
+
+@keyframes pf-premium-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pf-app .pf-premium-select__panel--anim {
+  animation: pf-premium-dropdown-in 0.18s ease forwards;
+}
+
+.pf-app .pf-premium-select-options {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.pf-app .pf-premium-select-options::-webkit-scrollbar {
+  width: 7px;
+}
+
+.pf-app .pf-premium-select-options::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pf-app .pf-premium-select-options::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+}
+
+.pf-app .pf-premium-select-options::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
+}

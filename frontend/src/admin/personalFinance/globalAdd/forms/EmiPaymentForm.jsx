@@ -6,6 +6,7 @@ import {
   payLoanEmi,
   setPfToken,
 } from '../../api.js'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { formatInr } from '../../pfFormat.js'
@@ -139,58 +140,55 @@ export default function EmiPaymentForm({ formId, loans, liabilities, accounts, d
         </div>
         {kind === 'loan' ? (
           <div className="sm:col-span-2">
-            <label className={labelCls} htmlFor="pf-ge-emi-loan">
-              Loan
-            </label>
-            <select id="pf-ge-emi-loan" className={inputCls} value={loanId} onChange={(e) => setLoanId(e.target.value)} required>
-              <option value="">Select…</option>
-              {(loans || []).map((r) => (
-                <option key={r.id} value={String(r.id)}>
-                  {r.borrower_name} · {formatInr(r.outstanding_amount ?? r.loan_amount)}
-                </option>
-              ))}
-            </select>
+            <PremiumSelect
+              id="pf-ge-emi-loan"
+              label="Loan"
+              labelClassName={labelCls}
+              required
+              options={(loans || []).map((r) => ({
+                value: String(r.id),
+                label: `${r.borrower_name} · ${formatInr(r.outstanding_amount ?? r.loan_amount)}`,
+              }))}
+              value={loanId}
+              onChange={setLoanId}
+              placeholder="Select…"
+              searchable
+            />
           </div>
         ) : (
           <div className="sm:col-span-2">
-            <label className={labelCls} htmlFor="pf-ge-emi-liab">
-              Liability
-            </label>
-            <select
+            <PremiumSelect
               id="pf-ge-emi-liab"
-              className={inputCls}
-              value={liabilityId}
-              onChange={(e) => setLiabilityId(e.target.value)}
+              label="Liability"
+              labelClassName={labelCls}
               required
-            >
-              <option value="">Select…</option>
-              {borrowLiabilities.map((r) => (
-                <option key={r.id} value={String(r.id)}>
-                  {r.liability_name} · {formatInr(r.outstanding_amount)}
-                </option>
-              ))}
-            </select>
+              options={borrowLiabilities.map((r) => ({
+                value: String(r.id),
+                label: `${r.liability_name} · ${formatInr(r.outstanding_amount)}`,
+              }))}
+              value={liabilityId}
+              onChange={setLiabilityId}
+              placeholder="Select…"
+              searchable
+            />
           </div>
         )}
         <div className="sm:col-span-2">
-          <label className={labelCls} htmlFor="pf-ge-emi-num">
-            EMI # (unpaid)
-          </label>
-          <select
+          <PremiumSelect
             id="pf-ge-emi-num"
-            className={inputCls}
-            value={emiNumber}
-            onChange={(e) => setEmiNumber(e.target.value)}
+            label="EMI # (unpaid)"
+            labelClassName={labelCls}
             required
+            options={scheduleRows.map((s) => ({
+              value: String(s.emi_number),
+              label: `#${s.emi_number} · due ${s.due_date} · ${formatInr(s.emi_amount)}`,
+            }))}
+            value={emiNumber}
+            onChange={setEmiNumber}
+            placeholder={schedLoading ? 'Loading…' : 'Select…'}
             disabled={schedLoading}
-          >
-            <option value="">{schedLoading ? 'Loading…' : 'Select…'}</option>
-            {scheduleRows.map((s) => (
-              <option key={s.emi_number} value={String(s.emi_number)}>
-                #{s.emi_number} · due {s.due_date} · {formatInr(s.emi_amount)}
-              </option>
-            ))}
-          </select>
+            searchable={scheduleRows.length > 6}
+          />
         </div>
         <div>
           <label className={labelCls} htmlFor="pf-ge-emi-date">
@@ -205,24 +203,18 @@ export default function EmiPaymentForm({ formId, loans, liabilities, accounts, d
             onChange={(e) => setPaymentDate(e.target.value)}
           />
         </div>
-        <div>
-          <label className={labelCls} htmlFor="pf-ge-emi-acc">
-            Bank account (optional)
-          </label>
-          <select
-            id="pf-ge-emi-acc"
-            className={inputCls}
-            value={financeAccountId}
-            onChange={(e) => setFinanceAccountId(e.target.value)}
-          >
-            <option value="">— Default / cash —</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={String(a.id)}>
-                {a.account_name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <PremiumSelect
+          id="pf-ge-emi-acc"
+          label="Bank account (optional)"
+          labelClassName={labelCls}
+          options={[
+            { value: '', label: '— Default / cash —' },
+            ...accounts.map((a) => ({ value: String(a.id), label: a.account_name })),
+          ]}
+          value={financeAccountId}
+          onChange={setFinanceAccountId}
+          searchable={accounts.length > 6}
+        />
       </div>
       {submitting ? <p className="text-sm text-[var(--pf-text-muted)]">Saving…</p> : null}
     </form>

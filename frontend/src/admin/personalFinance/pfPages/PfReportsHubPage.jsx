@@ -40,6 +40,7 @@ import {
 } from '../api.js'
 import PfExportMenu from '../PfExportMenu.jsx'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+import { PremiumSelect } from '../../../components/ui/PremiumSelect.jsx'
 import {
   btnPrimary,
   btnSecondary,
@@ -184,7 +185,7 @@ function RatioGauge({ label, valuePct, goodMax = 100, helpKey }) {
       </p>
       <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
         <div
-          className="h-full rounded-full bg-sky-500 transition-all dark:bg-sky-400"
+          className="pf-motion-progress-fill h-full rounded-full bg-sky-500 dark:bg-sky-400"
           style={{ width: `${goodMax ? Math.min(100, width) : width}%` }}
         />
       </div>
@@ -509,7 +510,7 @@ export default function PfReportsHubPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-6">
+    <div className="w-full min-w-0 max-w-full space-y-6">
       <PageHeader
         title="Reports & analytics"
         description="Business-intelligence style analytics: a clear cashflow story (income, spend, EMI, savings), book-keeping trends (net worth, cards, loans), and drill-downs — scoped by your filters and compared to the prior window of equal length."
@@ -588,36 +589,26 @@ export default function PfReportsHubPage() {
               />
             </div>
             <div>
-              <label htmlFor="rep-acc" className={labelCls}>Account</label>
-              <select
+              <PremiumSelect
                 id="rep-acc"
-                className={inputCls}
+                label="Account"
+                labelClassName={labelCls}
+                options={[{ value: '', label: 'All accounts' }, ...accounts.map((a) => ({ value: String(a.id), label: a.account_name }))]}
                 value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-              >
-                <option value="">All accounts</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={String(a.id)}>
-                    {a.account_name}
-                  </option>
-                ))}
-              </select>
+                onChange={setAccountId}
+                searchable={accounts.length > 6}
+              />
             </div>
             <div>
-              <label htmlFor="rep-cat" className={labelCls}>Expense category</label>
-              <select
+              <PremiumSelect
                 id="rep-cat"
-                className={inputCls}
+                label="Expense category"
+                labelClassName={labelCls}
+                options={[{ value: '', label: 'All categories' }, ...categories.map((c) => ({ value: String(c.id), label: c.name }))]}
                 value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-              >
-                <option value="">All categories</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setCategoryId}
+                searchable={categories.length > 6}
+              />
             </div>
             <div>
               <label htmlFor="rep-person" className={labelCls}>Person</label>
@@ -630,21 +621,19 @@ export default function PfReportsHubPage() {
               />
             </div>
             <div>
-              <label htmlFor="rep-acctype" className={labelCls}>Expense account type</label>
-              <select
+              <PremiumSelect
                 id="rep-acctype"
-                className={inputCls}
+                label="Expense account type"
+                labelClassName={labelCls}
+                options={[
+                  { value: '', label: 'All types' },
+                  { value: 'UNLINKED', label: 'Unlinked (no account)' },
+                  ...PF_FINANCE_ACCOUNT_TYPES,
+                ]}
                 value={expenseAccountType}
-                onChange={(e) => setExpenseAccountType(e.target.value)}
-              >
-                <option value="">All types</option>
-                <option value="UNLINKED">Unlinked (no account)</option>
-                {PF_FINANCE_ACCOUNT_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setExpenseAccountType}
+                searchable
+              />
             </div>
             <div className="flex items-end sm:col-span-2 lg:col-span-3 xl:col-span-5">
               <button type="button" onClick={() => load()} disabled={loading} className={`${btnPrimary} w-full sm:w-auto`}>

@@ -1,5 +1,8 @@
 /* Personal Finance — Aether-aligned tokens + mobile shell (scoped under .pf-app) */
 .pf-app {
+  /* Responsive shell — padding matches Tailwind in PersonalFinanceShell */
+  --pf-page-pad-x: 0.75rem;
+  --pf-page-pad-y: 0.75rem;
   /* Light — Pure Alabaster */
   --pf-bg: #f9fafb;
   --pf-sidebar: rgba(255, 255, 255, 0.92);
@@ -30,6 +33,20 @@
   font-family: 'Inter', 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
   background-color: var(--pf-bg);
   color: var(--pf-text);
+}
+
+@media (min-width: 640px) {
+  .pf-app {
+    --pf-page-pad-x: 1rem;
+    --pf-page-pad-y: 1rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .pf-app {
+    --pf-page-pad-x: 1.5rem;
+    --pf-page-pad-y: 1.5rem;
+  }
 }
 
 /* Dark — Digital Obsidian */
@@ -215,17 +232,19 @@
   z-index: 70;
 }
 
-@media (min-width: 768px) {
+/* Mobile (≤640px): edge-to-edge sheet; tablet/desktop: centered dialog */
+@media (min-width: 641px) {
   .pf-app .pf-modal-overlay {
     align-items: center;
-    padding: 1rem;
+    padding: min(1.5rem, 4vw);
   }
 }
 
 .pf-app .pf-modal-surface {
   position: relative;
   width: 100%;
-  max-height: min(92dvh, 900px);
+  max-width: 100%;
+  max-height: min(92dvh, 100dvh);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--pf-modal-surface);
@@ -233,6 +252,13 @@
   border: 1px solid var(--pf-border);
   box-shadow: var(--pf-modal-shadow);
   border-radius: 14px 14px 0 0;
+}
+
+/* AppModal: fixed header/footer, scroll only in body */
+.pf-app .pf-modal-surface.pf-modal-surface--flex {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .pf-app .pf-modal-surface.pf-modal-surface--fit {
@@ -243,14 +269,40 @@
   animation: pf-sheet-up 0.32s cubic-bezier(0.32, 0.72, 0, 1) forwards;
 }
 
-@media (min-width: 768px) {
+@media (max-width: 640px) {
+  .pf-app .pf-modal-overlay {
+    align-items: stretch;
+  }
+
   .pf-app .pf-modal-surface {
-    border-radius: 14px;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    height: 100dvh;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
+  .pf-app .pf-modal-surface.pf-modal-surface--animate {
+    animation: pf-sheet-up 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  }
+}
+
+@media (min-width: 641px) {
+  .pf-app .pf-modal-surface {
+    max-height: min(92dvh, 56rem);
+    border-radius: 16px;
   }
 
   .pf-app .pf-modal-surface.pf-modal-surface--animate {
     animation: pf-modal-open 0.18s ease forwards;
   }
+}
+
+/* Auto-fit card grids (dashboards, hubs) — pair with Tailwind gap-* */
+.pf-app .pf-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17.5rem), 1fr));
 }
 
 /* Design-system glass modal panel (AppModal) */
@@ -264,12 +316,12 @@
 }
 
 .pf-app.dark .pf-ds-modal-glass {
-  background: rgba(20, 20, 20, 0.92) !important;
+  background: rgba(18, 23, 34, 0.97) !important;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
   border-radius: 16px !important;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5) !important;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55) !important;
 }
 
 /* Inputs inside modal panels — ensure darkest well in dark mode */

@@ -1,10 +1,21 @@
 import { useMemo, useState } from 'react'
 import { createFinanceExpense, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppDropdown, AppInput, AppTextarea } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { buildExpensePayWithGroups, parsePayWith } from '../pfPayWithHelpers.js'
 import { todayISODate } from '../pfToday.js'
+
+const PAYMENT_STATUS_OPTIONS = [
+  { value: 'PAID', label: 'Paid' },
+  { value: 'PENDING', label: 'Pending' },
+]
+
+const RECURRING_TYPE_OPTIONS = [
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'weekly', label: 'Weekly' },
+]
 
 export default function ExpenseForm({
   formId,
@@ -140,20 +151,14 @@ export default function ExpenseForm({
             />
           </div>
         </div>
-        <div>
-          <label className={labelCls} htmlFor="pf-ge-exp-paystat">
-            Payment status
-          </label>
-          <select
-            id="pf-ge-exp-paystat"
-            className={inputCls}
-            value={paymentStatus}
-            onChange={(e) => setPaymentStatus(e.target.value)}
-          >
-            <option value="PAID">Paid</option>
-            <option value="PENDING">Pending</option>
-          </select>
-        </div>
+        <PremiumSelect
+          id="pf-ge-exp-paystat"
+          label="Payment status"
+          labelClassName={labelCls}
+          options={PAYMENT_STATUS_OPTIONS}
+          value={paymentStatus}
+          onChange={setPaymentStatus}
+        />
         <div className="sm:col-span-2">
           <span className={labelCls}>Pay with</span>
           <div className="mt-2">
@@ -174,10 +179,12 @@ export default function ExpenseForm({
             Recurring
           </label>
           {isRecurring ? (
-            <select className={inputCls} value={recurringType} onChange={(e) => setRecurringType(e.target.value)}>
-              <option value="monthly">Monthly</option>
-              <option value="weekly">Weekly</option>
-            </select>
+            <PremiumSelect
+              options={RECURRING_TYPE_OPTIONS}
+              value={recurringType}
+              onChange={setRecurringType}
+              aria-label="Recurring frequency"
+            />
           ) : null}
         </div>
         <div className="sm:col-span-2">

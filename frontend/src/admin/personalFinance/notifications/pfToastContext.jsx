@@ -5,7 +5,7 @@ import {
   InformationCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/solid'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { loadPfAppPrefs } from '../pfSettingsPrefs.js'
@@ -87,6 +87,7 @@ function ToastCard({ toast, onDismiss }) {
   const { type, title, description, duration = 4200 } = toast
   const cfg = typeStyles[type] || typeStyles.neutral
   const Icon = cfg.icon
+  const reduceMotion = useReducedMotion()
   const closeTimer = useRef(null)
   const endAt = useRef(0)
   const paused = useRef(false)
@@ -129,21 +130,27 @@ function ToastCard({ toast, onDismiss }) {
 
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, y: 14 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 10 }}
-      transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
+      layout={!reduceMotion}
+      initial={reduceMotion ? false : { opacity: 0, x: 28, y: -8 }}
+      animate={{ opacity: 1, x: 0, y: 0 }}
+      exit={
+        reduceMotion
+          ? { opacity: 0, transition: { duration: 0 } }
+          : { opacity: 0, x: 16, y: -4, transition: { duration: 0.15, ease: [0.4, 0, 1, 1] } }
+      }
+      transition={
+        reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.4, 0, 0.2, 1] }
+      }
       role="status"
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
-      className={`pointer-events-auto flex max-w-[min(100vw-2rem,22rem)] gap-3 rounded-xl border px-3 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.18)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.45)] ${cfg.border} ${cfg.bg} backdrop-blur-md`}
+      className={`pointer-events-auto flex max-w-[min(100vw-2rem,22rem)] gap-3 rounded-[14px] border px-4 py-4 shadow-[0_12px_40px_rgba(0,0,0,0.18)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.45)] ${cfg.border} ${cfg.bg} backdrop-blur-md`}
     >
       <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${cfg.iconCls}`} aria-hidden />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold leading-snug text-[var(--pf-text)]">{title}</p>
+        <p className="text-[13px] font-semibold leading-snug text-[var(--pf-text)]">{title}</p>
         {description ? (
-          <p className="mt-0.5 text-xs leading-relaxed text-[var(--pf-text-muted)]">{description}</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-[var(--pf-text-muted)]">{description}</p>
         ) : null}
       </div>
       <button
@@ -164,7 +171,7 @@ function ToastViewport({ toasts, onDismiss }) {
 
   return createPortal(
     <div
-      className="pointer-events-none fixed z-[90] flex flex-col items-end gap-3 max-md:bottom-[calc(6.5rem+env(safe-area-inset-bottom))] max-md:right-3 md:bottom-24 md:right-6"
+      className="pointer-events-none fixed right-3 top-[calc(4.25rem+env(safe-area-inset-top))] z-[90] flex max-h-[min(50dvh,calc(100dvh-6rem))] flex-col items-end gap-3 overflow-y-auto overscroll-contain md:right-6 md:top-20 max-md:max-h-[min(40dvh,calc(100dvh-10rem))]"
       aria-live="polite"
     >
       <AnimatePresence mode="popLayout">

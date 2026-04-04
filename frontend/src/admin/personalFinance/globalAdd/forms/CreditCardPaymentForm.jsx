@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { payCreditCardBill, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppInput } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { formatInr } from '../../pfFormat.js'
@@ -27,6 +28,7 @@ export default function CreditCardPaymentForm({ formId, accounts, creditCards, b
   const [payRef, setPayRef] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const toast = usePfToast()
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -96,45 +98,36 @@ export default function CreditCardPaymentForm({ formId, accounts, creditCards, b
           />
         </div>
         <div className="sm:col-span-2">
-          <label className={labelCls} htmlFor="pf-ge-ccpay-bill">
-            Bill
-          </label>
-          <select
+          <PremiumSelect
             id="pf-ge-ccpay-bill"
-            className={inputCls}
+            label="Bill"
+            labelClassName={labelCls}
             required
-            value={payBillId}
-            onChange={(e) => setPayBillId(e.target.value)}
-          >
-            <option value="">Select…</option>
-            {openBills.map((b) => {
+            options={openBills.map((b) => {
               const rem = b.remaining != null ? b.remaining : Number(b.total_amount) - Number(b.amount_paid || 0)
-              return (
-                <option key={b.id} value={String(b.id)}>
-                  #{b.id} · {cardName(b.card_id)} · due {b.due_date} · rem {formatInr(rem)}
-                </option>
-              )
+              return {
+                value: String(b.id),
+                label: `#${b.id} · ${cardName(b.card_id)} · due ${b.due_date} · rem ${formatInr(rem)}`,
+              }
             })}
-          </select>
+            value={payBillId}
+            onChange={setPayBillId}
+            placeholder="Select…"
+            searchable={openBills.length > 6}
+          />
         </div>
         <div className="sm:col-span-2">
-          <label className={labelCls} htmlFor="pf-ge-ccpay-acc">
-            From account
-          </label>
-          <select
+          <PremiumSelect
             id="pf-ge-ccpay-acc"
-            className={inputCls}
+            label="From account"
+            labelClassName={labelCls}
             required
+            options={accounts.map((a) => ({ value: String(a.id), label: a.account_name }))}
             value={payFromAcc}
-            onChange={(e) => setPayFromAcc(e.target.value)}
-          >
-            <option value="">Select…</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={String(a.id)}>
-                {a.account_name}
-              </option>
-            ))}
-          </select>
+            onChange={setPayFromAcc}
+            placeholder="Select…"
+            searchable={accounts.length > 6}
+          />
         </div>
         <div className="sm:col-span-2">
           <AppInput id="pf-ge-ccpay-ref" label="Reference (optional)" value={payRef} onChange={(e) => setPayRef(e.target.value)} />

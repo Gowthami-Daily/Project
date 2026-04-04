@@ -1,9 +1,16 @@
 import { useMemo, useState } from 'react'
 import { createCreditCardStandaloneTransaction, setPfToken } from '../../api.js'
 import { usePfToast } from '../../notifications/pfToastContext.jsx'
+import { PremiumSelect } from '../../../../components/ui/PremiumSelect.jsx'
 import { AppDropdown, AppInput, AppTextarea } from '../../pfDesignSystem/index.js'
 import { inputCls, labelCls } from '../../pfFormStyles.js'
 import { todayISODate } from '../pfToday.js'
+
+const TX_TYPE_OPTIONS = [
+  { value: 'swipe', label: 'Swipe / purchase' },
+  { value: 'refund', label: 'Refund' },
+  { value: 'fee', label: 'Fee' },
+]
 
 export default function CreditCardSwipeForm({
   formId,
@@ -103,34 +110,26 @@ export default function CreditCardSwipeForm({
           />
         </div>
         <div className="sm:col-span-2">
-          <label className={labelCls} htmlFor="pf-ge-ccsw-card">
-            Card
-          </label>
-          <select
+          <PremiumSelect
             id="pf-ge-ccsw-card"
-            className={inputCls}
+            label="Card"
+            labelClassName={labelCls}
             required
+            options={creditCards.map((c) => ({ value: String(c.id), label: c.card_name }))}
             value={txCardId}
-            onChange={(e) => setTxCardId(e.target.value)}
-          >
-            <option value="">Select…</option>
-            {creditCards.map((c) => (
-              <option key={c.id} value={String(c.id)}>
-                {c.card_name}
-              </option>
-            ))}
-          </select>
+            onChange={setTxCardId}
+            placeholder="Select…"
+            searchable={creditCards.length > 6}
+          />
         </div>
-        <div>
-          <label className={labelCls} htmlFor="pf-ge-ccsw-type">
-            Type
-          </label>
-          <select id="pf-ge-ccsw-type" className={inputCls} value={txType} onChange={(e) => setTxType(e.target.value)}>
-            <option value="swipe">Swipe / purchase</option>
-            <option value="refund">Refund</option>
-            <option value="fee">Fee</option>
-          </select>
-        </div>
+        <PremiumSelect
+          id="pf-ge-ccsw-type"
+          label="Type"
+          labelClassName={labelCls}
+          options={TX_TYPE_OPTIONS}
+          value={txType}
+          onChange={setTxType}
+        />
         <div className="sm:col-span-2">
           <span className={labelCls}>Category</span>
           <div className="mt-2">
