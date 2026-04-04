@@ -1,0 +1,149 @@
+/* Personal Finance login — subtle motion (Apple/Stripe-style, not flashy) */
+
+.pf-login-bg-radial {
+  background: radial-gradient(circle at 20% 20%, #0b1b3d 0%, #071022 45%, #020617 72%, #010409 100%);
+}
+
+.pf-login-card-back-glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(120vw, 520px);
+  height: min(120vw, 520px);
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.22), rgba(99, 102, 241, 0.08) 42%, transparent 68%);
+  filter: blur(48px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.pf-login-stars-overlay {
+  pointer-events: none;
+  background: radial-gradient(ellipse 80% 50% at 50% 100%, rgba(15, 23, 42, 0.5), transparent 70%),
+    linear-gradient(180deg, rgba(3, 7, 18, 0.2) 0%, transparent 35%, rgba(2, 6, 23, 0.55) 100%);
+  backdrop-filter: blur(0.5px);
+}
+
+.pf-login-card-glow {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 24px 80px -20px rgba(0, 0, 0, 0.65),
+    0 0 120px -40px rgba(56, 189, 248, 0.12);
+}
+
+.pf-login-submit-gradient {
+  background: linear-gradient(105deg, #0ea5e9 0%, #6366f1 45%, #7c3aed 90%, #0ea5e9 180%);
+  background-size: 220% 100%;
+  animation: pf-login-gradient-shift 7s ease-in-out infinite;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    filter 0.15s ease,
+    opacity 0.15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-login-submit-gradient {
+    animation: none;
+    background: linear-gradient(105deg, #0ea5e9, #6366f1, #7c3aed);
+    background-size: 100% 100%;
+  }
+}
+
+.pf-login-submit-gradient:disabled {
+  animation: none;
+  background: linear-gradient(105deg, #0ea5e9, #6366f1, #7c3aed);
+  background-size: 100% 100%;
+}
+
+.pf-login-submit-gradient:not(:disabled):hover {
+  box-shadow:
+    0 0 28px rgba(56, 189, 248, 0.32),
+    0 10px 36px rgba(99, 102, 241, 0.18);
+  transform: translateY(-1px);
+}
+
+.pf-login-submit-gradient:not(:disabled):active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-login-submit-gradient:not(:disabled):hover {
+    transform: none;
+  }
+}
+
+@keyframes pf-login-gradient-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.pf-login-input {
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.pf-login-input:focus {
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow:
+    0 0 0 3px rgba(56, 189, 248, 0.12),
+    0 0 24px -6px rgba(56, 189, 248, 0.25);
+}
+
+.pf-login-input:disabled {
+  opacity: 0.65;
+}
+
+/* Remember-me switch */
+.pf-login-switch {
+  position: relative;
+  display: inline-flex;
+  height: 1.35rem;
+  width: 2.35rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.pf-login-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+}
+
+.pf-login-switch[aria-checked='true'] {
+  background: rgba(14, 165, 233, 0.35);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.pf-login-switch-thumb {
+  pointer-events: none;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  height: calc(100% - 4px);
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.pf-login-switch[aria-checked='true'] .pf-login-switch-thumb {
+  transform: translateX(calc(2.35rem - 100% - 8px));
+}
+
+.pf-login-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

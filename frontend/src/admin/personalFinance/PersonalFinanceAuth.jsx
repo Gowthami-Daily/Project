@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
-import { EyeIcon, EyeSlashIcon, ShieldCheckIcon } from '@heroicons/react/24/outline'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import RiverLogo from '../RiverLogo.jsx'
-import { loginPf, setPfToken } from './api.js'
+import { fetchPfMe, loginPf, setPfToken } from './api.js'
+import LoginSuccessAnimation from './LoginSuccessAnimation.jsx'
+import { consumeFirstLoginConfettiForToday } from './pfLoginCelebrationStorage.js'
 import { usePfAuth } from './PfAuthContext.jsx'
+import LoginShootingStars from './LoginShootingStars.jsx'
+import './loginAuthMotion.css'
 
 /** Seeded first user when DB is empty (see ``seed_auth.py``). */
 export const DEFAULT_SUPER_ADMIN_EMAIL = 'admin@gowthami.local'
@@ -17,18 +21,19 @@ const LOGIN_KIND = {
 const FORM_MAX_W = 'max-w-[420px]'
 
 const inputCls =
-  'h-11 w-full rounded-[11px] border border-white/10 bg-white/[0.06] px-3.5 text-[15px] text-white placeholder:text-slate-500 outline-none transition focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/25'
+  'pf-login-input h-11 w-full rounded-[11px] border border-white/10 bg-white/[0.06] px-3.5 text-[15px] text-white placeholder:text-slate-500 outline-none transition-colors'
 
 const labelCls = 'mb-1.5 block text-[13px] font-semibold text-slate-300'
 
-const features = [
-  'Track expenses & income',
-  'Manage loans & EMIs',
-  'Monitor credit cards',
-  'Track investments & assets',
-  'See your net worth',
-  'Generate financial reports',
-]
+function shortDisplayNameFromUser(u, emailFallback) {
+  const raw = (u?.name || '').trim()
+  if (raw) {
+    const parts = raw.split(/\s+/).filter(Boolean)
+    return parts[0] || 'there'
+  }
+  const local = (emailFallback || '').split('@')[0]?.trim()
+  return local || 'there'
+}
 
 function LoginToast({ message, onDismiss }) {
   useEffect(() => {
@@ -61,6 +66,7 @@ function LoginToast({ message, onDismiss }) {
 
 export default function PersonalFinanceAuth() {
   const navigate = useNavigate()
+  const reduceMotion = useReducedMotion()
   const { refreshUser, invalidateSession } = usePfAuth()
   const [loginKind, setLoginKind] = useState(LOGIN_KIND.pf)
   const [loginEmail, setLoginEmail] = useState(() => {
@@ -87,8 +93,25 @@ export default function PersonalFinanceAuth() {
   const [loading, setLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState(null)
   const [infoModal, setInfoModal] = useState(null)
+  const [cardShake, setCardShake] = useState(false)
+  const [celebration, setCelebration] = useState(null)
 
   const dismissToast = useCallback(() => setToastMessage(null), [])
+
+  const triggerAuthShake = useCallback(() => {
+    setCardShake(true)
+    window.setTimeout(() => setCardShake(false), 480)
+  }, [])
+
+  const finishLoginCelebration = useCallback(async () => {
+    setCelebration(null)
+    try {
+      await refreshUser()
+    } catch {
+      /* session restore can retry from shell */
+    }
+    navigate('/personal-finance', { replace: true })
+  }, [navigate, refreshUser])
 
   function selectKind(kind) {
     setLoginKind(kind)
@@ -135,7 +158,7 @@ export default function PersonalFinanceAuth() {
       } catch {
         /* ignore */
       }
-      const u = await refreshUser()
+      const u = await fetchPfMe()
 
       if (loginKind === LOGIN_KIND.platform) {
         if (String(u?.role || '').toUpperCase() !== 'SUPER_ADMIN') {
@@ -144,14 +167,24 @@ export default function PersonalFinanceAuth() {
             'This account is not a platform super admin. Use “Personal finance” or ask an administrator.'
           setLoginError(msg)
           setToastMessage(msg)
+          triggerAuthShake()
           return
         }
+        await refreshUser()
         navigate('/super-admin', { replace: true })
+        return
       }
+
+      const firstLoginToday = consumeFirstLoginConfettiForToday()
+      setCelebration({
+        displayName: shortDisplayNameFromUser(u, loginEmail.trim()),
+        playConfetti: firstLoginToday && !reduceMotion,
+      })
     } catch (err) {
       const msg = err.message || 'Login failed'
       setLoginError(msg)
       setToastMessage(msg)
+      triggerAuthShake()
     } finally {
       setLoading(false)
     }
@@ -165,16 +198,29 @@ export default function PersonalFinanceAuth() {
     }
   }
 
+  const starSpeedBoost = loading || !!celebration
+
   return (
-    <div className="relative min-h-[100dvh] overflow-hidden bg-slate-950 text-slate-100">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_100%_80%_at_0%_0%,rgba(56,189,248,0.14),transparent)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_100%_100%,rgba(99,102,241,0.12),transparent)]" />
+    <div className="relative min-h-[100dvh] overflow-hidden text-slate-100">
+      <div className="pf-login-bg-radial pointer-events-none absolute inset-0 z-0" />
+      <LoginShootingStars speedMultiplier={starSpeedBoost ? 2.5 : 1} reducedMotion={!!reduceMotion} />
+      <div className="pf-login-stars-overlay absolute inset-0 z-[2]" />
+      <div className="pointer-events-none absolute inset-0 z-[2] bg-[radial-gradient(ellipse_90%_70%_at_100%_0%,rgba(99,102,241,0.08),transparent)]" />
 
       <AnimatePresence>
         {toastMessage ? (
           <LoginToast key={toastMessage} message={toastMessage} onDismiss={dismissToast} />
         ) : null}
       </AnimatePresence>
+
+      {celebration ? (
+        <LoginSuccessAnimation
+          key="pf-login-celebration"
+          displayName={celebration.displayName}
+          playConfetti={celebration.playConfetti}
+          onDone={finishLoginCelebration}
+        />
+      ) : null}
 
       {infoModal ? (
         <div
@@ -199,100 +245,90 @@ export default function PersonalFinanceAuth() {
         </div>
       ) : null}
 
-      <div className="relative z-10 flex min-h-[100dvh] flex-col lg:flex-row">
-        {/* Left — branding */}
-        <aside className="relative flex flex-col justify-between border-b border-white/10 bg-gradient-to-br from-slate-900/95 via-indigo-950/40 to-slate-950 px-6 py-8 sm:px-10 sm:py-10 lg:w-[min(520px,44vw)] lg:border-b-0 lg:border-r lg:py-14">
-          <div className="absolute inset-0 opacity-[0.07] [background-image:linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:32px_32px]" />
+      <div className="relative z-10 flex min-h-[100dvh] flex-col items-center justify-center px-4 py-12 sm:px-6 sm:py-16">
+        <Link
+          to="/"
+          className="absolute left-4 top-4 text-sm font-semibold text-slate-500 transition-colors duration-150 hover:text-white sm:left-6 sm:top-6"
+        >
+          ← Back to home
+        </Link>
 
-          <div className="relative">
-            <div className="flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/25">
-                <RiverLogo className="h-6 w-6 text-white" />
-              </span>
-              <div>
-                <p className="text-lg font-bold tracking-tight text-white">Personal Finance OS</p>
-                <p className="text-sm font-medium text-sky-300/90">Track. Analyze. Grow.</p>
-              </div>
+        <div className={`relative w-full ${FORM_MAX_W}`}>
+          <div className="pf-login-card-back-glow" aria-hidden />
+
+          <motion.div
+            className="relative z-[1] mb-8 text-center"
+            initial={reduceMotion ? false : { opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/30">
+              <RiverLogo className="h-7 w-7 text-white" />
             </div>
+            <h1 className="mt-4 text-xl font-bold tracking-tight text-white sm:text-2xl">Personal Finance OS</h1>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-400/90">Track · Analyze · Grow</p>
+            <p className="mx-auto mt-4 max-w-sm text-sm text-slate-400">
+              {loginKind === LOGIN_KIND.pf
+                ? 'Sign in to your dashboard'
+                : 'Platform administration — super admin only'}
+            </p>
+          </motion.div>
 
-            <ul className="mt-6 space-y-2 text-xs leading-relaxed text-slate-400 sm:mt-8 sm:space-y-2.5 sm:text-sm">
-              {features.map((line) => (
-                <li key={line} className="flex gap-2">
-                  <span className="mt-0.5 text-sky-400/80" aria-hidden>
-                    •
-                  </span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
-
-            <div className="mt-8 flex items-start gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 backdrop-blur-md sm:mt-10">
-              <ShieldCheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400/90" aria-hidden />
-              <p className="text-xs leading-relaxed text-slate-400">
-                Your financial data is private and secure. Sign in with credentials issued by your administrator.
-              </p>
-            </div>
-
-            {import.meta.env.DEV ? (
-              <p className="mt-6 rounded-xl border border-amber-500/20 bg-amber-950/30 p-3 text-[11px] leading-relaxed text-amber-100/90">
-                <span className="font-bold text-amber-200">Dev seed:</span>{' '}
-                <code className="rounded bg-black/30 px-1">{DEFAULT_SUPER_ADMIN_EMAIL}</code> /{' '}
-                <code className="rounded bg-black/30 px-1">ChangeMe!Admin123</code>
-                <span className="mt-1 block text-amber-200/70">Platform tab pre-fills this email.</span>
-              </p>
-            ) : null}
-          </div>
-
-          <div className="relative mt-8 lg:mt-0">
-            <Link
-              to="/"
-              className="inline-flex items-center gap-1 text-sm font-semibold text-slate-400 transition hover:text-white"
+            <motion.div
+              className="relative z-[1] mb-6 flex rounded-[11px] border border-white/10 bg-white/[0.04] p-1 backdrop-blur-md"
+              initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.38, delay: reduceMotion ? 0 : 0.06, ease: [0.22, 1, 0.36, 1] }}
             >
-              ← Back to home
-            </Link>
-          </div>
-        </aside>
-
-        {/* Right — form */}
-        <div className="flex flex-1 flex-col items-center justify-center px-4 py-10 sm:px-8 lg:py-14">
-          <div className={`w-full ${FORM_MAX_W}`}>
-            <div className="mb-8 lg:mb-10">
-              <h1 className="text-2xl font-bold tracking-tight text-white sm:text-[1.65rem]">Welcome back</h1>
-              <p className="mt-2 text-sm text-slate-400">
-                {loginKind === LOGIN_KIND.pf
-                  ? 'Login to your Personal Finance dashboard'
-                  : 'Platform administration — super admin only'}
-              </p>
-            </div>
-
-            <div className="mb-6 flex rounded-[11px] border border-white/10 bg-white/[0.04] p-1 backdrop-blur-md">
+              <motion.div
+                className="absolute bottom-1 top-1 z-0 w-[calc(50%-4px)] rounded-[9px] bg-white/15 shadow-sm"
+                initial={false}
+                animate={{
+                  left: loginKind === LOGIN_KIND.pf ? 4 : 'calc(50% + 2px)',
+                }}
+                transition={
+                  reduceMotion
+                    ? { duration: 0.15 }
+                    : { type: 'spring', stiffness: 420, damping: 34 }
+                }
+              />
               <button
                 type="button"
+                disabled={loading || !!celebration}
                 onClick={() => selectKind(LOGIN_KIND.pf)}
-                className={`flex-1 rounded-[9px] py-2 text-xs font-bold transition sm:text-sm ${
-                  loginKind === LOGIN_KIND.pf
-                    ? 'bg-white/15 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-300'
+                className={`relative z-10 flex-1 rounded-[9px] py-2 text-xs font-bold transition-colors duration-150 sm:text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+                  loginKind === LOGIN_KIND.pf ? 'text-white' : 'text-slate-500 hover:text-slate-300'
                 }`}
               >
                 Personal finance
               </button>
               <button
                 type="button"
+                disabled={loading || !!celebration}
                 onClick={() => selectKind(LOGIN_KIND.platform)}
-                className={`flex-1 rounded-[9px] py-2 text-xs font-bold transition sm:text-sm ${
-                  loginKind === LOGIN_KIND.platform
-                    ? 'bg-white/15 text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-300'
+                className={`relative z-10 flex-1 rounded-[9px] py-2 text-xs font-bold transition-colors duration-150 sm:text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
+                  loginKind === LOGIN_KIND.platform ? 'text-white' : 'text-slate-500 hover:text-slate-300'
                 }`}
               >
                 Platform admin
               </button>
-            </div>
+            </motion.div>
 
             <motion.div
-              initial={false}
-              className="rounded-2xl border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-8"
+              initial={reduceMotion ? false : { opacity: 0, y: 22, scale: 0.99 }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                scale: 1,
+                x: cardShake && !reduceMotion ? [0, -5, 5, -3, 3, 0] : 0,
+              }}
+              transition={{
+                opacity: { duration: reduceMotion ? 0 : 0.45, delay: reduceMotion ? 0 : 0.1, ease: [0.22, 1, 0.36, 1] },
+                y: { duration: reduceMotion ? 0 : 0.4, delay: reduceMotion ? 0 : 0.1, ease: [0.22, 1, 0.36, 1] },
+                scale: { duration: reduceMotion ? 0 : 0.4, delay: reduceMotion ? 0 : 0.1, ease: [0.22, 1, 0.36, 1] },
+                x: { duration: reduceMotion ? 0 : 0.38, ease: 'easeOut' },
+              }}
+              className="relative z-[1] pf-login-card-glow rounded-2xl border border-white/10 bg-[rgba(18,23,34,0.55)] p-6 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-8"
             >
               <form onSubmit={handleLogin} className="space-y-5" noValidate>
                 <div>
@@ -316,7 +352,7 @@ export default function PersonalFinanceAuth() {
                     }}
                     className={`${inputCls} ${fieldErrors.email ? 'border-red-500/40 focus:ring-red-500/20' : ''}`}
                     placeholder="you@example.com"
-                    disabled={loading}
+                    disabled={loading || !!celebration}
                     aria-invalid={!!fieldErrors.email}
                     aria-describedby={fieldErrors.email ? 'pf-email-err' : undefined}
                   />
@@ -356,7 +392,7 @@ export default function PersonalFinanceAuth() {
                       }}
                       className={`${inputCls} pr-12 ${fieldErrors.password ? 'border-red-500/40 focus:ring-red-500/20' : ''}`}
                       placeholder="••••••••"
-                      disabled={loading}
+                      disabled={loading || !!celebration}
                       aria-invalid={!!fieldErrors.password}
                       aria-describedby={
                         [fieldErrors.password ? 'pf-password-err' : null, passwordFocused && capsLockOn ? 'pf-caps' : null]
@@ -368,10 +404,18 @@ export default function PersonalFinanceAuth() {
                       type="button"
                       tabIndex={-1}
                       onClick={() => setShowPassword((s) => !s)}
-                      className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/10 hover:text-white"
+                      className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition-colors duration-150 hover:bg-white/10 hover:text-white"
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
-                      {showPassword ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
+                      <motion.span
+                        key={showPassword ? 'hide' : 'show'}
+                        initial={{ opacity: 0.6, scale: 0.92 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.18 }}
+                        className="inline-flex"
+                      >
+                        {showPassword ? <EyeSlashIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
+                      </motion.span>
                     </button>
                   </div>
                   {passwordFocused && capsLockOn ? (
@@ -386,16 +430,25 @@ export default function PersonalFinanceAuth() {
                   ) : null}
                 </div>
 
-                <label className="flex cursor-pointer items-center gap-2.5 select-none">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(ev) => setRememberMe(ev.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 bg-white/10 text-sky-500 focus:ring-sky-500/40"
-                    disabled={loading}
-                  />
-                  <span className="text-[13px] font-medium text-slate-400">Remember me on this device</span>
-                </label>
+                <div className="flex items-center gap-3 select-none">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={rememberMe}
+                    onClick={() => setRememberMe((v) => !v)}
+                    className="pf-login-switch"
+                    disabled={loading || !!celebration}
+                  >
+                    <span className="pf-login-switch-thumb" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="text-left text-[13px] font-medium text-slate-400 transition-colors duration-150 hover:text-slate-300"
+                    onClick={() => !(loading || celebration) && setRememberMe((v) => !v)}
+                  >
+                    Remember me on this device
+                  </button>
+                </div>
 
                 {loginError && !fieldErrors.email && !fieldErrors.password ? (
                   <p className="text-[13px] font-medium text-red-400" role="alert">
@@ -403,10 +456,12 @@ export default function PersonalFinanceAuth() {
                   </p>
                 ) : null}
 
-                <button
+                <motion.button
                   type="submit"
-                  disabled={loading}
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-[11px] bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-600 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={loading || !!celebration}
+                  whileTap={reduceMotion || loading || celebration ? undefined : { scale: 0.985 }}
+                  transition={{ type: 'spring', stiffness: 520, damping: 28 }}
+                  className="pf-login-submit-gradient flex h-11 w-full items-center justify-center gap-2 rounded-[11px] text-sm font-bold text-white shadow-lg shadow-indigo-500/25 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? (
                     <>
@@ -421,7 +476,7 @@ export default function PersonalFinanceAuth() {
                   ) : (
                     'Login to Dashboard'
                   )}
-                </button>
+                </motion.button>
               </form>
 
               <div className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-6 text-center text-[13px]">
@@ -454,7 +509,15 @@ export default function PersonalFinanceAuth() {
                 </p>
               </div>
             </motion.div>
-          </div>
+
+          {import.meta.env.DEV ? (
+            <p className="relative z-[1] mt-6 rounded-xl border border-amber-500/25 bg-amber-950/25 p-3 text-center text-[11px] leading-relaxed text-amber-100/90">
+              <span className="font-bold text-amber-200">Dev seed:</span>{' '}
+              <code className="rounded bg-black/35 px-1">{DEFAULT_SUPER_ADMIN_EMAIL}</code> /{' '}
+              <code className="rounded bg-black/35 px-1">ChangeMe!Admin123</code>
+              <span className="mt-1 block text-amber-200/70">Platform tab pre-fills this email.</span>
+            </p>
+          ) : null}
         </div>
       </div>
     </div>

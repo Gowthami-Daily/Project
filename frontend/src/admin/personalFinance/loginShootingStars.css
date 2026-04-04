@@ -1,0 +1,60 @@
+/* Diagonal “shooting” ✨ layer — subtle idle, faster when --pf-stars-speed > 1 */
+
+.pf-shooting-stars {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+  --pf-stars-speed: 1;
+}
+
+.pf-shooting-star {
+  position: absolute;
+  color: rgba(248, 250, 252, 0.92);
+  opacity: 0;
+  text-shadow:
+    0 0 10px rgba(125, 211, 252, 0.45),
+    0 0 22px rgba(99, 102, 241, 0.2);
+  will-change: transform, opacity;
+  animation-name: pf-shooting-star-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  user-select: none;
+}
+
+.pf-shooting-star--dot {
+  width: 0.22rem;
+  height: 0.22rem;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #e0f2fe 0%, #93c5fd 55%, transparent 70%);
+  box-shadow: 0 0 12px rgba(147, 197, 253, 0.55);
+  padding: 0;
+  line-height: 0;
+  font-size: 0 !important;
+}
+
+@keyframes pf-shooting-star-fall {
+  0% {
+    transform: translate3d(0, -5%, 0) rotate(-14deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: var(--pf-star-peak-op, 0.78);
+  }
+  78% {
+    opacity: var(--pf-star-mid-op, 0.55);
+  }
+  100% {
+    transform: translate3d(calc(-42vw - 80px), 115vh, 0) rotate(18deg);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-shooting-stars--reduced .pf-shooting-star {
+    animation: none;
+    opacity: 0.14;
+    transform: translate3d(0, 0, 0) rotate(-8deg);
+  }
+}

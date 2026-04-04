@@ -1,13 +1,19 @@
 import {
+  ArrowDownCircleIcon,
   BanknotesIcon,
+  ChartBarIcon,
   ChartPieIcon,
+  DocumentTextIcon,
   PencilSquareIcon,
+  PlusCircleIcon,
   PlusIcon,
   TrashIcon,
 } from '@heroicons/react/24/solid'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Cell,
   Legend,
@@ -23,6 +29,7 @@ import {
 import {
   createFinanceInvestment,
   deleteFinanceInvestment,
+  getInvestmentMonthlyFlow,
   listFinanceInvestments,
   pfFetchBlob,
   setPfToken,
@@ -51,6 +58,11 @@ import {
 import { formatInr } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
+import {
+  InvestmentAddMoneyModal,
+  InvestmentStatementModal,
+  InvestmentWithdrawModal,
+} from './PfInvestmentActionModals.jsx'
 
 const INVESTMENT_TYPE_OPTIONS = [
   { value: 'MUTUAL_FUND', label: 'Mutual funds' },
@@ -87,6 +99,10 @@ function emptyFormState() {
     investedAmount: '',
     currentValue: '',
     sipMonthlyAmount: '',
+    sipStartDate: '',
+    sipDayOfMonth: '',
+    sipFrequency: 'MONTHLY',
+    sipAutoCreate: false,
     investmentDate: todayISODate(),
     platform: '',
     notes: '',
@@ -154,10 +170,24 @@ function investmentCardShell(gain) {
   return 'border-[var(--pf-border)] bg-white/[0.03] shadow-[var(--pf-shadow)] dark:bg-white/[0.03]'
 }
 
-function HoldingCard({ r, typeLabel, onEdit, onDelete, deletingId }) {
+function HoldingCard({
+  r,
+  typeLabel,
+  onEdit,
+  onDelete,
+  onAddMoney,
+  onWithdraw,
+  onStatement,
+  deletingId,
+}) {
   const g = gainAmount(r)
   const pct = returnPct(r)
   const gainCls = g > 0.01 ? 'text-emerald-600 dark:text-emerald-400' : g < -0.01 ? 'text-red-600 dark:text-red-400' : 'text-[var(--pf-text-muted)]'
+  const inv = Number(r.invested_amount) || 0
+  const cur = effectiveCurrent(r)
+  const t = inv + cur
+  const sipAmt = r.sip_monthly_amount != null && r.sip_monthly_amount !== '' ? Number(r.sip_monthly_amount) : 0
+  const sipActive = (Number.isFinite(sipAmt) && sipAmt > 0) || Boolean(r.sip_auto_create)
 
   return (
     <div
@@ -165,8 +195,20 @@ function HoldingCard({ r, typeLabel, onEdit, onDelete, deletingId }) {
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-base font-bold text-[var(--pf-text)]">{r.name || '—'}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-bold text-[var(--pf-text)]">{r.name || '—'}</h3>
+            {sipActive ? (
+              <span className="rounded-md bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-300">
+                SIP
+              </span>
+            ) : null}
+          </div>
           <p className="mt-0.5 text-xs text-[var(--pf-text-muted)]">{typeLabel(r.investment_type)}</p>
+          {r.last_transaction_date ? (
+            <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">
+              Last activity {formatDisplayDate(r.last_transaction_date)}
+            </p>
+          ) : null}
         </div>
         {r.platform ? (
           <span className="shrink-0 rounded-full border border-[var(--pf-border)] bg-white/10 px-2.5 py-0.5 text-[10px] font-semibold text-[var(--pf-text-muted)]">
@@ -192,22 +234,61 @@ function HoldingCard({ r, typeLabel, onEdit, onDelete, deletingId }) {
           </dd>
         </div>
       </dl>
-      <div className="mt-5 flex flex-wrap gap-2 border-t border-[var(--pf-border)]/60 pt-4">
+      {t > 0 ? (
+        <div
+          className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10"
+          title="Invested vs current (segment widths)"
+        >
+          <div className="h-full bg-sky-500/85" style={{ width: `${(inv / t) * 100}%` }} />
+          <div
+            className={`h-full ${g >= 0 ? 'bg-emerald-500/90' : 'bg-red-500/85'}`}
+            style={{ width: `${(cur / t) * 100}%` }}
+          />
+        </div>
+      ) : null}
+      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-[var(--pf-border)]/60 pt-4">
+        <button
+          type="button"
+          onClick={() => onAddMoney(r)}
+          className={`${btnPrimary} inline-flex items-center justify-center gap-1 px-2 py-2 text-xs`}
+        >
+          <PlusCircleIcon className="h-4 w-4 shrink-0" />
+          Add money
+        </button>
+        <button
+          type="button"
+          onClick={() => onWithdraw(r)}
+          className={`${btnSecondary} inline-flex items-center justify-center gap-1 px-2 py-2 text-xs`}
+        >
+          <ArrowDownCircleIcon className="h-4 w-4 shrink-0" />
+          Withdraw
+        </button>
+        <button
+          type="button"
+          onClick={() => onStatement(r)}
+          className={`${btnSecondary} inline-flex items-center justify-center gap-1 px-2 py-2 text-xs`}
+        >
+          <DocumentTextIcon className="h-4 w-4 shrink-0" />
+          Statement
+        </button>
         <button
           type="button"
           onClick={() => onEdit(r)}
-          className={`${btnSecondary} inline-flex flex-1 items-center justify-center gap-1 px-3 py-2 text-xs`}
+          className={`${btnSecondary} inline-flex items-center justify-center gap-1 px-2 py-2 text-xs`}
         >
-          <PencilSquareIcon className="h-4 w-4" />
+          <PencilSquareIcon className="h-4 w-4 shrink-0" />
           Edit
         </button>
+      </div>
+      <div className="mt-2 flex justify-end">
         <button
           type="button"
           disabled={deletingId === r.id}
           onClick={() => onDelete(r)}
-          className={`${btnDanger} inline-flex items-center justify-center px-3 py-2 text-xs`}
+          className={`${btnDanger} inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs`}
         >
-          <TrashIcon className="h-4 w-4" />
+          <TrashIcon className="h-3.5 w-3.5" />
+          Delete fund
         </button>
       </div>
     </div>
@@ -233,6 +314,15 @@ export default function PfInvestmentsPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [invExportBusy, setInvExportBusy] = useState(false)
+  const [monthlyFlow, setMonthlyFlow] = useState([])
+  const [statementInv, setStatementInv] = useState(null)
+  const [addMoneyInv, setAddMoneyInv] = useState(null)
+  const [addMoneyTab, setAddMoneyTab] = useState('topup')
+  const [withdrawInv, setWithdrawInv] = useState(null)
+  const [sipStartDate, setSipStartDate] = useState('')
+  const [sipDayOfMonth, setSipDayOfMonth] = useState('')
+  const [sipFrequency, setSipFrequency] = useState('MONTHLY')
+  const [sipAutoCreate, setSipAutoCreate] = useState(false)
 
   const typeLabel = (v) => INVESTMENT_TYPE_OPTIONS.find((o) => o.value === v)?.label || v
 
@@ -276,6 +366,15 @@ export default function PfInvestmentsPage() {
 
   const growthSeries = useMemo(() => cumulativeInvestedSeries(rows), [rows])
 
+  const monthlyBarData = useMemo(
+    () =>
+      (Array.isArray(monthlyFlow) ? monthlyFlow : []).map((r) => ({
+        label: r.month_label || `M${r.month}`,
+        invested: Number(r.invested) || 0,
+      })),
+    [monthlyFlow],
+  )
+
   const groupedRows = useMemo(() => {
     const order = INVESTMENT_TYPE_OPTIONS.map((o) => o.value)
     const m = new Map()
@@ -293,6 +392,13 @@ export default function PfInvestmentsPage() {
     try {
       const data = await listFinanceInvestments()
       setRows(Array.isArray(data) ? data : [])
+      try {
+        const yr = new Date().getFullYear()
+        const mf = await getInvestmentMonthlyFlow(yr)
+        setMonthlyFlow(Array.isArray(mf) ? mf : [])
+      } catch {
+        setMonthlyFlow([])
+      }
     } catch (e) {
       if (e.status === 401) {
         setPfToken(null)
@@ -316,6 +422,10 @@ export default function PfInvestmentsPage() {
     setInvestedAmount(s.investedAmount)
     setCurrentValue(s.currentValue)
     setSipMonthlyAmount(s.sipMonthlyAmount)
+    setSipStartDate(s.sipStartDate)
+    setSipDayOfMonth(s.sipDayOfMonth)
+    setSipFrequency(s.sipFrequency)
+    setSipAutoCreate(s.sipAutoCreate)
     setInvestmentDate(s.investmentDate)
     setPlatform(s.platform)
     setNotes(s.notes)
@@ -334,6 +444,10 @@ export default function PfInvestmentsPage() {
     setInvestedAmount(String(r.invested_amount ?? ''))
     setCurrentValue(r.current_value != null && r.current_value !== '' ? String(r.current_value) : '')
     setSipMonthlyAmount(r.sip_monthly_amount != null && r.sip_monthly_amount !== '' ? String(r.sip_monthly_amount) : '')
+    setSipStartDate(r.sip_start_date ? String(r.sip_start_date).slice(0, 10) : '')
+    setSipDayOfMonth(r.sip_day_of_month != null && r.sip_day_of_month !== '' ? String(r.sip_day_of_month) : '')
+    setSipFrequency(r.sip_frequency || 'MONTHLY')
+    setSipAutoCreate(Boolean(r.sip_auto_create))
     setInvestmentDate(r.investment_date ? String(r.investment_date).slice(0, 10) : todayISODate())
     setPlatform(r.platform ?? '')
     setNotes(r.notes ?? '')
@@ -350,12 +464,20 @@ export default function PfInvestmentsPage() {
       currentValue === '' || currentValue == null ? null : Math.max(0, Number(currentValue))
     const sip =
       sipMonthlyAmount === '' || sipMonthlyAmount == null ? null : Math.max(0, Number(sipMonthlyAmount))
+    const dom =
+      sipDayOfMonth === '' || sipDayOfMonth == null
+        ? null
+        : Math.min(28, Math.max(1, Math.floor(Number(sipDayOfMonth))))
     return {
       type: investmentType.trim(),
       name: name.trim(),
       invested_amount: Number(investedAmount),
       current_value: cv != null && !Number.isNaN(cv) ? cv : null,
       sip_monthly_amount: sip != null && !Number.isNaN(sip) ? sip : null,
+      sip_start_date: sipStartDate.trim() ? sipStartDate.trim() : null,
+      sip_day_of_month: dom != null && !Number.isNaN(dom) ? dom : null,
+      sip_frequency: (sipFrequency || 'MONTHLY').trim().toUpperCase().slice(0, 24) || 'MONTHLY',
+      sip_auto_create: Boolean(sipAutoCreate),
       investment_date: investmentDate,
       platform: platform.trim() || null,
       notes: notes.trim() || null,
@@ -435,7 +557,7 @@ export default function PfInvestmentsPage() {
     <div className="space-y-10">
       <PageHeader
         title="Investments"
-        description="Wealth view — allocation, growth of capital deployed, and gain/loss when you mark current value."
+        description="Portfolio ledger — add money, withdrawals, statements per fund, SIP metadata, and monthly contribution view."
         action={
           <div className="flex flex-wrap items-center gap-2">
             <PfExportMenu
@@ -515,7 +637,7 @@ export default function PfInvestmentsPage() {
       </section>
 
       {!loading && rows.length > 0 ? (
-        <section className="grid gap-6 lg:grid-cols-2" aria-label="Charts">
+        <section className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3" aria-label="Charts">
           <div className={`${pfChartCard} min-h-[300px]`}>
             <div className="flex items-center gap-2">
               <ChartPieIcon className="h-5 w-5 text-[var(--pf-primary)]" aria-hidden />
@@ -584,6 +706,39 @@ export default function PfInvestmentsPage() {
                       dot={false}
                     />
                   </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+          <div className={`${pfChartCard} min-h-[300px]`}>
+            <div className="flex items-center gap-2">
+              <ChartBarIcon className="h-5 w-5 text-[var(--pf-primary)]" aria-hidden />
+              <div>
+                <p className={chartTitle}>Monthly investments</p>
+                <p className={chartSub}>SIP + lump sum + top-up ({new Date().getFullYear()})</p>
+              </div>
+            </div>
+            <div className="mt-4 h-[240px] w-full">
+              {monthlyBarData.length === 0 || monthlyBarData.every((x) => x.invested <= 0) ? (
+                <p className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                  No purchase flows this year
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyBarData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-[var(--pf-border)] opacity-40" />
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="var(--pf-text-muted)" interval={0} angle={-22} textAnchor="end" height={56} />
+                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatInr(v)} width={68} />
+                    <Tooltip
+                      formatter={(v) => formatInr(v)}
+                      contentStyle={{
+                        background: 'var(--pf-card)',
+                        border: '1px solid var(--pf-border)',
+                        borderRadius: '12px',
+                      }}
+                    />
+                    <Bar dataKey="invested" name="Invested" fill="var(--pf-primary)" radius={[6, 6, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
@@ -670,7 +825,7 @@ export default function PfInvestmentsPage() {
           <AppInput
             id="inv-sip"
             label="SIP / month (₹)"
-            hint="Optional — for dashboard SIP total"
+            hint="Optional — plan amount (also set when you record SIP from the card)"
             type="number"
             step="0.01"
             min="0"
@@ -678,6 +833,39 @@ export default function PfInvestmentsPage() {
             value={sipMonthlyAmount}
             onChange={(e) => setSipMonthlyAmount(e.target.value)}
           />
+          <AppInput
+            id="inv-sip-start"
+            label="SIP start date"
+            type="date"
+            variant="boxed"
+            value={sipStartDate}
+            onChange={(e) => setSipStartDate(e.target.value)}
+          />
+          <AppInput
+            id="inv-sip-dom"
+            label="SIP day of month"
+            hint="1–28"
+            type="number"
+            min="1"
+            max="28"
+            variant="boxed"
+            value={sipDayOfMonth}
+            onChange={(e) => setSipDayOfMonth(e.target.value)}
+          />
+          <div className="sm:col-span-2">
+            <label className={labelCls}>SIP frequency</label>
+            <p className="mt-1 rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)] px-3 py-2 text-sm text-[var(--pf-text-muted)]">
+              {sipFrequency || 'MONTHLY'} (monthly only for now)
+            </p>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 sm:col-span-2">
+            <input
+              type="checkbox"
+              checked={sipAutoCreate}
+              onChange={(e) => setSipAutoCreate(e.target.checked)}
+            />
+            <span className="text-sm text-[var(--pf-text)]">SIP auto-create flag (future automation)</span>
+          </label>
           <div className="sm:col-span-2">
             <AppInput
               id="inv-plat"
@@ -728,6 +916,12 @@ export default function PfInvestmentsPage() {
                         typeLabel={typeLabel}
                         onEdit={openEditForm}
                         onDelete={handleDelete}
+                        onAddMoney={(row) => {
+                          setAddMoneyTab('topup')
+                          setAddMoneyInv(row)
+                        }}
+                        onWithdraw={(row) => setWithdrawInv(row)}
+                        onStatement={(row) => setStatementInv(row)}
                         deletingId={deletingId}
                       />
                     ))}
@@ -808,6 +1002,38 @@ export default function PfInvestmentsPage() {
           </>
         )}
       </div>
+
+      <InvestmentStatementModal
+        open={statementInv != null}
+        investment={statementInv}
+        onClose={() => setStatementInv(null)}
+        onSessionInvalid={onSessionInvalid}
+        onChanged={() => {
+          load()
+          refresh()
+        }}
+      />
+      <InvestmentAddMoneyModal
+        open={addMoneyInv != null}
+        investment={addMoneyInv}
+        defaultTab={addMoneyTab}
+        onClose={() => setAddMoneyInv(null)}
+        onSessionInvalid={onSessionInvalid}
+        onSaved={() => {
+          load()
+          refresh()
+        }}
+      />
+      <InvestmentWithdrawModal
+        open={withdrawInv != null}
+        investment={withdrawInv}
+        onClose={() => setWithdrawInv(null)}
+        onSessionInvalid={onSessionInvalid}
+        onSaved={() => {
+          load()
+          refresh()
+        }}
+      />
     </div>
   )
 }

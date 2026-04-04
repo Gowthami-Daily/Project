@@ -555,7 +555,13 @@ class FinanceInvestmentOut(BaseModel):
     invested_amount: Decimal
     current_value: Decimal | None = None
     sip_monthly_amount: Decimal | None = None
+    sip_start_date: date | None = None
+    sip_day_of_month: int | None = None
+    sip_frequency: str = 'MONTHLY'
+    sip_auto_create: bool = False
     investment_date: date
+    last_transaction_date: date | None = None
+    units_held: Decimal | None = None
     platform: str | None
     notes: str | None
     created_at: datetime
@@ -570,6 +576,10 @@ class FinanceInvestmentCreate(BaseModel):
     invested_amount: float
     current_value: float | None = None
     sip_monthly_amount: float | None = None
+    sip_start_date: date | None = None
+    sip_day_of_month: int | None = Field(None, ge=1, le=28)
+    sip_frequency: str = 'MONTHLY'
+    sip_auto_create: bool = False
     investment_date: date = Field(validation_alias=AliasChoices('investment_date', 'as_of_date'))
     platform: str | None = None
     notes: str | None = None
@@ -601,25 +611,75 @@ class FinanceInvestmentUpdate(BaseModel):
     invested_amount: float
     current_value: float | None = None
     sip_monthly_amount: float | None = None
+    sip_start_date: date | None = None
+    sip_day_of_month: int | None = Field(None, ge=1, le=28)
+    sip_frequency: str = 'MONTHLY'
+    sip_auto_create: bool = False
     investment_date: date = Field(validation_alias=AliasChoices('investment_date', 'as_of_date'))
     platform: str | None = None
     notes: str | None = None
 
-    @field_validator('name')
+
+_INVESTMENT_TXN_TYPES = frozenset({'sip', 'lumpsum', 'topup', 'withdraw', 'dividend', 'interest'})
+
+
+class FinanceInvestmentTransactionCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    txn_type: str
+    txn_date: date
+    amount: float = Field(gt=0, description='Always positive in API; withdraw is stored negative in DB.')
+    units: float | None = None
+    nav: float | None = Field(None, gt=0)
+    total_value: float | None = Field(None, ge=0)
+    notes: str | None = None
+    attachment_url: str | None = None
+
+    @field_validator('txn_type')
     @classmethod
-    def strip_name_u(cls, v: str) -> str:
-        s = (v or '').strip()
-        if not s:
-            raise ValueError('name is required')
+    def norm_txn_type(cls, v: str) -> str:
+        s = (v or '').strip().lower()
+        if s not in _INVESTMENT_TXN_TYPES:
+            raise ValueError(f'txn_type must be one of: {", ".join(sorted(_INVESTMENT_TXN_TYPES))}')
         return s
 
-    @field_validator('investment_type')
-    @classmethod
-    def strip_type_u(cls, v: str) -> str:
-        s = (v or '').strip()
-        if not s:
-            raise ValueError('type is required')
-        return s
+
+class FinanceInvestmentTransactionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    investment_id: int
+    txn_date: date
+    txn_type: str
+    amount: Decimal
+    units: Decimal | None = None
+    nav: Decimal | None = None
+    total_value: Decimal | None = None
+    notes: str | None = None
+    attachment_url: str | None = None
+    created_at: datetime
+
+
+class InvestmentLedgerSummaryOut(BaseModel):
+    total_invested: Decimal
+    current_value: Decimal
+    profit: Decimal
+    return_pct: float | None = None
+    xirr_percent: float | None = None
+    units_balance: Decimal | None = None
+    last_txn_date: date | None = None
+
+
+class FinanceInvestmentLedgerOut(BaseModel):
+    investment: FinanceInvestmentOut
+    transactions: list[FinanceInvestmentTransactionOut]
+    summary: InvestmentLedgerSummaryOut
+
+
+class InvestmentMonthlyFlowRow(BaseModel):
+    month: int = Field(ge=1, le=12)
+    month_label: str
+    invested: Decimal
 
 
 _ASSET_TYPES = frozenset(

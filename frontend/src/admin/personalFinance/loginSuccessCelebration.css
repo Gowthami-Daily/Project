@@ -1,0 +1,109 @@
+/* Full-screen post-login welcome — short, premium, respects reduced motion */
+
+.pf-login-success-root {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 1.5rem;
+  background: radial-gradient(ellipse 90% 80% at 50% 35%, #0f172a 0%, #05080f 50%, #020305 100%);
+}
+
+.pf-login-success-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 42%, rgba(56, 189, 248, 0.14), transparent 52%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pf-login-success-glow {
+    animation: pf-login-success-pulse 2.6s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-login-success-glow {
+    opacity: 0.9;
+  }
+}
+
+@keyframes pf-login-success-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.pf-login-success-inner {
+  position: relative;
+  text-align: center;
+  max-width: 24rem;
+}
+
+.pf-login-success-emoji {
+  font-size: 2.125rem;
+  line-height: 1;
+  margin-bottom: 0.75rem;
+  filter: drop-shadow(0 10px 28px rgba(56, 189, 248, 0.22));
+}
+
+.pf-login-success-title {
+  font-size: clamp(1.35rem, 4.2vw, 1.9rem);
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: -0.025em;
+  line-height: 1.28;
+}
+
+.pf-login-success-sub {
+  margin-top: 0.625rem;
+  font-size: 0.9375rem;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+/* One-shot flash + burst moment (first-login-of-day path) */
+.pf-login-success-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(56, 189, 248, 0.12) 38%,
+    transparent 62%
+  );
+}
+
+.pf-login-success-flash--on {
+  animation: pf-login-success-flash-anim 0.55s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-login-success-flash--on {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+@keyframes pf-login-success-flash-anim {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

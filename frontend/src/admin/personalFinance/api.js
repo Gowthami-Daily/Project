@@ -594,6 +594,23 @@ export function deleteFinanceInvestment(investmentId) {
   return fin(`/investments/${investmentId}`, { method: 'DELETE' })
 }
 
+export function getInvestmentMonthlyFlow(year) {
+  const q = new URLSearchParams({ year: String(year) })
+  return fin(`/investments/monthly-flow?${q}`)
+}
+
+export function getInvestmentLedger(investmentId) {
+  return fin(`/investments/${investmentId}/ledger`)
+}
+
+export function createInvestmentTransaction(investmentId, body) {
+  return fin(`/investments/${investmentId}/transactions`, { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function deleteInvestmentTransaction(investmentId, transactionId) {
+  return fin(`/investments/${investmentId}/transactions/${transactionId}`, { method: 'DELETE' })
+}
+
 export function getAssetsSummary() {
   return fin('/assets/summary')
 }

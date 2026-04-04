@@ -11,6 +11,7 @@ from fastapi_service.models_extended import (
     FinanceExpense,
     FinanceIncome,
     FinanceInvestment,
+    FinanceInvestmentTransaction,
     FinanceLiability,
     Loan,
     LoanPayment,
@@ -19,6 +20,7 @@ from fastapi_service.models_extended import (
     PfPaymentInstrument,
 )
 from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
+from fastapi_service.services import pf_investment_ledger_service
 from fastapi_service.schemas_extended import (
     AccountBalanceSummaryOut,
     AccountMovementCreate,
@@ -39,8 +41,12 @@ from fastapi_service.schemas_extended import (
     FinanceIncomeOut,
     FinanceIncomeUpdate,
     FinanceInvestmentCreate,
+    FinanceInvestmentLedgerOut,
     FinanceInvestmentOut,
+    FinanceInvestmentTransactionCreate,
+    FinanceInvestmentTransactionOut,
     FinanceInvestmentUpdate,
+    InvestmentMonthlyFlowRow,
     FinanceLiabilityCreate,
     FinanceLiabilityOut,
     FinanceLiabilityUpdate,
@@ -680,6 +686,28 @@ def list_investments(
     return pf_finance_repo.list_investments(db, profile_id, page.skip, page.limit)
 
 
+@router.get('/investments/monthly-flow', response_model=list[InvestmentMonthlyFlowRow])
+def investment_monthly_flow(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    year: int = Query(..., ge=2000, le=2100),
+) -> list[InvestmentMonthlyFlowRow]:
+    raw = pf_finance_repo.investment_monthly_purchase_flow(db, profile_id, year)
+    by_m = {int(r['month']): r['invested'] for r in raw}
+    out: list[InvestmentMonthlyFlowRow] = []
+    for m in range(1, 13):
+        label = date_type(year, m, 1).strftime('%b %Y')
+        out.append(
+            InvestmentMonthlyFlowRow(
+                month=m,
+                month_label=label,
+                invested=Decimal(str(by_m.get(m, 0.0))),
+            )
+        )
+    return out
+
+
 @router.post('/investments', response_model=FinanceInvestmentOut, status_code=201)
 def create_investment(
     _: FinanceParticipant,
@@ -689,6 +717,7 @@ def create_investment(
     profile_id: ActiveProfileId,
 ) -> FinanceInvestment:
     pf_profile_service.assert_can_write(db, user.id, profile_id)
+    sf = (body.sip_frequency or 'MONTHLY').strip().upper()[:24] or 'MONTHLY'
     row = FinanceInvestment(
         profile_id=profile_id,
         investment_type=body.investment_type,
@@ -696,11 +725,78 @@ def create_investment(
         invested_amount=body.invested_amount,
         current_value=body.current_value,
         sip_monthly_amount=body.sip_monthly_amount,
+        sip_start_date=body.sip_start_date,
+        sip_day_of_month=body.sip_day_of_month,
+        sip_frequency=sf,
+        sip_auto_create=body.sip_auto_create,
         investment_date=body.investment_date,
         platform=(body.platform.strip() or None) if body.platform is not None else None,
         notes=(body.notes.strip() or None) if body.notes is not None else None,
     )
-    return pf_finance_repo.create_investment(db, row)
+    inv = pf_finance_repo.create_investment(db, row)
+    pf_finance_repo.seed_investment_opening_transaction_if_missing(db, inv)
+    inv2 = pf_finance_repo.get_investment_for_profile(db, inv.id, profile_id)
+    assert inv2 is not None
+    return pf_investment_ledger_service.recompute_investment_aggregates(db, inv2)
+
+
+@router.get('/investments/{investment_id}/ledger', response_model=FinanceInvestmentLedgerOut)
+def get_investment_ledger(
+    investment_id: int,
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceInvestmentLedgerOut:
+    out = pf_investment_ledger_service.build_ledger_out(db, investment_id, profile_id)
+    if out is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Investment not found')
+    return out
+
+
+@router.post(
+    '/investments/{investment_id}/transactions',
+    response_model=FinanceInvestmentTransactionOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_investment_transaction(
+    investment_id: int,
+    _: FinanceParticipant,
+    body: FinanceInvestmentTransactionCreate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceInvestmentTransaction:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    inv = pf_finance_repo.get_investment_for_profile(db, investment_id, profile_id)
+    if inv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Investment not found')
+    row = pf_investment_ledger_service.add_transaction(db, inv, body)
+    return row
+
+
+@router.delete(
+    '/investments/{investment_id}/transactions/{transaction_id}',
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_investment_transaction(
+    investment_id: int,
+    transaction_id: int,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> Response:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    inv = pf_finance_repo.get_investment_for_profile(db, investment_id, profile_id)
+    if inv is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Investment not found')
+    txn = pf_finance_repo.get_investment_transaction_for_profile(
+        db, transaction_id, investment_id, profile_id
+    )
+    if txn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Transaction not found')
+    pf_investment_ledger_service.delete_transaction_and_recompute(db, inv, txn)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put('/investments/{investment_id}', response_model=FinanceInvestmentOut)
@@ -716,15 +812,27 @@ def update_investment(
     row = pf_finance_repo.get_investment_for_profile(db, investment_id, profile_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Investment not found')
+    txn_count = pf_finance_repo.count_investment_transactions(db, investment_id)
+    sf = (body.sip_frequency or 'MONTHLY').strip().upper()[:24] or 'MONTHLY'
     row.investment_type = body.investment_type
     row.name = body.name
-    row.invested_amount = body.invested_amount
-    row.current_value = body.current_value
     row.sip_monthly_amount = body.sip_monthly_amount
-    row.investment_date = body.investment_date
+    row.sip_start_date = body.sip_start_date
+    row.sip_day_of_month = body.sip_day_of_month
+    row.sip_frequency = sf
+    row.sip_auto_create = body.sip_auto_create
     row.platform = (body.platform.strip() or None) if body.platform is not None else None
     row.notes = (body.notes.strip() or None) if body.notes is not None else None
-    return pf_finance_repo.update_investment(db, row)
+    if txn_count == 0:
+        row.invested_amount = body.invested_amount
+        row.current_value = body.current_value
+        row.investment_date = body.investment_date
+    pf_finance_repo.update_investment(db, row)
+    row2 = pf_finance_repo.get_investment_for_profile(db, investment_id, profile_id)
+    assert row2 is not None
+    if pf_finance_repo.count_investment_transactions(db, investment_id) > 0:
+        return pf_investment_ledger_service.recompute_investment_aggregates(db, row2)
+    return row2
 
 
 @router.delete('/investments/{investment_id}', status_code=status.HTTP_204_NO_CONTENT)

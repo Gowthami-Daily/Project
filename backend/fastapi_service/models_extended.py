@@ -291,13 +291,46 @@ class FinanceInvestment(Base):
     invested_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     current_value: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     sip_monthly_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    sip_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sip_day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sip_frequency: Mapped[str] = mapped_column(String(24), nullable=False, default='MONTHLY')
+    sip_auto_create: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     investment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    last_transaction_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    units_held: Mapped[float | None] = mapped_column(Numeric(18, 6), nullable=True)
     platform: Mapped[str | None] = mapped_column(String(120), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    transactions: Mapped[list['FinanceInvestmentTransaction']] = relationship(
+        'FinanceInvestmentTransaction',
+        back_populates='investment',
+        cascade='all, delete-orphan',
+        order_by='FinanceInvestmentTransaction.txn_date, FinanceInvestmentTransaction.id',
+    )
+
+
+class FinanceInvestmentTransaction(Base):
+    __tablename__ = 'finance_investment_transactions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    investment_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('finance_investments.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    txn_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    txn_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    units: Mapped[float | None] = mapped_column(Numeric(18, 6), nullable=True)
+    nav: Mapped[float | None] = mapped_column(Numeric(18, 6), nullable=True)
+    total_value: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attachment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    investment: Mapped['FinanceInvestment'] = relationship('FinanceInvestment', back_populates='transactions')
 
 
 class FinanceAsset(Base):

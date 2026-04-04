@@ -22,6 +22,7 @@ import {
 } from '@heroicons/react/24/outline'
 import RiverLogo from '../admin/RiverLogo.jsx'
 import { getPfToken } from '../admin/personalFinance/api.js'
+import './pfLandingPremium.css'
 
 const fadeUp = {
   initial: { opacity: 0, y: 28 },
@@ -50,7 +51,7 @@ const glass =
   'rounded-2xl border border-white/10 bg-white/[0.06] shadow-xl shadow-black/25 backdrop-blur-xl'
 
 const btnGradient =
-  'group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-500/30 transition hover:brightness-110 active:scale-[0.99]'
+  'pf-landing-btn-primary group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-500/30 hover:brightness-110'
 
 const btnGhost =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-bold text-white backdrop-blur-md transition hover:bg-white/10 active:scale-[0.99]'
@@ -171,6 +172,35 @@ function easeOutCubic(t) {
   return 1 - (1 - t) ** 3
 }
 
+function useLandingNavScrolled(thresholdPx = 16) {
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > thresholdPx)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [thresholdPx])
+  return scrolled
+}
+
+function useHeroParallaxMouse(enabled) {
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  useEffect(() => {
+    if (!enabled) return undefined
+    const onMove = (e) => {
+      const w = window.innerWidth || 1
+      const h = window.innerHeight || 1
+      setPos({
+        x: (e.clientX / w - 0.5) * 28,
+        y: (e.clientY / h - 0.5) * 20,
+      })
+    }
+    window.addEventListener('mousemove', onMove, { passive: true })
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [enabled])
+  return pos
+}
+
 function useAnimatedNumber(target, enabled, durationMs = 1800) {
   const [v, setV] = useState(0)
   useEffect(() => {
@@ -264,9 +294,11 @@ function LandingKeyframes() {
   )
 }
 
-function MockBrowserChrome({ children, url = '/personal-finance' }) {
+function MockBrowserChrome({ children, url = '/personal-finance', glow = false }) {
   return (
-    <div className={`${glass} overflow-hidden rounded-2xl`}>
+    <div
+      className={`${glass} overflow-hidden rounded-2xl ${glow ? 'pf-landing-preview-glow ring-1 ring-sky-400/20' : ''}`}
+    >
       <div className="flex items-center gap-2 border-b border-white/10 bg-black/25 px-3 py-2.5 sm:px-4">
         <div className="flex gap-1.5" aria-hidden>
           <span className="h-2.5 w-2.5 rounded-full bg-red-500/60" />
@@ -284,10 +316,32 @@ function MockBrowserChrome({ children, url = '/personal-finance' }) {
 
 const barHeights = [38, 62, 44, 78, 52, 88, 48, 72, 56, 92, 64, 70]
 
+function PreviewPanelChartBars({ slice = 8 }) {
+  const reduce = useReducedMotion()
+  const heights = barHeights.slice(0, slice)
+  return (
+    <div className="flex h-full items-end gap-1 p-3">
+      {heights.map((h, i) => (
+        <motion.div
+          key={i}
+          className="flex-1 rounded-t bg-gradient-to-t from-indigo-500/60 to-sky-400/30"
+          initial={{ height: reduce ? `${h}%` : '0%' }}
+          animate={{ height: `${h}%` }}
+          transition={{
+            delay: reduce ? 0 : 0.12 + i * 0.045,
+            duration: reduce ? 0 : 0.52,
+            ease: [0.22, 1, 0.36, 1],
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
 function HeroDashboardPreview() {
   const reduce = useReducedMotion()
   return (
-    <MockBrowserChrome>
+    <MockBrowserChrome glow>
       <div className="space-y-4 p-4 sm:p-6">
         <div className="grid grid-cols-3 gap-2 sm:gap-3">
           {['Net worth', 'Cash', 'Investments'].map((label, i) => (
@@ -349,15 +403,7 @@ function ProductPreviewPanel({ tab }) {
           ))}
         </div>
         <div className="h-32 rounded-xl bg-white/[0.04]">
-          <div className="flex h-full items-end gap-1 p-3">
-            {barHeights.slice(0, 8).map((h, i) => (
-              <div
-                key={i}
-                className="flex-1 rounded-t bg-gradient-to-t from-indigo-500/60 to-sky-400/30"
-                style={{ height: `${h}%` }}
-              />
-            ))}
-          </div>
+          <PreviewPanelChartBars slice={8} />
         </div>
       </div>
     ),
@@ -489,6 +535,7 @@ function FaqAccordion() {
             <AnimatePresence initial={false}>
               {isOpen ? (
                 <motion.div
+                  layout
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
@@ -512,6 +559,13 @@ export default function PersonalFinanceLandingPage() {
   const [hasSession, setHasSession] = useState(null)
   const [previewTab, setPreviewTab] = useState('dashboard')
   const reduce = useReducedMotion()
+  const navScrolled = useLandingNavScrolled(14)
+  const parallax = useHeroParallaxMouse(!reduce)
+
+  useEffect(() => {
+    document.documentElement.classList.add('pf-landing-smooth-scroll')
+    return () => document.documentElement.classList.remove('pf-landing-smooth-scroll')
+  }, [])
 
   useEffect(() => {
     setHasSession(!!getPfToken())
@@ -539,10 +593,18 @@ export default function PersonalFinanceLandingPage() {
     >
       <LandingKeyframes />
       <div className="pf-landing-animated-bg fixed inset-0 -z-20" />
+      <div className="pf-landing-grid" aria-hidden />
+      <div className="pf-landing-noise" aria-hidden />
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(ellipse_90%_60%_at_50%_-10%,rgba(56,189,248,0.14),transparent)]" />
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(ellipse_70%_50%_at_100%_80%,rgba(139,92,246,0.1),transparent)]" />
 
-      <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/65 backdrop-blur-2xl">
+      <header
+        className={`sticky top-0 z-50 border-b backdrop-blur-2xl transition-[background-color,box-shadow,border-color] duration-300 ${
+          navScrolled
+            ? 'border-white/10 bg-slate-950/80 shadow-lg shadow-black/20'
+            : 'border-transparent bg-slate-950/40 backdrop-blur-xl'
+        }`}
+      >
         <nav className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3.5 sm:gap-4 sm:px-6">
           <a href="#top" className="flex min-w-0 items-center gap-2.5 text-white no-underline">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/35">
@@ -550,29 +612,29 @@ export default function PersonalFinanceLandingPage() {
             </span>
             <span className="truncate text-sm font-bold sm:text-base">Personal Finance OS</span>
           </a>
-          <div className="hidden items-center gap-6 text-[13px] font-semibold text-slate-300 lg:flex">
-            <a href="#social-proof" className="transition hover:text-white">
+          <div className="hidden items-center gap-6 text-[13px] font-semibold lg:flex">
+            <a href="#social-proof" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               Trust
             </a>
-            <a href="#features" className="transition hover:text-white">
+            <a href="#features" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               Features
             </a>
-            <a href="#product" className="transition hover:text-white">
+            <a href="#product" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               Product
             </a>
-            <a href="#how-it-works" className="transition hover:text-white">
+            <a href="#how-it-works" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               How it works
             </a>
-            <a href="#use-cases" className="transition hover:text-white">
+            <a href="#use-cases" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               Use cases
             </a>
-            <a href="#security" className="transition hover:text-white">
+            <a href="#security" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               Security
             </a>
-            <a href="#pricing" className="transition hover:text-white">
+            <a href="#pricing" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               Pricing
             </a>
-            <a href="#faq" className="transition hover:text-white">
+            <a href="#faq" className="pf-landing-nav-link text-slate-300 transition-colors hover:text-white">
               FAQ
             </a>
           </div>
@@ -593,7 +655,10 @@ export default function PersonalFinanceLandingPage() {
 
       <main>
         {/* Hero */}
-        <section className="relative mx-auto max-w-6xl px-4 pb-16 pt-10 sm:px-6 sm:pb-24 sm:pt-14">
+        <section className="relative mx-auto max-w-6xl overflow-hidden px-4 pb-16 pt-10 sm:px-6 sm:pb-24 sm:pt-14">
+          <div className="pf-landing-orb pf-landing-orb--a" aria-hidden />
+          <div className="pf-landing-orb pf-landing-orb--b" aria-hidden />
+          <div className="pf-landing-orb pf-landing-orb--c" aria-hidden />
           <FloatingDecor />
           <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
             <motion.div
@@ -601,11 +666,16 @@ export default function PersonalFinanceLandingPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
             >
+              <div
+                style={{
+                  transform: `translate3d(${-parallax.x * 0.38}px, ${-parallax.y * 0.3}px, 0)`,
+                }}
+              >
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-sky-400/95 sm:text-sm">
                 Track · Analyze · Grow
               </p>
-              <h1 className="mt-3 text-[2rem] font-extrabold leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-[3.1rem]">
-                Personal Finance OS
+              <h1 className="mt-3 text-[2rem] font-extrabold leading-[1.1] tracking-tight sm:text-5xl lg:text-[3.1rem]">
+                <span className="pf-landing-gradient-text">Personal Finance OS</span>
               </h1>
               <p className="mt-2 text-lg font-semibold text-slate-200 sm:text-xl">
                 The operating system for your money.
@@ -640,6 +710,7 @@ export default function PersonalFinanceLandingPage() {
                   Login
                 </Link>
               </div>
+              </div>
             </motion.div>
 
             <motion.div
@@ -649,6 +720,11 @@ export default function PersonalFinanceLandingPage() {
               className="relative"
             >
               <div className="absolute -inset-6 rounded-[2rem] bg-gradient-to-tr from-sky-500/25 via-indigo-500/15 to-violet-500/10 blur-3xl" />
+              <div
+                style={{
+                  transform: `translate3d(${parallax.x * 0.45}px, ${parallax.y * 0.35}px, 0)`,
+                }}
+              >
               <motion.div
                 animate={
                   reduce ? {} : { y: [0, -10, 0] }
@@ -657,6 +733,7 @@ export default function PersonalFinanceLandingPage() {
               >
                 <HeroDashboardPreview />
               </motion.div>
+              </div>
             </motion.div>
           </div>
         </section>
@@ -777,7 +854,10 @@ export default function PersonalFinanceLandingPage() {
                   </button>
                 ))}
               </div>
-              <MockBrowserChrome url={`/personal-finance/${previewTab === 'dashboard' ? '' : previewTab}`}>
+              <MockBrowserChrome
+                glow
+                url={`/personal-finance/${previewTab === 'dashboard' ? '' : previewTab}`}
+              >
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={previewTab}
@@ -930,9 +1010,18 @@ export default function PersonalFinanceLandingPage() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.55 }}
-              className={`relative overflow-hidden ${glass} px-6 py-14 text-center sm:px-12 sm:py-16`}
+              className="pf-landing-cta-border overflow-hidden p-px"
             >
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-sky-500/10 via-transparent to-violet-600/10" />
+            <div className={`pf-landing-cta-inner relative overflow-hidden px-6 py-14 text-center sm:px-12 sm:py-16`}>
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-sky-500/12 via-transparent to-violet-600/12" />
+              <div
+                className="pointer-events-none absolute -left-1/4 top-0 h-64 w-[150%] opacity-40 blur-3xl"
+                style={{
+                  background:
+                    'radial-gradient(ellipse at center, rgba(56,189,248,0.25), transparent 55%)',
+                }}
+                aria-hidden
+              />
               <h2 className="relative text-2xl font-extrabold tracking-tight text-white sm:text-4xl">
                 Start tracking your money the right way.
               </h2>
@@ -954,6 +1043,7 @@ export default function PersonalFinanceLandingPage() {
               >
                 River Dairy business suite
               </Link>
+            </div>
             </motion.div>
           </div>
         </section>
@@ -966,16 +1056,16 @@ export default function PersonalFinanceLandingPage() {
             <span className="font-semibold text-slate-300">Personal Finance OS</span>
           </div>
           <div className="flex flex-wrap justify-center gap-6 font-medium">
-            <a href="#about" className="transition hover:text-white">
+            <a href="#about" className="pf-landing-footer-link text-slate-500 hover:text-white">
               About
             </a>
-            <a href="#security" className="transition hover:text-white">
+            <a href="#security" className="pf-landing-footer-link text-slate-500 hover:text-white">
               Security
             </a>
-            <a href="#faq" className="transition hover:text-white">
+            <a href="#faq" className="pf-landing-footer-link text-slate-500 hover:text-white">
               FAQ
             </a>
-            <Link to="/legacy-home" className="transition hover:text-white">
+            <Link to="/legacy-home" className="pf-landing-footer-link text-slate-500 hover:text-white">
               Business home
             </Link>
           </div>

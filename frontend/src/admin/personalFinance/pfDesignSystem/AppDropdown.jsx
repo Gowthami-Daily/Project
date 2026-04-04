@@ -1,5 +1,5 @@
 import { ChevronDownIcon } from '@heroicons/react/24/solid'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 const triggerCls =
@@ -34,6 +34,10 @@ export function AppDropdown({
   'aria-label': ariaLabel,
   className = '',
 }) {
+  const autoId = useId().replace(/:/g, '')
+  /** Stable marker for portaled panel — must be excluded from outside-close (wrapRef does not contain portal nodes). */
+  const panelMarker = id ? String(id) : `app-dd-${autoId}`
+
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
   const btnRef = useRef(null)
@@ -73,6 +77,7 @@ export function AppDropdown({
     const onDoc = (e) => {
       const t = e.target
       if (wrapRef.current?.contains(t)) return
+      if (document.querySelector(`[data-app-dropdown-panel="${panelMarker}"]`)?.contains(t)) return
       setOpen(false)
     }
     const onScroll = () => syncPos()
@@ -84,7 +89,7 @@ export function AppDropdown({
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onScroll)
     }
-  }, [open, syncPos])
+  }, [open, syncPos, panelMarker])
 
   useEffect(() => {
     if (!open) return
@@ -103,6 +108,7 @@ export function AppDropdown({
   const menu = open
     ? createPortal(
         <div
+          data-app-dropdown-panel={panelMarker}
           role="listbox"
           className={`${panelCls} ds-dropdown-panel--enter`}
           style={{

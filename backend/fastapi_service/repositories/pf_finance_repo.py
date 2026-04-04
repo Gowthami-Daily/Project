@@ -13,6 +13,7 @@ from fastapi_service.models_extended import (
     FinanceExpense,
     FinanceIncome,
     FinanceInvestment,
+    FinanceInvestmentTransaction,
     FinanceLiability,
     LiabilityPayment,
     LiabilitySchedule,
@@ -84,6 +85,97 @@ def update_investment(db: Session, row: FinanceInvestment) -> FinanceInvestment:
 
 def delete_investment(db: Session, row: FinanceInvestment) -> None:
     db.delete(row)
+    db.commit()
+
+
+def count_investment_transactions(db: Session, investment_id: int) -> int:
+    stmt = select(func.count()).select_from(FinanceInvestmentTransaction).where(
+        FinanceInvestmentTransaction.investment_id == investment_id
+    )
+    return int(db.scalar(stmt) or 0)
+
+
+def list_investment_transactions_for_profile(
+    db: Session, investment_id: int, profile_id: int
+) -> list[FinanceInvestmentTransaction]:
+    inv = get_investment_for_profile(db, investment_id, profile_id)
+    if inv is None:
+        return []
+    stmt = (
+        select(FinanceInvestmentTransaction)
+        .where(FinanceInvestmentTransaction.investment_id == investment_id)
+        .order_by(FinanceInvestmentTransaction.txn_date.asc(), FinanceInvestmentTransaction.id.asc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def get_investment_transaction_for_profile(
+    db: Session, transaction_id: int, investment_id: int, profile_id: int
+) -> FinanceInvestmentTransaction | None:
+    inv = get_investment_for_profile(db, investment_id, profile_id)
+    if inv is None:
+        return None
+    row = db.get(FinanceInvestmentTransaction, transaction_id)
+    if row is None or row.investment_id != investment_id:
+        return None
+    return row
+
+
+def create_investment_transaction(
+    db: Session, row: FinanceInvestmentTransaction
+) -> FinanceInvestmentTransaction:
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_investment_transaction(db: Session, row: FinanceInvestmentTransaction) -> None:
+    db.delete(row)
+    db.commit()
+
+
+def investment_monthly_purchase_flow(
+    db: Session, profile_id: int, year: int
+) -> list[dict]:
+    """Sum SIP + lump sum + top-up amounts per calendar month for a year."""
+    purchase_types = ('sip', 'lumpsum', 'topup')
+    stmt = (
+        select(
+            extract('month', FinanceInvestmentTransaction.txn_date).label('m'),
+            func.coalesce(func.sum(FinanceInvestmentTransaction.amount), 0).label('total'),
+        )
+        .join(FinanceInvestment, FinanceInvestment.id == FinanceInvestmentTransaction.investment_id)
+        .where(
+            FinanceInvestment.profile_id == profile_id,
+            extract('year', FinanceInvestmentTransaction.txn_date) == year,
+            func.lower(FinanceInvestmentTransaction.txn_type).in_(purchase_types),
+            FinanceInvestmentTransaction.amount > 0,
+        )
+        .group_by(extract('month', FinanceInvestmentTransaction.txn_date))
+        .order_by(extract('month', FinanceInvestmentTransaction.txn_date))
+    )
+    rows = db.execute(stmt).all()
+    return [{'month': int(r.m), 'invested': float(r.total)} for r in rows]
+
+
+def seed_investment_opening_transaction_if_missing(db: Session, inv: FinanceInvestment) -> None:
+    """Create a single lumpsum row from the holding when the ledger is empty (new API creates)."""
+    if count_investment_transactions(db, inv.id) > 0:
+        return
+    tv = inv.current_value if inv.current_value is not None else inv.invested_amount
+    row = FinanceInvestmentTransaction(
+        investment_id=inv.id,
+        txn_date=inv.investment_date,
+        txn_type='lumpsum',
+        amount=float(inv.invested_amount),
+        units=None,
+        nav=None,
+        total_value=float(tv) if tv is not None else None,
+        notes='Opening balance',
+        attachment_url=None,
+    )
+    db.add(row)
     db.commit()
 
 
