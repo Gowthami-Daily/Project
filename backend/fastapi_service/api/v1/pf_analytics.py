@@ -43,6 +43,7 @@ def analytics_summary(
     account_id: int | None = Query(None, description='Finance account filter'),
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
+    card_id: int | None = Query(None, description='Credit card id (credit-cards module only)'),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -57,6 +58,7 @@ def analytics_summary(
         account_id=account_id,
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
+        card_id=card_id,
     )
 
 
@@ -72,6 +74,7 @@ def analytics_trend(
     account_id: int | None = Query(None),
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
+    card_id: int | None = Query(None),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -88,6 +91,7 @@ def analytics_trend(
         account_id=account_id,
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
+        card_id=card_id,
     )
 
 
@@ -101,6 +105,7 @@ def analytics_distribution(
     account_id: int | None = Query(None),
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
+    card_id: int | None = Query(None),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -115,6 +120,7 @@ def analytics_distribution(
         account_id=account_id,
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
+        card_id=card_id,
     )
 
 
@@ -130,6 +136,7 @@ def analytics_table(
     account_id: int | None = Query(None),
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
+    card_id: int | None = Query(None),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -146,6 +153,7 @@ def analytics_table(
         account_id=account_id,
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
+        card_id=card_id,
     )
 
 
@@ -159,6 +167,7 @@ def analytics_insights(
     account_id: int | None = Query(None),
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
+    card_id: int | None = Query(None),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -173,4 +182,5 @@ def analytics_insights(
         account_id=account_id,
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
+        card_id=card_id,
     )

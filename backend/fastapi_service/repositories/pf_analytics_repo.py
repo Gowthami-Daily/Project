@@ -270,7 +270,14 @@ def loan_repayments_monthly_series_year(db: Session, profile_id: int, year: int)
     return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]
 
 
-def credit_card_spend_daily_series(db: Session, profile_id: int, start: date, end: date) -> list[tuple[date, float]]:
+def credit_card_spend_daily_series(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    *,
+    card_id: int | None = None,
+) -> list[tuple[date, float]]:
     stmt = (
         select(CreditCardTransaction.transaction_date, func.coalesce(func.sum(CreditCardTransaction.amount), 0))
         .select_from(CreditCardTransaction)
@@ -280,13 +287,16 @@ def credit_card_spend_daily_series(db: Session, profile_id: int, start: date, en
             CreditCardTransaction.transaction_date >= start,
             CreditCardTransaction.transaction_date <= end,
         )
-        .group_by(CreditCardTransaction.transaction_date)
-        .order_by(CreditCardTransaction.transaction_date)
     )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardTransaction.card_id == card_id)
+    stmt = stmt.group_by(CreditCardTransaction.transaction_date).order_by(CreditCardTransaction.transaction_date)
     return [(r[0], float(r[1])) for r in db.execute(stmt).all()]
 
 
-def credit_card_spend_monthly_series_year(db: Session, profile_id: int, year: int) -> list[tuple[str, float]]:
+def credit_card_spend_monthly_series_year(
+    db: Session, profile_id: int, year: int, *, card_id: int | None = None
+) -> list[tuple[str, float]]:
     start, end = date(year, 1, 1), date(year, 12, 31)
     dialect = db.get_bind().dialect.name
     if dialect == 'postgresql':
@@ -302,9 +312,10 @@ def credit_card_spend_monthly_series_year(db: Session, profile_id: int, year: in
             CreditCardTransaction.transaction_date >= start,
             CreditCardTransaction.transaction_date <= end,
         )
-        .group_by(ym)
-        .order_by(ym)
     )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardTransaction.card_id == card_id)
+    stmt = stmt.group_by(ym).order_by(ym)
     return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]
 
 
@@ -388,7 +399,14 @@ def liability_payments_monthly_series_year(db: Session, profile_id: int, year: i
     return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]
 
 
-def credit_card_payment_daily_series(db: Session, profile_id: int, start: date, end: date) -> list[tuple[date, float]]:
+def credit_card_payment_daily_series(
+    db: Session,
+    profile_id: int,
+    start: date,
+    end: date,
+    *,
+    card_id: int | None = None,
+) -> list[tuple[date, float]]:
     stmt = (
         select(CreditCardPayment.payment_date, func.coalesce(func.sum(CreditCardPayment.amount), 0))
         .select_from(CreditCardPayment)
@@ -398,13 +416,16 @@ def credit_card_payment_daily_series(db: Session, profile_id: int, start: date, 
             CreditCardPayment.payment_date >= start,
             CreditCardPayment.payment_date <= end,
         )
-        .group_by(CreditCardPayment.payment_date)
-        .order_by(CreditCardPayment.payment_date)
     )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardPayment.card_id == card_id)
+    stmt = stmt.group_by(CreditCardPayment.payment_date).order_by(CreditCardPayment.payment_date)
     return [(r[0], float(r[1])) for r in db.execute(stmt).all()]
 
 
-def credit_card_payment_monthly_series_year(db: Session, profile_id: int, year: int) -> list[tuple[str, float]]:
+def credit_card_payment_monthly_series_year(
+    db: Session, profile_id: int, year: int, *, card_id: int | None = None
+) -> list[tuple[str, float]]:
     start, end = date(year, 1, 1), date(year, 12, 31)
     dialect = db.get_bind().dialect.name
     if dialect == 'postgresql':
@@ -420,9 +441,10 @@ def credit_card_payment_monthly_series_year(db: Session, profile_id: int, year: 
             CreditCardPayment.payment_date >= start,
             CreditCardPayment.payment_date <= end,
         )
-        .group_by(ym)
-        .order_by(ym)
     )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardPayment.card_id == card_id)
+    stmt = stmt.group_by(ym).order_by(ym)
     return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]
 
 
@@ -485,7 +507,7 @@ def investment_txn_volume_by_name_range(
 
 
 def credit_card_spend_by_card_range(
-    db: Session, profile_id: int, start: date, end: date
+    db: Session, profile_id: int, start: date, end: date, *, card_id: int | None = None
 ) -> list[tuple[str, float]]:
     nm = func.coalesce(CreditCard.card_name, literal('Card'))
     stmt = (
@@ -497,14 +519,15 @@ def credit_card_spend_by_card_range(
             CreditCardTransaction.transaction_date >= start,
             CreditCardTransaction.transaction_date <= end,
         )
-        .group_by(CreditCard.id, nm)
-        .order_by(func.sum(CreditCardTransaction.amount).desc())
     )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardTransaction.card_id == card_id)
+    stmt = stmt.group_by(CreditCard.id, nm).order_by(func.sum(CreditCardTransaction.amount).desc())
     return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]
 
 
 def credit_card_spend_by_category_range(
-    db: Session, profile_id: int, start: date, end: date
+    db: Session, profile_id: int, start: date, end: date, *, card_id: int | None = None
 ) -> list[tuple[str, float]]:
     cat_label = func.coalesce(PfExpenseCategory.name, literal('Uncategorized'))
     stmt = (
@@ -517,7 +540,8 @@ def credit_card_spend_by_category_range(
             CreditCardTransaction.transaction_date >= start,
             CreditCardTransaction.transaction_date <= end,
         )
-        .group_by(cat_label)
-        .order_by(func.sum(CreditCardTransaction.amount).desc())
     )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardTransaction.card_id == card_id)
+    stmt = stmt.group_by(cat_label).order_by(func.sum(CreditCardTransaction.amount).desc())
     return [(str(r[0]), float(r[1])) for r in db.execute(stmt).all()]

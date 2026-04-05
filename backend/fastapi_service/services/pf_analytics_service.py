@@ -573,6 +573,157 @@ def accounts_insights(
     return {'module': 'accounts', 'insights': bullets, 'warnings': [b for b in bullets if 'Warning' in b]}
 
 
+def financial_statement_summary(
+    db: Session,
+    profile_id: int,
+    *,
+    year: int,
+    month: int,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    """P&L-style summary: income vs expense for the month (optional account scope)."""
+    start, end = _month_bounds(year, month)
+    inc = float(
+        pf_finance_repo.sum_income_scoped(db, profile_id, start, end, account_id=account_id, income_category_id=None)
+    )
+    exp = float(
+        pf_finance_repo.sum_expense_scoped(
+            db, profile_id, start, end, account_id=account_id, expense_category_id=None
+        )
+    )
+    daily_nets = _accounts_daily_net_per_calendar_day(db, profile_id, start=start, end=end, account_id=account_id)
+    if daily_nets:
+        avg_dn = sum(daily_nets) / len(daily_nets)
+        hi_dn = max(daily_nets)
+        lo_dn = min(daily_nets)
+    else:
+        avg_dn = hi_dn = lo_dn = 0.0
+    pm, py = (month - 1, year) if month > 1 else (12, year - 1)
+    ps, pe = _month_bounds(py, pm)
+    pinc = float(pf_finance_repo.sum_income_scoped(db, profile_id, ps, pe, account_id=account_id))
+    pexp = float(pf_finance_repo.sum_expense_scoped(db, profile_id, ps, pe, account_id=account_id))
+    cur_net = inc - exp
+    prev_net = pinc - pexp
+    return {
+        'module': 'financial-statement',
+        'period': {'start': start.isoformat(), 'end': end.isoformat(), 'month': f'{year:04d}-{month:02d}'},
+        'filters': {'account_id': account_id},
+        'kpis': {
+            'total_amount': round(inc + exp, 2),
+            'inflow': round(inc, 2),
+            'outflow': round(exp, 2),
+            'net_change': round(cur_net, 2),
+            'average': round(avg_dn, 2),
+            'highest': round(hi_dn, 2),
+            'lowest': round(lo_dn, 2),
+        },
+        'kpi_notes': {
+            'total_amount': 'Income plus expense (total activity) for the month.',
+            'inflow': 'Recorded income in scope.',
+            'outflow': 'Recorded expenses in scope.',
+            'average': 'Mean daily net (income − expense) across every day in the month.',
+            'highest': 'Best single-day net in the month.',
+            'lowest': 'Weakest single-day net in the month.',
+        },
+        'comparison': {
+            'prior_month_total': round(prev_net, 2),
+            'month_over_month_pct': _pct_change(cur_net, prev_net),
+        },
+        'partial': False,
+    }
+
+
+def financial_statement_trend(
+    db: Session,
+    profile_id: int,
+    *,
+    granularity: Granularity,
+    year: int,
+    month: int | None = None,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    t = accounts_trend(
+        db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
+    )
+    t['module'] = 'financial-statement'
+    return t
+
+
+def financial_statement_distribution(
+    db: Session,
+    profile_id: int,
+    *,
+    year: int,
+    month: int,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    """Combined income + expense category slices (prefixed) for pie/bar."""
+    start, end = _month_bounds(year, month)
+    exp_rows = pf_finance_repo.expense_by_category_scoped(
+        db, profile_id, start, end, account_id=account_id, expense_category_id=None
+    )
+    inc_rows = pf_finance_repo.income_by_category(db, profile_id, start, end, account_id=account_id)
+    merged: list[dict[str, Any]] = []
+    for n, v in exp_rows:
+        label = (n or '').strip() or '(Uncategorized expense)'
+        merged.append({'name': f'Expense · {label[:40]}', 'value': round(float(v), 2)})
+    for n, v in inc_rows:
+        label = (n or '').strip() or '(Uncategorized income)'
+        merged.append({'name': f'Income · {label[:40]}', 'value': round(float(v), 2)})
+    merged.sort(key=lambda x: -x['value'])
+    return {
+        'module': 'financial-statement',
+        'period': {'start': start.isoformat(), 'end': end.isoformat()},
+        'slices': merged[:18],
+    }
+
+
+def financial_statement_table(
+    db: Session,
+    profile_id: int,
+    *,
+    granularity: Granularity,
+    year: int,
+    month: int | None = None,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    t = financial_statement_trend(
+        db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
+    )
+    return {'module': 'financial-statement', 'granularity': t['granularity'], 'rows': t['series']}
+
+
+def financial_statement_insights(
+    db: Session,
+    profile_id: int,
+    *,
+    year: int,
+    month: int,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    start, end = _month_bounds(year, month)
+    inc = float(pf_finance_repo.sum_income_scoped(db, profile_id, start, end, account_id=account_id))
+    exp = float(pf_finance_repo.sum_expense_scoped(db, profile_id, start, end, account_id=account_id))
+    bullets: list[str] = [
+        f'Income statement for period: income {inc:,.2f}, expense {exp:,.2f}, net {inc - exp:,.2f}.',
+    ]
+    summ = financial_statement_summary(db, profile_id, year=year, month=month, account_id=account_id)
+    mom = summ.get('comparison', {}).get('month_over_month_pct')
+    if mom is not None:
+        bullets.append(f'Net result vs prior month: {mom:+.1f}%.')
+    if exp > inc + 0.01 and inc > 0.01:
+        bullets.append('Warning: expenses exceeded income this month.')
+    elif inc <= 0.01 and exp > 0.01:
+        bullets.append('Note: expenses recorded with no income in scope for this month.')
+    if not inc and not exp:
+        bullets.append('No income or expense entries in this scope for the selected month.')
+    return {
+        'module': 'financial-statement',
+        'insights': bullets,
+        'warnings': [b for b in bullets if b.lower().startswith('warning')],
+    }
+
+
 def movements_summary(
     db: Session,
     profile_id: int,
@@ -705,11 +856,37 @@ def credit_cards_packaged(
     *,
     year: int,
     month: int,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     try:
         util = pf_credit_card_repo.card_utilization_rows(db, profile_id)
     except Exception:
         util = []
+    if card_id is not None:
+        card = pf_credit_card_repo.get_card_for_profile(db, card_id, profile_id)
+        if card is None:
+            return {
+                'module': 'credit-cards',
+                'partial': False,
+                'filters': {'card_id': card_id},
+                'kpis': {
+                    'total_amount': 0.0,
+                    'inflow': 0.0,
+                    'outflow': 0.0,
+                    'net_change': 0.0,
+                    'average': 0.0,
+                    'highest': 0.0,
+                    'lowest': 0.0,
+                },
+                'utilization_pct': 0.0,
+                'available': 0.0,
+                'used': 0.0,
+                'limit': 0.0,
+                'dashboard': {},
+                'cards': [],
+                'card_label': None,
+            }
+        util = [r for r in util if int(r.get('card_id') or 0) == int(card_id)]
     total_limit = sum(float(r.get('card_limit') or 0) for r in util)
     used = sum(float(r.get('used_amount') or 0) for r in util)
     avail = max(0.0, total_limit - used)
@@ -719,21 +896,56 @@ def credit_cards_packaged(
     except Exception:
         dash = {}
     try:
-        spend_m = pf_credit_card_repo.total_spend_month(db, profile_id, period_year=year, period_month=month)
+        spend_m = pf_credit_card_repo.total_spend_month(
+            db, profile_id, period_year=year, period_month=month, card_id=card_id
+        )
     except Exception:
         spend_m = 0.0
-    paid_m = float(dash.get('paid_this_month') or 0)
-    return {
+    if card_id is not None:
+        try:
+            paid_m = pf_credit_card_repo.sum_card_payments_month(
+                db, profile_id, card_id, period_year=year, period_month=month
+            )
+        except Exception:
+            paid_m = 0.0
+    else:
+        paid_m = float(dash.get('paid_this_month') or 0)
+
+    if card_id is not None:
+        start, end = _month_bounds(year, month)
+        try:
+            daily_pairs = pf_analytics_repo.credit_card_spend_daily_series(
+                db, profile_id, start, end, card_id=card_id
+            )
+        except Exception:
+            daily_pairs = []
+        by_d = {d: float(v) for d, v in daily_pairs}
+        amounts: list[float] = []
+        cur = start
+        while cur <= end:
+            amounts.append(by_d.get(cur, 0.0))
+            cur += timedelta(days=1)
+        avg_d = round(sum(amounts) / len(amounts), 2) if amounts else 0.0
+        hi_d = round(max(amounts), 2) if amounts else 0.0
+        lo_d = round(min(amounts), 2) if amounts else 0.0
+        avg_kpi, hi_kpi, lo_kpi = avg_d, hi_d, lo_d
+    else:
+        avg_kpi = round(used / max(len(util), 1), 2)
+        hi_kpi = round(max((float(r.get('used_amount') or 0) for r in util), default=0.0), 2)
+        lo_kpi = round(min((float(r.get('used_amount') or 0) for r in util), default=0.0), 2)
+
+    out: dict[str, Any] = {
         'module': 'credit-cards',
         'partial': False,
+        'filters': {'card_id': card_id},
         'kpis': {
             'total_amount': round(total_limit, 2),
             'inflow': round(paid_m, 2),
             'outflow': round(float(spend_m), 2),
             'net_change': round(paid_m - float(spend_m), 2),
-            'average': round(used / max(len(util), 1), 2),
-            'highest': round(max((float(r.get('used_amount') or 0) for r in util), default=0.0), 2),
-            'lowest': round(min((float(r.get('used_amount') or 0) for r in util), default=0.0), 2),
+            'average': avg_kpi,
+            'highest': hi_kpi,
+            'lowest': lo_kpi,
         },
         'utilization_pct': pct,
         'available': round(avail, 2),
@@ -742,6 +954,9 @@ def credit_cards_packaged(
         'dashboard': dash,
         'cards': util,
     }
+    if card_id is not None and util:
+        out['card_label'] = str(util[0].get('card_name') or '')
+    return out
 
 
 def loans_packaged(db: Session, profile_id: int) -> dict[str, Any]:
@@ -932,14 +1147,23 @@ def credit_cards_trend(
     granularity: Granularity,
     year: int,
     month: int | None = None,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     if granularity == 'daily':
         if month is None:
             month = date.today().month
         start, end = _month_bounds(year, month)
         try:
-            spend = dict(pf_analytics_repo.credit_card_spend_daily_series(db, profile_id, start, end))
-            pay = dict(pf_analytics_repo.credit_card_payment_daily_series(db, profile_id, start, end))
+            spend = dict(
+                pf_analytics_repo.credit_card_spend_daily_series(
+                    db, profile_id, start, end, card_id=card_id
+                )
+            )
+            pay = dict(
+                pf_analytics_repo.credit_card_payment_daily_series(
+                    db, profile_id, start, end, card_id=card_id
+                )
+            )
         except Exception:
             spend, pay = {}, {}
         keys = sorted(set(spend) | set(pay))
@@ -955,8 +1179,12 @@ def credit_cards_trend(
         ]
         return {'module': 'credit-cards', 'granularity': 'daily', 'series': series}
     try:
-        sm = dict(pf_analytics_repo.credit_card_spend_monthly_series_year(db, profile_id, year))
-        pm = dict(pf_analytics_repo.credit_card_payment_monthly_series_year(db, profile_id, year))
+        sm = dict(
+            pf_analytics_repo.credit_card_spend_monthly_series_year(db, profile_id, year, card_id=card_id)
+        )
+        pm = dict(
+            pf_analytics_repo.credit_card_payment_monthly_series_year(db, profile_id, year, card_id=card_id)
+        )
     except Exception:
         sm, pm = {}, {}
     keys = sorted(set(sm) | set(pm))
@@ -973,6 +1201,41 @@ def credit_cards_trend(
     return {'module': 'credit-cards', 'granularity': 'monthly', 'series': series}
 
 
+def credit_cards_distribution(
+    db: Session,
+    profile_id: int,
+    *,
+    year: int,
+    month: int,
+    card_id: int | None = None,
+) -> dict[str, Any]:
+    start, end = _month_bounds(year, month)
+    try:
+        cat_pairs = pf_analytics_repo.credit_card_spend_by_category_range(
+            db, profile_id, start, end, card_id=card_id
+        )
+    except Exception:
+        cat_pairs = []
+    if card_id is None:
+        try:
+            card_pairs = pf_analytics_repo.credit_card_spend_by_card_range(
+                db, profile_id, start, end, card_id=None
+            )
+        except Exception:
+            card_pairs = []
+        if not card_pairs:
+            slices = [{'name': n, 'value': round(v, 2)} for n, v in cat_pairs]
+        else:
+            slices = [{'name': n, 'value': round(v, 2)} for n, v in card_pairs]
+    else:
+        slices = [{'name': n, 'value': round(v, 2)} for n, v in cat_pairs]
+    return {
+        'module': 'credit-cards',
+        'period': {'start': start.isoformat(), 'end': end.isoformat()},
+        'slices': slices,
+    }
+
+
 def credit_cards_table(
     db: Session,
     profile_id: int,
@@ -980,8 +1243,11 @@ def credit_cards_table(
     granularity: Granularity,
     year: int,
     month: int | None = None,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
-    t = credit_cards_trend(db, profile_id, granularity=granularity, year=year, month=month)
+    t = credit_cards_trend(
+        db, profile_id, granularity=granularity, year=year, month=month, card_id=card_id
+    )
     return {'module': 'credit-cards', 'granularity': t['granularity'], 'rows': t['series']}
 
 
@@ -991,20 +1257,33 @@ def credit_cards_insights(
     *,
     year: int,
     month: int,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     bullets: list[str] = []
     warnings: list[str] = []
     try:
-        pkg = credit_cards_packaged(db, profile_id, year=year, month=month)
+        pkg = credit_cards_packaged(db, profile_id, year=year, month=month, card_id=card_id)
     except Exception:
         pkg = {'kpis': {}, 'utilization_pct': 0.0}
+    if card_id is not None and pkg.get('card_label'):
+        bullets.append(f'Selected card: {pkg["card_label"]}.')
     util = float(pkg.get('utilization_pct') or 0.0)
     if util > 30:
         warnings.append(f'High credit utilization ({util:.1f}%).')
     start, end = _month_bounds(year, month)
     try:
-        spend = sum(v for _, v in pf_analytics_repo.credit_card_spend_daily_series(db, profile_id, start, end))
-        paid = sum(v for _, v in pf_analytics_repo.credit_card_payment_daily_series(db, profile_id, start, end))
+        spend = sum(
+            v
+            for _, v in pf_analytics_repo.credit_card_spend_daily_series(
+                db, profile_id, start, end, card_id=card_id
+            )
+        )
+        paid = sum(
+            v
+            for _, v in pf_analytics_repo.credit_card_payment_daily_series(
+                db, profile_id, start, end, card_id=card_id
+            )
+        )
     except Exception:
         spend, paid = 0.0, 0.0
     if spend > paid + 0.01:
@@ -1490,6 +1769,7 @@ def dispatch_summary(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_summary(
@@ -1504,7 +1784,7 @@ def dispatch_summary(
     if module == 'movements':
         return movements_summary(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
-        return credit_cards_packaged(db, profile_id, year=year, month=month)
+        return credit_cards_packaged(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
         return loans_summary(db, profile_id, year=year, month=month)
     if module == 'investments':
@@ -1513,8 +1793,10 @@ def dispatch_summary(
         return liabilities_summary(db, profile_id, year=year, month=month)
     if module == 'assets':
         return assets_summary(db, profile_id, year=year, month=month)
-    if module in ('financial-statement', 'reports'):
-        return _stub(module, 'Use Financial statement or Reports hub for full statements; analytics API is ledger-focused.')
+    if module == 'financial-statement':
+        return financial_statement_summary(db, profile_id, year=year, month=month, account_id=account_id)
+    if module == 'reports':
+        return _stub(module, 'Open the Reports hub for balance sheet and detailed statements; analytics here is P&L-style only.')
     return _stub(module, 'Unknown module')
 
 
@@ -1529,6 +1811,7 @@ def dispatch_trend(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_trend(
@@ -1555,7 +1838,9 @@ def dispatch_trend(
     if module == 'movements':
         return movements_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
-        return credit_cards_trend(db, profile_id, granularity=granularity, year=year, month=month)
+        return credit_cards_trend(
+            db, profile_id, granularity=granularity, year=year, month=month, card_id=card_id
+        )
     if module == 'loans':
         return loans_trend(db, profile_id, granularity=granularity, year=year, month=month)
     if module == 'investments':
@@ -1564,6 +1849,10 @@ def dispatch_trend(
         return liabilities_trend(db, profile_id, granularity=granularity, year=year, month=month)
     if module == 'assets':
         return assets_trend(db, profile_id, granularity=granularity, year=year, month=month)
+    if module == 'financial-statement':
+        return financial_statement_trend(
+            db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
+        )
     return {'module': module, 'granularity': granularity, 'series': [], 'partial': True}
 
 
@@ -1577,6 +1866,7 @@ def dispatch_distribution(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_distribution(
@@ -1601,17 +1891,7 @@ def dispatch_distribution(
     if module == 'movements':
         return movements_distribution(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
-        start, end = _month_bounds(year, month)
-        try:
-            pairs = pf_analytics_repo.credit_card_spend_by_card_range(db, profile_id, start, end)
-        except Exception:
-            pairs = []
-        if not pairs:
-            try:
-                pairs = pf_analytics_repo.credit_card_spend_by_category_range(db, profile_id, start, end)
-            except Exception:
-                pairs = []
-        return {'module': 'credit-cards', 'slices': [{'name': n, 'value': round(v, 2)} for n, v in pairs]}
+        return credit_cards_distribution(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
         return loans_distribution(db, profile_id, year=year, month=month)
     if module == 'investments':
@@ -1620,6 +1900,8 @@ def dispatch_distribution(
         return liabilities_distribution(db, profile_id, year=year, month=month)
     if module == 'assets':
         return assets_distribution(db, profile_id, year=year, month=month)
+    if module == 'financial-statement':
+        return financial_statement_distribution(db, profile_id, year=year, month=month, account_id=account_id)
     return {'module': module, 'slices': [], 'partial': True}
 
 
@@ -1634,6 +1916,7 @@ def dispatch_table(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_table(
@@ -1660,7 +1943,9 @@ def dispatch_table(
     if module == 'movements':
         return movements_table(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
-        return credit_cards_table(db, profile_id, granularity=granularity, year=year, month=month)
+        return credit_cards_table(
+            db, profile_id, granularity=granularity, year=year, month=month, card_id=card_id
+        )
     if module == 'loans':
         return loans_table(db, profile_id, granularity=granularity, year=year, month=month)
     if module == 'investments':
@@ -1669,6 +1954,10 @@ def dispatch_table(
         return liabilities_table(db, profile_id, granularity=granularity, year=year, month=month)
     if module == 'assets':
         return assets_table(db, profile_id, granularity=granularity, year=year, month=month)
+    if module == 'financial-statement':
+        return financial_statement_table(
+            db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
+        )
     return {'module': module, 'granularity': granularity, 'rows': [], 'partial': True}
 
 
@@ -1682,6 +1971,7 @@ def dispatch_insights(
     account_id: int | None = None,
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
+    card_id: int | None = None,
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_insights(
@@ -1706,7 +1996,7 @@ def dispatch_insights(
     if module == 'movements':
         return movements_insights(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
-        return credit_cards_insights(db, profile_id, year=year, month=month)
+        return credit_cards_insights(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
         return loans_insights(db, profile_id, year=year, month=month)
     if module == 'investments':
@@ -1715,4 +2005,6 @@ def dispatch_insights(
         return liabilities_insights(db, profile_id, year=year, month=month)
     if module == 'assets':
         return assets_insights(db, profile_id, year=year, month=month)
+    if module == 'financial-statement':
+        return financial_statement_insights(db, profile_id, year=year, month=month, account_id=account_id)
     return {'module': module, 'insights': [], 'warnings': [], 'partial': True}

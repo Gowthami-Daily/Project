@@ -277,7 +277,7 @@ export function getDailyLedger(fromDate, toDate, financeAccountId) {
   return pfFetch(`/pf/reports/daily?${q}`)
 }
 
-/** @param {{ month?: string, type?: 'daily'|'monthly', year?: number, accountId?: string|number, expenseCategoryId?: string|number, incomeCategoryId?: string|number }} p */
+/** @param {{ month?: string, type?: 'daily'|'monthly', year?: number, accountId?: string|number, expenseCategoryId?: string|number, incomeCategoryId?: string|number, cardId?: string|number }} p */
 function pfAnalyticsQuery(p = {}) {
   const q = new URLSearchParams()
   if (p.month) q.set('month', String(p.month))
@@ -294,6 +294,10 @@ function pfAnalyticsQuery(p = {}) {
   if (p.incomeCategoryId != null && String(p.incomeCategoryId).trim() !== '') {
     const id = Number(p.incomeCategoryId)
     if (id && !Number.isNaN(id)) q.set('income_category_id', String(id))
+  }
+  if (p.cardId != null && String(p.cardId).trim() !== '') {
+    const id = Number(p.cardId)
+    if (id && !Number.isNaN(id)) q.set('card_id', String(id))
   }
   const s = q.toString()
   return s ? `?${s}` : ''
@@ -419,6 +423,24 @@ export function getPfBudgetInsights(p) {
 
 export function listPfBudgets() {
   return pfFetch('/pf/budget/budgets')
+}
+
+/**
+ * Create a category budget (FinanceParticipant).
+ * @param {{ name?: string, expenseCategoryId?: number, categoryLabel?: string, monthlyBudget: number, startDate: string, endDate?: string|null }} body
+ */
+export function createPfBudget(body) {
+  return pfFetch('/pf/budget/budgets', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: body.name?.trim() || null,
+      expense_category_id: body.expenseCategoryId ?? null,
+      category_label: body.categoryLabel?.trim() || null,
+      monthly_budget: body.monthlyBudget,
+      start_date: body.startDate,
+      end_date: body.endDate || null,
+    }),
+  })
 }
 
 /** @param {{ year: number, type?: string }} p */

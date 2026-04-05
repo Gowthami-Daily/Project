@@ -27,6 +27,7 @@ import {
   getPfAnalyticsSummary,
   getPfAnalyticsTable,
   getPfAnalyticsTrend,
+  listCreditCards,
   listFinanceAccounts,
   listPfExpenseCategories,
   listPfIncomeCategories,
@@ -94,6 +95,8 @@ export default function PfAnalyticsHubPage() {
   const [accounts, setAccounts] = useState([])
   const [expCats, setExpCats] = useState([])
   const [incCats, setIncCats] = useState([])
+  const [creditCards, setCreditCards] = useState([])
+  const [creditCardId, setCreditCardId] = useState('')
 
   const [summary, setSummary] = useState(null)
   const [trend, setTrend] = useState(null)
@@ -110,8 +113,9 @@ export default function PfAnalyticsHubPage() {
     if (accountId) p.accountId = accountId
     if (module === 'expenses' && expenseCat) p.expenseCategoryId = expenseCat
     if (module === 'income' && incomeCat) p.incomeCategoryId = incomeCat
+    if (module === 'credit-cards' && creditCardId) p.cardId = creditCardId
     return p
-  }, [monthStr, accountId, module, expenseCat, incomeCat])
+  }, [monthStr, accountId, module, expenseCat, incomeCat, creditCardId])
 
   const trendTableParams = useMemo(() => {
     const p = { ...baseParams, type: granularity, year }
@@ -122,21 +126,24 @@ export default function PfAnalyticsHubPage() {
     let cancelled = false
     ;(async () => {
       try {
-        const [ac, ec, ic] = await Promise.all([
+        const [ac, ec, ic, cc] = await Promise.all([
           listFinanceAccounts({ limit: 300 }),
           listPfExpenseCategories(),
           listPfIncomeCategories(),
+          listCreditCards({ limit: 200 }),
         ])
         if (!cancelled) {
           setAccounts(ac || [])
           setExpCats(ec || [])
           setIncCats(ic || [])
+          setCreditCards(Array.isArray(cc) ? cc : [])
         }
       } catch {
         if (!cancelled) {
           setAccounts([])
           setExpCats([])
           setIncCats([])
+          setCreditCards([])
         }
       }
     })()
@@ -176,6 +183,10 @@ export default function PfAnalyticsHubPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (module !== 'credit-cards') setCreditCardId('')
+  }, [module])
 
   const kpis = summary?.kpis
   const series = trend?.series || []
@@ -272,6 +283,23 @@ export default function PfAnalyticsHubPage() {
             <p className="mb-1 text-xs font-semibold text-[var(--pf-text-muted)]">Account / bank</p>
             <PfBankAccountSelect value={accountId} onChange={setAccountId} accounts={accounts} />
           </div>
+          {module === 'credit-cards' ? (
+            <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs font-semibold text-[var(--pf-text-muted)]">
+              Credit card
+              <select
+                value={creditCardId}
+                onChange={(e) => setCreditCardId(e.target.value)}
+                className={pfSelectCompact}
+              >
+                <option value="">All cards</option>
+                {creditCards.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.card_name || `Card #${c.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {module === 'expenses' ? (
             <label className="flex min-w-[10rem] flex-col gap-1 text-xs font-semibold text-[var(--pf-text-muted)]">
               Category
@@ -327,32 +355,46 @@ export default function PfAnalyticsHubPage() {
                         ? 'Credit limit'
                         : module === 'accounts'
                           ? 'Total balance'
-                          : module === 'loans'
-                            ? 'Repayments (month)'
-                            : 'Total',
+                          : module === 'financial-statement'
+                            ? 'Total activity'
+                            : module === 'loans'
+                              ? 'Repayments (month)'
+                              : 'Total',
                     value: formatInr(kpis.total_amount),
                     sub:
                       module === 'credit-cards' && summary?.utilization_pct != null
                         ? `${summary.utilization_pct}% utilized`
                         : module === 'accounts'
                           ? 'Book balance (filtered account or all)'
-                          : module === 'loans' && summary?.portfolio?.outstanding_lent != null
-                            ? `Outstanding lent ${formatInr(summary.portfolio.outstanding_lent)}`
-                          : undefined,
+                          : module === 'financial-statement'
+                            ? 'Income + expense in scope'
+                            : module === 'loans' && summary?.portfolio?.outstanding_lent != null
+                              ? `Outstanding lent ${formatInr(summary.portfolio.outstanding_lent)}`
+                            : undefined,
                     tone: 'asset',
                   }),
                   kpiCard({
-                    label: module === 'credit-cards' ? 'Payments (month)' : 'Inflow',
+                    label:
+                      module === 'credit-cards'
+                        ? 'Payments (month)'
+                        : module === 'financial-statement'
+                          ? 'Income'
+                          : 'Inflow',
                     value: formatInr(kpis.inflow),
                     tone: 'inflow',
                   }),
                   kpiCard({
-                    label: module === 'credit-cards' ? 'Spend (month)' : 'Outflow',
+                    label:
+                      module === 'credit-cards'
+                        ? 'Spend (month)'
+                        : module === 'financial-statement'
+                          ? 'Expense'
+                          : 'Outflow',
                     value: formatInr(kpis.outflow),
                     tone: 'outflow',
                   }),
                   kpiCard({
-                    label: module === 'accounts' ? 'Net (month)' : 'Net',
+                    label: module === 'accounts' || module === 'financial-statement' ? 'Net (month)' : 'Net',
                     value: formatInr(kpis.net_change),
                     sub:
                       mom != null ? (
@@ -369,21 +411,36 @@ export default function PfAnalyticsHubPage() {
                     tone: kpis.net_change >= 0 ? 'inflow' : 'outflow',
                   }),
                   kpiCard({
-                    label: module === 'accounts' ? 'Avg daily net' : 'Average',
+                    label: module === 'accounts' || module === 'financial-statement' ? 'Avg daily net' : 'Average',
                     value: formatInr(kpis.average),
-                    sub: module === 'accounts' ? 'Income − expense, all days in month' : undefined,
+                    sub:
+                      module === 'accounts' || module === 'financial-statement'
+                        ? 'Income − expense, all days in month'
+                        : module === 'credit-cards' && creditCardId
+                          ? 'Mean daily spend (calendar days)'
+                          : undefined,
                     tone: undefined,
                   }),
                   kpiCard({
-                    label: module === 'accounts' ? 'Best day net' : 'Highest',
+                    label: module === 'accounts' || module === 'financial-statement' ? 'Best day net' : 'Highest',
                     value: formatInr(kpis.highest),
-                    sub: module === 'accounts' ? 'Strongest single day' : undefined,
+                    sub:
+                      module === 'accounts' || module === 'financial-statement'
+                        ? 'Strongest single day'
+                        : module === 'credit-cards' && creditCardId
+                          ? 'Highest spend day'
+                          : undefined,
                     tone: undefined,
                   }),
                   kpiCard({
-                    label: module === 'accounts' ? 'Lowest day net' : 'Lowest',
+                    label: module === 'accounts' || module === 'financial-statement' ? 'Lowest day net' : 'Lowest',
                     value: formatInr(kpis.lowest),
-                    sub: module === 'accounts' ? 'Weakest single day' : undefined,
+                    sub:
+                      module === 'accounts' || module === 'financial-statement'
+                        ? 'Weakest single day'
+                        : module === 'credit-cards' && creditCardId
+                          ? 'Lowest spend day (incl. zero)'
+                          : undefined,
                     tone: undefined,
                   }),
                 ]
@@ -392,6 +449,12 @@ export default function PfAnalyticsHubPage() {
 
           {module === 'credit-cards' && summary?.utilization_pct != null ? (
             <p className="text-xs text-[var(--pf-text-muted)]">
+              {summary.card_label ? (
+                <>
+                  <span className="font-semibold text-[var(--pf-text)]">{summary.card_label}</span>
+                  {' · '}
+                </>
+              ) : null}
               Utilization {summary.utilization_pct}% · used {formatInr(summary.used)} · available{' '}
               {formatInr(summary.available)}
             </p>

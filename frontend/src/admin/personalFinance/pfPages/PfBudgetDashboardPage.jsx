@@ -15,6 +15,7 @@ import {
   YAxis,
 } from 'recharts'
 import {
+  createPfBudget,
   getPfBudgetDistribution,
   getPfBudgetInsights,
   getPfBudgetSummary,
@@ -22,6 +23,7 @@ import {
   getPfBudgetTrend,
   listPfExpenseCategories,
 } from '../api.js'
+import { AppButton, AppInput, AppModal } from '../pfDesignSystem/index.js'
 import PfSegmentedControl from '../PfSegmentedControl.jsx'
 import { formatInr } from '../pfFormat.js'
 import { pfSelectCompact, pfTable, pfTableWrap, pfTd, pfTdRight, pfTh, pfThRight, pfTrHover } from '../pfFormStyles.js'
@@ -34,6 +36,10 @@ const DONUT = ['#2563eb', '#22c55e', '#eab308', '#a855f7', '#f97316']
 
 const card =
   'rounded-[12px] border border-[var(--pf-border)] bg-[var(--pf-card)]/85 p-5 shadow-[var(--pf-shadow)] backdrop-blur-md dark:bg-white/[0.04]'
+
+function monthFirstDay(ym) {
+  return `${ym}-01`
+}
 
 export default function PfBudgetDashboardPage() {
   const [monthStr, setMonthStr] = useState(() => {
@@ -50,6 +56,15 @@ export default function PfBudgetDashboardPage() {
   const [insights, setInsights] = useState(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addName, setAddName] = useState('')
+  const [addCatId, setAddCatId] = useState('')
+  const [addLabel, setAddLabel] = useState('')
+  const [addAmount, setAddAmount] = useState('')
+  const [addStart, setAddStart] = useState(() => monthFirstDay(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`))
+  const [addEnd, setAddEnd] = useState('')
+  const [addSubmitting, setAddSubmitting] = useState(false)
+  const [addErr, setAddErr] = useState('')
 
   useEffect(() => {
     listPfExpenseCategories().then(setCats).catch(() => setCats([]))
@@ -91,6 +106,50 @@ export default function PfBudgetDashboardPage() {
     load()
   }, [load])
 
+  useEffect(() => {
+    if (addOpen) {
+      setAddStart(monthFirstDay(monthStr))
+      setAddErr('')
+    }
+  }, [addOpen, monthStr])
+
+  async function handleCreateBudget(e) {
+    e.preventDefault()
+    setAddErr('')
+    const amt = Number(String(addAmount).replace(/,/g, ''))
+    if (!amt || Number.isNaN(amt) || amt <= 0) {
+      setAddErr('Enter a positive monthly budget amount.')
+      return
+    }
+    const idNum = addCatId ? Number(addCatId) : NaN
+    if (!addCatId && !addLabel.trim()) {
+      setAddErr('Choose an expense category or enter a custom category label.')
+      return
+    }
+    setAddSubmitting(true)
+    try {
+      await createPfBudget({
+        name: addName.trim() || undefined,
+        expenseCategoryId: addCatId && !Number.isNaN(idNum) ? idNum : undefined,
+        categoryLabel: addCatId ? undefined : addLabel.trim(),
+        monthlyBudget: amt,
+        startDate: addStart,
+        endDate: addEnd.trim() || null,
+      })
+      setAddOpen(false)
+      setAddName('')
+      setAddCatId('')
+      setAddLabel('')
+      setAddAmount('')
+      setAddEnd('')
+      await load()
+    } catch (er) {
+      setAddErr(er?.message || 'Could not save budget')
+    } finally {
+      setAddSubmitting(false)
+    }
+  }
+
   const kpis = summary?.kpis
   const slices = distribution?.slices || []
   const trendSeries = trend?.series || []
@@ -125,10 +184,88 @@ export default function PfBudgetDashboardPage() {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--pf-text)]">Budget</h1>
-        <p className="mt-1 text-sm text-[var(--pf-text-muted)]">Category budgets vs actual spend — daily and monthly views.</p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--pf-text)]">Budget</h1>
+          <p className="mt-1 text-sm text-[var(--pf-text-muted)]">Category budgets vs actual spend — daily and monthly views.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAddOpen(true)}
+          className="inline-flex shrink-0 items-center justify-center rounded-[10px] bg-[var(--pf-primary)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-95"
+        >
+          + Add budget
+        </button>
       </header>
+
+      <AppModal open={addOpen} onClose={() => !addSubmitting && setAddOpen(false)} title="Add budget">
+        <form onSubmit={handleCreateBudget} className="space-y-3">
+          <p className="text-xs text-[var(--pf-text-muted)]">
+            Set a monthly limit for an expense category. Spend is matched using your expense entries for the selected month.
+          </p>
+          {addErr ? <p className="text-sm text-red-600 dark:text-red-400">{addErr}</p> : null}
+          <label className="block text-xs font-semibold text-[var(--pf-text-muted)]">
+            Label (optional)
+            <AppInput className="mt-1 w-full" value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="e.g. Groceries cap" />
+          </label>
+          <label className="block text-xs font-semibold text-[var(--pf-text-muted)]">
+            Expense category
+            <select
+              value={addCatId}
+              onChange={(e) => {
+                setAddCatId(e.target.value)
+                if (e.target.value) setAddLabel('')
+              }}
+              className={`${pfSelectCompact} mt-1 w-full`}
+            >
+              <option value="">— Pick category —</option>
+              {cats.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-[11px] text-[var(--pf-text-muted)]">Or, if the category is not in the list:</p>
+          <label className="block text-xs font-semibold text-[var(--pf-text-muted)]">
+            Custom category name
+            <AppInput
+              className="mt-1 w-full"
+              value={addLabel}
+              onChange={(e) => setAddLabel(e.target.value)}
+              placeholder="Only if you did not pick a category above"
+              disabled={Boolean(addCatId)}
+            />
+          </label>
+          <label className="block text-xs font-semibold text-[var(--pf-text-muted)]">
+            Monthly budget (₹)
+            <AppInput
+              className="mt-1 w-full"
+              inputMode="decimal"
+              value={addAmount}
+              onChange={(e) => setAddAmount(e.target.value)}
+              placeholder="e.g. 15000"
+              required
+            />
+          </label>
+          <label className="block text-xs font-semibold text-[var(--pf-text-muted)]">
+            Effective from
+            <input type="date" className={`${pfSelectCompact} mt-1 w-full`} value={addStart} onChange={(e) => setAddStart(e.target.value)} required />
+          </label>
+          <label className="block text-xs font-semibold text-[var(--pf-text-muted)]">
+            Until (optional)
+            <input type="date" className={`${pfSelectCompact} mt-1 w-full`} value={addEnd} onChange={(e) => setAddEnd(e.target.value)} />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <AppButton type="button" variant="ghost" disabled={addSubmitting} onClick={() => setAddOpen(false)}>
+              Cancel
+            </AppButton>
+            <AppButton type="submit" disabled={addSubmitting}>
+              {addSubmitting ? 'Saving…' : 'Save budget'}
+            </AppButton>
+          </div>
+        </form>
+      </AppModal>
 
       <div className={`${card} flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-end`}>
         <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--pf-text-muted)]">

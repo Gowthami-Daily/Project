@@ -1479,7 +1479,14 @@ def apply_cc_statement_payment_from_liability(
         bill.status = 'PARTIAL'
 
 
-def total_spend_month(db: Session, profile_id: int, *, period_year: int, period_month: int) -> float:
+def total_spend_month(
+    db: Session,
+    profile_id: int,
+    *,
+    period_year: int,
+    period_month: int,
+    card_id: int | None = None,
+) -> float:
     """Sum of credit card transaction amounts (swipes) in the calendar month."""
     ms = date(period_year, period_month, 1)
     me = date(period_year, period_month, calendar.monthrange(period_year, period_month)[1])
@@ -1491,6 +1498,33 @@ def total_spend_month(db: Session, profile_id: int, *, period_year: int, period_
             CreditCard.profile_id == profile_id,
             CreditCardTransaction.transaction_date >= ms,
             CreditCardTransaction.transaction_date <= me,
+        )
+    )
+    if card_id is not None:
+        stmt = stmt.where(CreditCardTransaction.card_id == card_id)
+    return round(float(db.scalar(stmt) or 0), 2)
+
+
+def sum_card_payments_month(
+    db: Session,
+    profile_id: int,
+    card_id: int,
+    *,
+    period_year: int,
+    period_month: int,
+) -> float:
+    """Total bill payments recorded for one card in the calendar month."""
+    ms = date(period_year, period_month, 1)
+    me = date(period_year, period_month, calendar.monthrange(period_year, period_month)[1])
+    stmt = (
+        select(func.coalesce(func.sum(CreditCardPayment.amount), 0))
+        .select_from(CreditCardPayment)
+        .join(CreditCard, CreditCard.id == CreditCardPayment.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardPayment.card_id == card_id,
+            CreditCardPayment.payment_date >= ms,
+            CreditCardPayment.payment_date <= me,
         )
     )
     return round(float(db.scalar(stmt) or 0), 2)
