@@ -182,7 +182,14 @@ export default function PfAnalyticsHubPage() {
   const slices = distribution?.slices || []
   const rows = table?.rows || []
   const mom = summary?.comparison?.month_over_month_pct
-  const partial = summary?.partial
+  const partial = Boolean(summary?.partial || trend?.partial)
+  const noTrendData = !loading && !err && series.length === 0
+  const noSliceData = !loading && !err && slices.length === 0
+  const noTableRows = !loading && !err && rows.length === 0
+  const tableColCount =
+    1 +
+    (rows[0]?.amount != null || series[0]?.amount != null ? 1 : 0) +
+    (rows[0]?.inflow != null || series[0]?.inflow != null ? 3 : 0)
 
   const barCompareData = useMemo(() => {
     if (!series.length) return []
@@ -320,13 +327,17 @@ export default function PfAnalyticsHubPage() {
                         ? 'Credit limit'
                         : module === 'accounts'
                           ? 'Total balance'
-                          : 'Total',
+                          : module === 'loans'
+                            ? 'Repayments (month)'
+                            : 'Total',
                     value: formatInr(kpis.total_amount),
                     sub:
                       module === 'credit-cards' && summary?.utilization_pct != null
                         ? `${summary.utilization_pct}% utilized`
                         : module === 'accounts'
                           ? 'Book balance (filtered account or all)'
+                          : module === 'loans' && summary?.portfolio?.outstanding_lent != null
+                            ? `Outstanding lent ${formatInr(summary.portfolio.outstanding_lent)}`
                           : undefined,
                     tone: 'asset',
                   }),
@@ -393,28 +404,34 @@ export default function PfAnalyticsHubPage() {
                 <PresentationChartLineIcon className="h-4 w-4 text-[var(--pf-primary)]" />
                 <h2 className="text-[13px] font-semibold text-[var(--pf-text)]">Trend</h2>
               </div>
-              <div style={{ height: 260 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  {barCompareData[0]?.inflow != null ? (
-                    <LineChart data={barCompareData}>
-                      <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
-                      <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} width={48} />
-                      <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
-                      <Legend />
-                      <Line type="monotone" dataKey="inflow" name="Inflow" stroke={COL_INFLOW} strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="outflow" name="Outflow" stroke={COL_OUTFLOW} strokeWidth={2} dot={false} />
-                    </LineChart>
-                  ) : (
-                    <LineChart data={barCompareData}>
-                      <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
-                      <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 10 }} width={48} />
-                      <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
-                      <Line type="monotone" dataKey="amount" name="Amount" stroke={COL_ASSET} strokeWidth={2} dot={false} />
-                    </LineChart>
-                  )}
-                </ResponsiveContainer>
+              <div style={{ height: 260 }} className="relative">
+                {noTrendData ? (
+                  <div className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                    No data for this period
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    {barCompareData[0]?.inflow != null ? (
+                      <LineChart data={barCompareData}>
+                        <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                        <YAxis tick={{ fontSize: 10 }} width={48} />
+                        <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
+                        <Legend />
+                        <Line type="monotone" dataKey="inflow" name="Inflow" stroke={COL_INFLOW} strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="outflow" name="Outflow" stroke={COL_OUTFLOW} strokeWidth={2} dot={false} />
+                      </LineChart>
+                    ) : (
+                      <LineChart data={barCompareData}>
+                        <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                        <YAxis tick={{ fontSize: 10 }} width={48} />
+                        <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
+                        <Line type="monotone" dataKey="amount" name="Amount" stroke={COL_ASSET} strokeWidth={2} dot={false} />
+                      </LineChart>
+                    )}
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
 
@@ -423,26 +440,32 @@ export default function PfAnalyticsHubPage() {
                 <ChartPieIcon className="h-4 w-4 text-[var(--pf-primary)]" />
                 <h2 className="text-[13px] font-semibold text-[var(--pf-text)]">Breakdown</h2>
               </div>
-              <div style={{ height: 260 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={slices.length ? slices : [{ name: '—', value: 1 }]}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={58}
-                      outerRadius={88}
-                      paddingAngle={2}
-                    >
-                      {(slices.length ? slices : [{ name: '—', value: 1 }]).map((_, i) => (
-                        <Cell key={i} fill={DONUT_COLS[i % DONUT_COLS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
-                  </PieChart>
-                </ResponsiveContainer>
+              <div style={{ height: 260 }} className="relative">
+                {noSliceData ? (
+                  <div className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                    No breakdown for this period
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={slices}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={58}
+                        outerRadius={88}
+                        paddingAngle={2}
+                      >
+                        {slices.map((_, i) => (
+                          <Cell key={i} fill={DONUT_COLS[i % DONUT_COLS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
 
@@ -451,24 +474,30 @@ export default function PfAnalyticsHubPage() {
                 <ChartBarIcon className="h-4 w-4 text-[var(--pf-primary)]" />
                 <h2 className="text-[13px] font-semibold text-[var(--pf-text)]">Inflow vs outflow</h2>
               </div>
-              <div style={{ height: 260 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={barCompareData}>
-                    <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
-                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} width={48} />
-                    <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
-                    <Legend />
-                    {barCompareData[0]?.inflow != null ? (
-                      <>
-                        <Bar dataKey="inflow" name="Inflow" fill={COL_INFLOW} radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="outflow" name="Outflow" fill={COL_OUTFLOW} radius={[4, 4, 0, 0]} />
-                      </>
-                    ) : (
-                      <Bar dataKey="amount" name="Amount" fill={COL_ASSET} radius={[4, 4, 0, 0]} />
-                    )}
-                  </BarChart>
-                </ResponsiveContainer>
+              <div style={{ height: 260 }} className="relative">
+                {noTrendData ? (
+                  <div className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                    No data for this period
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={barCompareData}>
+                      <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
+                      <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 10 }} width={48} />
+                      <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
+                      <Legend />
+                      {barCompareData[0]?.inflow != null ? (
+                        <>
+                          <Bar dataKey="inflow" name="Inflow" fill={COL_INFLOW} radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="outflow" name="Outflow" fill={COL_OUTFLOW} radius={[4, 4, 0, 0]} />
+                        </>
+                      ) : (
+                        <Bar dataKey="amount" name="Amount" fill={COL_ASSET} radius={[4, 4, 0, 0]} />
+                      )}
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
 
@@ -477,16 +506,22 @@ export default function PfAnalyticsHubPage() {
                 <ChartBarIcon className="h-4 w-4 text-[var(--pf-primary)]" />
                 <h2 className="text-[13px] font-semibold text-[var(--pf-text)]">Distribution</h2>
               </div>
-              <div style={{ height: 260 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={distBarData} layout="vertical" margin={{ left: 8, right: 16 }}>
-                    <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
-                    <XAxis type="number" tick={{ fontSize: 10 }} />
-                    <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10 }} />
-                    <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
-                    <Bar dataKey="value" fill={COL_ASSET} radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <div style={{ height: 260 }} className="relative">
+                {noSliceData ? (
+                  <div className="flex h-full items-center justify-center text-sm text-[var(--pf-text-muted)]">
+                    No distribution for this period
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={distBarData} layout="vertical" margin={{ left: 8, right: 16 }}>
+                      <CartesianGrid stroke={chartGridStroke} strokeDasharray="3 3" />
+                      <XAxis type="number" tick={{ fontSize: 10 }} />
+                      <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 10 }} />
+                      <Tooltip contentStyle={chartTooltipBox} formatter={(v) => formatInr(v)} />
+                      <Bar dataKey="value" fill={COL_ASSET} radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
           </div>
@@ -512,19 +547,27 @@ export default function PfAnalyticsHubPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i} className={pfTrHover}>
-                      <td className={pfTd}>{r.label || r.date || r.month}</td>
-                      {r.amount != null ? <td className={pfTdRight}>{formatInr(r.amount)}</td> : null}
-                      {r.inflow != null ? (
-                        <>
-                          <td className={`${pfTdRight} text-emerald-600 dark:text-emerald-400`}>{formatInr(r.inflow)}</td>
-                          <td className={`${pfTdRight} text-red-600 dark:text-red-400`}>{formatInr(r.outflow)}</td>
-                          <td className={pfTdRight}>{formatInr(r.net)}</td>
-                        </>
-                      ) : null}
+                  {noTableRows ? (
+                    <tr className={pfTrHover}>
+                      <td colSpan={Math.max(tableColCount, 1)} className={`${pfTd} text-[var(--pf-text-muted)]`}>
+                        No rows for this period
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    rows.map((r, i) => (
+                      <tr key={i} className={pfTrHover}>
+                        <td className={pfTd}>{r.label || r.date || r.month}</td>
+                        {r.amount != null ? <td className={pfTdRight}>{formatInr(r.amount)}</td> : null}
+                        {r.inflow != null ? (
+                          <>
+                            <td className={`${pfTdRight} text-emerald-600 dark:text-emerald-400`}>{formatInr(r.inflow)}</td>
+                            <td className={`${pfTdRight} text-red-600 dark:text-red-400`}>{formatInr(r.outflow)}</td>
+                            <td className={pfTdRight}>{formatInr(r.net)}</td>
+                          </>
+                        ) : null}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
