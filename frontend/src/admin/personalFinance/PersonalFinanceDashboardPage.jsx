@@ -925,7 +925,7 @@ export default function PersonalFinanceDashboardPage() {
 
   return (
     <div className="w-full min-w-0 max-w-full space-y-6 sm:space-y-8">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <header className="relative z-40 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <h1 className="font-semibold leading-tight tracking-tight text-[var(--pf-text)] [font-size:clamp(1.125rem,2.8vw,1.75rem)]">
             Dashboard
@@ -944,7 +944,7 @@ export default function PersonalFinanceDashboardPage() {
         </div>
       </header>
 
-      <div className="flex flex-col gap-3 md:hidden">
+      <div className="relative z-40 flex flex-col gap-3 md:hidden">
         {financialHealthCard}
         <div className="flex flex-col gap-2">
           {overviewRangeControl}

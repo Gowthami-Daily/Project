@@ -6,7 +6,7 @@ Does not alter dairy ERP models in ``models.py`` — link farm profiles via ``Pr
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from fastapi_service.database import Base
@@ -629,3 +629,234 @@ class AccountTransaction(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[int | None] = mapped_column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+# --- Daily analytics snapshots (TASK 5) — populated by a future ETL job; APIs use live SQL today. ---
+
+
+class AccountDailyBalance(Base):
+    """Per-account or aggregate (finance_account_id=0) closing balance and day cashflow."""
+
+    __tablename__ = 'account_daily_balance'
+    __table_args__ = (
+        UniqueConstraint('profile_id', 'snapshot_date', 'finance_account_id', name='uq_account_daily_balance'),
+        Index('ix_account_daily_balance_profile_date', 'profile_id', 'snapshot_date'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    finance_account_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    closing_balance: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    daily_inflow: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    daily_outflow: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ExpenseDailySummary(Base):
+    __tablename__ = 'expense_daily_summary'
+    __table_args__ = (
+        UniqueConstraint(
+            'profile_id', 'day', 'expense_category_id', 'finance_account_id', name='uq_expense_daily_summary'
+        ),
+        Index('ix_expense_daily_summary_profile_day', 'profile_id', 'day'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    expense_category_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    finance_account_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    total_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    txn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class IncomeDailySummary(Base):
+    __tablename__ = 'income_daily_summary'
+    __table_args__ = (
+        UniqueConstraint(
+            'profile_id', 'day', 'income_category_id', 'finance_account_id', name='uq_income_daily_summary'
+        ),
+        Index('ix_income_daily_summary_profile_day', 'profile_id', 'day'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    income_category_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    finance_account_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    total_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    txn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CreditCardDailySummary(Base):
+    __tablename__ = 'credit_card_daily_summary'
+    __table_args__ = (
+        UniqueConstraint('profile_id', 'day', 'credit_card_id', name='uq_cc_daily_summary'),
+        Index('ix_cc_daily_summary_profile_day', 'profile_id', 'day'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    credit_card_id: Mapped[int] = mapped_column(Integer, ForeignKey('credit_cards.id', ondelete='CASCADE'), nullable=False, index=True)
+    spend_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    payment_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    closing_utilization_pct: Mapped[float | None] = mapped_column(Numeric(8, 3), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class LoanDailySummary(Base):
+    __tablename__ = 'loan_daily_summary'
+    __table_args__ = (
+        UniqueConstraint('profile_id', 'day', 'loan_id', name='uq_loan_daily_summary'),
+        Index('ix_loan_daily_summary_profile_day', 'profile_id', 'day'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    loan_id: Mapped[int] = mapped_column(Integer, ForeignKey('loans.id', ondelete='CASCADE'), nullable=False, index=True)
+    outstanding_principal: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    emi_due_today: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    emi_received_today: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InvestmentDailyValue(Base):
+    __tablename__ = 'investment_daily_value'
+    __table_args__ = (
+        UniqueConstraint('profile_id', 'day', 'investment_id', name='uq_investment_daily_value'),
+        Index('ix_investment_daily_profile_day', 'profile_id', 'day'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    investment_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('finance_investments.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    market_value: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    invested_amount: Mapped[float | None] = mapped_column(Numeric(16, 2), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# --- Tax (Indian FY), budgets, financial health ---
+
+
+class PfTaxTransaction(Base):
+    """TDS, advance tax, self-assessment, refunds."""
+
+    __tablename__ = 'pf_tax_transactions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    txn_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    txn_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
+    fy_start_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PfTaxDeduction(Base):
+    """Chapter VI-A and major deductions (80C, 80D, NPS, HRA, 24, …)."""
+
+    __tablename__ = 'pf_tax_deductions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    deduction_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    section: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
+    fy_start_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PfIncomeTaxSource(Base):
+    """Declared income buckets for tax computation."""
+
+    __tablename__ = 'pf_income_tax_sources'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    source_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    income_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
+    fy_start_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PfCapitalGain(Base):
+    """Capital gains lots (STCG/LTCG rules applied in service layer)."""
+
+    __tablename__ = 'pf_capital_gains'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    buy_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    sell_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    asset_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    buy_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
+    sell_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
+    gain_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    tax_amount: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False, default=0)
+    fy_start_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PfBudget(Base):
+    """Category budget over a date range (monthly_budget pro-rated by active days in month)."""
+
+    __tablename__ = 'pf_budgets'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    expense_category_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('pf_expense_categories.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    category_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    monthly_budget: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PfBudgetExpenseMap(Base):
+    """Optional: pin specific expenses to a budget line."""
+
+    __tablename__ = 'pf_budget_expense_map'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    budget_id: Mapped[int] = mapped_column(Integer, ForeignKey('pf_budgets.id', ondelete='CASCADE'), nullable=False, index=True)
+    expense_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('finance_expenses.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    __table_args__ = (UniqueConstraint('budget_id', 'expense_id', name='uq_pf_budget_expense'),)
+
+
+class PfFinancialHealthHistory(Base):
+    """Daily/monthly snapshots of composite health score and factor metrics."""
+
+    __tablename__ = 'pf_financial_health_history'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    score: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
+    savings_rate: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    emergency_fund_months: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    credit_utilization: Mapped[float | None] = mapped_column(Numeric(8, 2), nullable=True)
+    debt_to_income: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    investment_ratio: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    net_worth_growth: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    expense_stability: Mapped[float | None] = mapped_column(Numeric(8, 4), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (Index('ix_pf_health_profile_day', 'profile_id', 'snapshot_date'),)

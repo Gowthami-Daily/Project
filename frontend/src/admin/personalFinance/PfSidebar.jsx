@@ -3,12 +3,16 @@ import {
   ArrowsRightLeftIcon,
   BanknotesIcon,
   BuildingLibraryIcon,
+  CalculatorIcon,
   ChartBarIcon,
   ChartPieIcon,
   CreditCardIcon,
   Cog6ToothIcon,
-  ReceiptPercentIcon,
+  HeartIcon,
   HomeIcon,
+  PresentationChartLineIcon,
+  ReceiptPercentIcon,
+  RectangleStackIcon,
   ScaleIcon,
   ShieldCheckIcon,
   TableCellsIcon,
@@ -181,6 +185,13 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
           <div className="flex flex-col">
             <NavItem to="/personal-finance" end icon={HomeIcon} label="Dashboard" collapsed={collapsed} onNavigate={closeIfMobile} />
             <NavItem
+              to="/personal-finance/analytics"
+              icon={PresentationChartLineIcon}
+              label="Analytics"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
+            <NavItem
               to="/personal-finance/monthly-statements"
               icon={TableCellsIcon}
               label="Financial statement"
@@ -188,6 +199,27 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
               onNavigate={closeIfMobile}
             />
             <NavItem to="/personal-finance/reports" icon={ChartBarIcon} label="Reports" collapsed={collapsed} onNavigate={closeIfMobile} />
+          </div>
+
+          <SectionLabel collapsed={collapsed} showDividerBefore>
+            Planning
+          </SectionLabel>
+          <div className="flex flex-col">
+            <NavItem to="/personal-finance/tax" icon={CalculatorIcon} label="Tax" collapsed={collapsed} onNavigate={closeIfMobile} />
+            <NavItem
+              to="/personal-finance/budget"
+              icon={RectangleStackIcon}
+              label="Budget"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
+            <NavItem
+              to="/personal-finance/financial-health"
+              icon={HeartIcon}
+              label="Financial health"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
           </div>
 
           <SectionLabel collapsed={collapsed} showDividerBefore>

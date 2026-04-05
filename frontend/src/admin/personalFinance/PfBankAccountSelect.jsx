@@ -84,7 +84,7 @@ export default function PfBankAccountSelect({ value, onChange, accounts = [], cl
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.15, ease: [0.25, 0.1, 0.25, 1] }}
-            className="absolute left-0 right-0 z-50 mt-1.5 overflow-hidden rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)]/95 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.45)] backdrop-blur-xl dark:bg-[rgba(22,24,28,0.97)] dark:shadow-[0_12px_40px_-8px_rgba(0,0,0,0.65)]"
+            className="absolute left-0 right-0 z-[200] mt-1.5 max-h-[min(18rem,calc(100dvh-8rem))] overflow-hidden rounded-xl border border-[var(--pf-border)] bg-[var(--pf-card)]/95 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.45)] backdrop-blur-xl dark:bg-[rgba(22,24,28,0.97)] dark:shadow-[0_12px_40px_-8px_rgba(0,0,0,0.65)]"
           >
             <ul
               id={`${listId}-listbox`}

@@ -1479,6 +1479,23 @@ def apply_cc_statement_payment_from_liability(
         bill.status = 'PARTIAL'
 
 
+def total_spend_month(db: Session, profile_id: int, *, period_year: int, period_month: int) -> float:
+    """Sum of credit card transaction amounts (swipes) in the calendar month."""
+    ms = date(period_year, period_month, 1)
+    me = date(period_year, period_month, calendar.monthrange(period_year, period_month)[1])
+    stmt = (
+        select(func.coalesce(func.sum(CreditCardTransaction.amount), 0))
+        .select_from(CreditCardTransaction)
+        .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+        .where(
+            CreditCard.profile_id == profile_id,
+            CreditCardTransaction.transaction_date >= ms,
+            CreditCardTransaction.transaction_date <= me,
+        )
+    )
+    return round(float(db.scalar(stmt) or 0), 2)
+
+
 def dashboard_summary(
     db: Session, profile_id: int, *, period_year: int, period_month: int
 ) -> dict:

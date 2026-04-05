@@ -277,6 +277,171 @@ export function getDailyLedger(fromDate, toDate, financeAccountId) {
   return pfFetch(`/pf/reports/daily?${q}`)
 }
 
+/** @param {{ month?: string, type?: 'daily'|'monthly', year?: number, accountId?: string|number, expenseCategoryId?: string|number, incomeCategoryId?: string|number }} p */
+function pfAnalyticsQuery(p = {}) {
+  const q = new URLSearchParams()
+  if (p.month) q.set('month', String(p.month))
+  if (p.type) q.set('type', String(p.type))
+  if (p.year != null && p.year !== '') q.set('year', String(p.year))
+  if (p.accountId != null && String(p.accountId).trim() !== '') {
+    const id = Number(p.accountId)
+    if (id && !Number.isNaN(id)) q.set('account_id', String(id))
+  }
+  if (p.expenseCategoryId != null && String(p.expenseCategoryId).trim() !== '') {
+    const id = Number(p.expenseCategoryId)
+    if (id && !Number.isNaN(id)) q.set('expense_category_id', String(id))
+  }
+  if (p.incomeCategoryId != null && String(p.incomeCategoryId).trim() !== '') {
+    const id = Number(p.incomeCategoryId)
+    if (id && !Number.isNaN(id)) q.set('income_category_id', String(id))
+  }
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+/** Modular PF analytics hub (TASK 6). ``module`` slug: expenses, income, accounts, movements, credit-cards, … */
+export function getPfAnalyticsSummary(module, params) {
+  return pfFetch(`/pf/analytics/${encodeURIComponent(module)}/summary${pfAnalyticsQuery(params)}`)
+}
+
+export function getPfAnalyticsTrend(module, params) {
+  return pfFetch(`/pf/analytics/${encodeURIComponent(module)}/trend${pfAnalyticsQuery(params)}`)
+}
+
+export function getPfAnalyticsDistribution(module, params) {
+  return pfFetch(`/pf/analytics/${encodeURIComponent(module)}/distribution${pfAnalyticsQuery(params)}`)
+}
+
+export function getPfAnalyticsTable(module, params) {
+  return pfFetch(`/pf/analytics/${encodeURIComponent(module)}/table${pfAnalyticsQuery(params)}`)
+}
+
+export function getPfAnalyticsInsights(module, params) {
+  return pfFetch(`/pf/analytics/${encodeURIComponent(module)}/insights${pfAnalyticsQuery(params)}`)
+}
+
+/** @param {Record<string, string|number|undefined|null>} o */
+function pfQuery(o) {
+  const q = new URLSearchParams()
+  Object.entries(o).forEach(([k, v]) => {
+    if (v != null && v !== '') q.set(k, String(v))
+  })
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+/** @param {{ fyStart: number, year: number, month: number, regime?: string, type?: string }} p */
+export function getPfTaxSummary(p) {
+  return pfFetch(
+    `/pf/tax/summary${pfQuery({
+      fy_start: p.fyStart,
+      year: p.year,
+      month: p.month,
+      regime: p.regime ?? 'old',
+      type: p.type ?? 'daily',
+    })}`,
+  )
+}
+
+export function getPfTaxTrend(p) {
+  return pfFetch(
+    `/pf/tax/trend${pfQuery({
+      fy_start: p.fyStart,
+      year: p.year,
+      month: p.month,
+      type: p.type ?? 'daily',
+    })}`,
+  )
+}
+
+export function getPfTaxDistribution(p) {
+  return pfFetch(`/pf/tax/distribution${pfQuery({ fy_start: p.fyStart, regime: p.regime ?? 'old' })}`)
+}
+
+export function getPfTaxTable(p) {
+  return pfFetch(
+    `/pf/tax/table${pfQuery({
+      fy_start: p.fyStart,
+      year: p.year,
+      month: p.month,
+      regime: p.regime ?? 'old',
+      type: p.type ?? 'daily',
+    })}`,
+  )
+}
+
+export function getPfTaxInsights(p) {
+  return pfFetch(`/pf/tax/insights${pfQuery({ fy_start: p.fyStart, regime: p.regime ?? 'old' })}`)
+}
+
+export function getPfTaxCalculation(p) {
+  return pfFetch(`/pf/tax/tax-calculation${pfQuery({ fy_start: p.fyStart, regime: p.regime ?? 'old' })}`)
+}
+
+/** @param {{ month: string, type?: string, expenseCategoryId?: string|number }} p — month YYYY-MM */
+export function getPfBudgetSummary(p) {
+  return pfFetch(
+    `/pf/budget/summary${pfQuery({
+      month: p.month,
+      type: p.type ?? 'daily',
+      expense_category_id: p.expenseCategoryId,
+    })}`,
+  )
+}
+
+export function getPfBudgetTrend(p) {
+  return pfFetch(
+    `/pf/budget/trend${pfQuery({
+      month: p.month,
+      type: p.type ?? 'daily',
+      expense_category_id: p.expenseCategoryId,
+    })}`,
+  )
+}
+
+export function getPfBudgetDistribution(p) {
+  return pfFetch(`/pf/budget/distribution${pfQuery({ month: p.month, expense_category_id: p.expenseCategoryId })}`)
+}
+
+export function getPfBudgetTable(p) {
+  return pfFetch(
+    `/pf/budget/table${pfQuery({
+      month: p.month,
+      type: p.type ?? 'daily',
+      expense_category_id: p.expenseCategoryId,
+    })}`,
+  )
+}
+
+export function getPfBudgetInsights(p) {
+  return pfFetch(`/pf/budget/insights${pfQuery({ month: p.month, expense_category_id: p.expenseCategoryId })}`)
+}
+
+export function listPfBudgets() {
+  return pfFetch('/pf/budget/budgets')
+}
+
+/** @param {{ year: number, type?: string }} p */
+export function getPfFinancialHealthTrend(p) {
+  return pfFetch(`/pf/financial-health/trend${pfQuery({ year: p.year, type: p.type ?? 'monthly' })}`)
+}
+
+export function getPfFinancialHealthSummary() {
+  return pfFetch('/pf/financial-health/summary')
+}
+
+export function getPfFinancialHealthTable(year) {
+  return pfFetch(`/pf/financial-health/table${pfQuery({ year })}`)
+}
+
+export function getPfFinancialHealthInsights() {
+  return pfFetch('/pf/financial-health/insights')
+}
+
+export function postPfFinancialHealthRecalculate() {
+  return pfFetch('/pf/financial-health/recalculate', { method: 'POST', body: JSON.stringify({}) })
+}
+
 const fin = (path, opts) => pfFetch(`/pf/finance${path}`, opts)
 
 export function listFinanceAccounts(params = {}) {
