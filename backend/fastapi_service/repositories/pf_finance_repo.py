@@ -3213,8 +3213,12 @@ def add_loan_principal_disbursement(
     return ln
 
 
+# Balances at or below this (₹) may be closed as fully settled (interest/rounding lint; sub-rupee UI hides as ₹0).
+_LOAN_CLOSE_DUST_MAX_INR = 1.0
+
+
 def close_loan_if_settled(db: Session, profile_id: int, loan_id: int) -> Loan:
-    """Set loan status to CLOSED when nothing is outstanding (EMI or manual balance)."""
+    """Set loan status to CLOSED when nothing material is outstanding (EMI or manual balance)."""
     ln = get_loan_for_profile(db, loan_id, profile_id)
     if ln is None:
         raise ValueError('Loan not found')
@@ -3222,8 +3226,10 @@ def close_loan_if_settled(db: Session, profile_id: int, loan_id: int) -> Loan:
         raise ValueError('Loan is already closed')
     due = loan_balance_due_for_loan(db, ln)
     due_rd = round(float(due), 2)
-    if due_rd > 0.01:
-        raise ValueError('Outstanding balance remains — collect payments before closing')
+    if due_rd > _LOAN_CLOSE_DUST_MAX_INR:
+        raise ValueError(
+            f'Outstanding balance remains (₹{due_rd:,.2f}). Record a payment or reduce the balance before closing.'
+        )
     ln.status = 'CLOSED'
     if ln.remaining_amount is not None:
         ln.remaining_amount = 0.0

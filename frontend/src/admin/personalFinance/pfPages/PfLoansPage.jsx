@@ -2173,7 +2173,7 @@ export default function PfLoansPage() {
                                 : '—'}
                           </td>
                           <td className={pfTdRight}>{formatInr(p.total_paid)}</td>
-                          <td className={pfTdRight}>{formatInr(p.balance_remaining)}</td>
+                          <td className={pfTdRight}>{formatInrPrecise(p.balance_remaining)}</td>
                         </tr>
                       ))
                     )}
