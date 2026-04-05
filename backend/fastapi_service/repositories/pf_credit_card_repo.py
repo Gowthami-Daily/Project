@@ -1421,6 +1421,64 @@ def pay_bill(
     return pay
 
 
+def apply_cc_statement_payment_from_liability(
+    db: Session,
+    profile_id: int,
+    *,
+    liability_id: int,
+    amount_paid: float,
+    payment_date: date,
+    finance_account_id: int | None,
+    payment_mode: str,
+    movement_id: int | None,
+    notes: str | None = None,
+) -> None:
+    """Mirror ``record_liability_payment`` into ``credit_card_bills`` (and ``credit_card_payments`` for BANK).
+
+    CC utilization and available credit are derived from unbilled swipes plus ``bill.total_amount - amount_paid``,
+    not from the liability row alone. Without this, paying a ``CREDIT_CARD_STATEMENT`` liability leaves the bill
+    unchanged so the Credit Card page stays wrong.
+    """
+    bill = db.scalars(
+        select(CreditCardBill)
+        .join(CreditCard, CreditCard.id == CreditCardBill.card_id)
+        .where(CreditCardBill.liability_id == liability_id, CreditCard.profile_id == profile_id)
+    ).first()
+    if bill is None:
+        return
+    rem = _bill_remaining(bill)
+    if rem <= 0.005:
+        return
+    amt = min(float(amount_paid), rem)
+    if amt <= 0:
+        return
+
+    mode = str(payment_mode or 'CASH').strip().upper()
+    if mode == 'BANK':
+        if finance_account_id is None:
+            return
+        pay = CreditCardPayment(
+            card_id=bill.card_id,
+            bill_id=bill.id,
+            amount=amt,
+            payment_date=payment_date,
+            from_account_id=finance_account_id,
+            reference_number=None,
+            notes=(notes or '').strip() or None,
+        )
+        db.add(pay)
+        db.flush()
+
+    new_paid = round(float(bill.amount_paid) + amt, 2)
+    bill.amount_paid = new_paid
+    if new_paid + 0.01 >= float(bill.total_amount):
+        bill.status = 'PAID'
+    elif payment_date > bill.due_date:
+        bill.status = 'OVERDUE'
+    else:
+        bill.status = 'PARTIAL'
+
+
 def dashboard_summary(
     db: Session, profile_id: int, *, period_year: int, period_month: int
 ) -> dict:

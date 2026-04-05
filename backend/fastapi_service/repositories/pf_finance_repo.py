@@ -744,6 +744,7 @@ def record_liability_payment(
     if ap > due + 0.02:
         raise ValueError('Payment exceeds outstanding balance')
     mode = str(payment_mode or 'CASH').strip().upper()
+    is_cc_statement = str(ln.liability_type or '').upper() == 'CREDIT_CARD_STATEMENT'
     acc_id: int | None = None
     if mode == 'BANK':
         if finance_account_id is None:
@@ -752,16 +753,19 @@ def record_liability_payment(
             raise ValueError('Account not found')
         acc_id = finance_account_id
         _bump_account_balance(db, profile_id, acc_id, -ap)
+        txn_notes = (notes.strip() or None) if notes else None
+        if is_cc_statement and txn_notes is None:
+            txn_notes = 'Credit card statement payment'
         db.add(
             AccountTransaction(
                 profile_id=profile_id,
                 account_id=acc_id,
-                transaction_type='LOAN_LIABILITY_PAYMENT',
+                transaction_type='CC_BILL_PAYMENT' if is_cc_statement else 'LOAN_LIABILITY_PAYMENT',
                 amount=ap,
                 movement_id=movement_id,
                 entry_date=payment_date,
                 reference_number=None,
-                notes=(notes.strip() or None) if notes else None,
+                notes=txn_notes,
                 created_by=None,
             )
         )
@@ -783,6 +787,20 @@ def record_liability_payment(
     if ln.outstanding_amount <= 0.01:
         ln.outstanding_amount = 0.0
         ln.status = 'CLOSED'
+    if is_cc_statement:
+        from fastapi_service.repositories import pf_credit_card_repo
+
+        pf_credit_card_repo.apply_cc_statement_payment_from_liability(
+            db,
+            profile_id,
+            liability_id=liability_id,
+            amount_paid=ap,
+            payment_date=payment_date,
+            finance_account_id=acc_id,
+            payment_mode=mode,
+            movement_id=movement_id,
+            notes=notes,
+        )
     db.commit()
     db.refresh(row)
     return row
