@@ -72,6 +72,7 @@ const LIABILITY_TYPES = [
   { value: 'BNPL', label: 'BNPL (buy now pay later)' },
   { value: 'BORROWED_PERSON', label: 'Borrowed from person' },
   { value: 'BILLS_PAYABLE', label: 'Bills payable' },
+  { value: 'CHIT_FUND_PAYABLE', label: 'Chit fund payable' },
   { value: 'OTHER', label: 'Other' },
 ]
 

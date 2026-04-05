@@ -1,4 +1,5 @@
 import {
+  BanknotesIcon,
   BuildingOffice2Icon,
   BuildingStorefrontIcon,
   DevicePhoneMobileIcon,
@@ -26,14 +27,22 @@ import {
   YAxis,
 } from 'recharts'
 import {
+  createChitFund,
   createFinanceAsset,
+  deleteChitFund,
   deleteFinanceAsset,
   getFinanceAsset,
   getAssetsSummary,
+  listChitFunds,
+  listFinanceAccounts,
   listFinanceAssets,
   listFinanceLiabilities,
+  patchChitFund,
   patchFinanceAsset,
   pfFetchBlob,
+  postChitFundContribution,
+  postChitFundDividend,
+  postChitFundForemanCommission,
   setPfToken,
   triggerDownloadBlob,
 } from '../api.js'
@@ -76,6 +85,7 @@ const ASSET_TYPES = [
   { value: 'FURNITURE', label: 'Furniture' },
   { value: 'ELECTRONICS', label: 'Electronics' },
   { value: 'BUSINESS_ASSET', label: 'Business asset' },
+  { value: 'CHIT_FUND', label: 'Chit fund (book entry)' },
   { value: 'OTHER', label: 'Other' },
 ]
 
@@ -96,6 +106,25 @@ function num(v) {
   if (v == null || v === '') return 0
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
+}
+
+function emptyChitForm() {
+  return {
+    chit_name: '',
+    total_value: '',
+    monthly_amount: '',
+    start_date: new Date().toISOString().slice(0, 10),
+    duration_months: '',
+    auction_taken: false,
+    auction_month: '',
+    amount_received: '',
+    foreman_commission: '',
+    dividend_received: '',
+    status: 'RUNNING',
+    auction_receipt_finance_account_id: '',
+    auction_booking_date: '',
+    notes: '',
+  }
 }
 
 function emptyForm() {
@@ -145,6 +174,7 @@ function assetTypeIcon(type) {
   if (t === 'EQUIPMENT_MACHINERY' || t === 'BUSINESS_ASSET') return <WrenchScrewdriverIcon className={cls} aria-hidden />
   if (t === 'ELECTRONICS') return <DevicePhoneMobileIcon className={cls} aria-hidden />
   if (t === 'FURNITURE') return <BuildingStorefrontIcon className={cls} aria-hidden />
+  if (t === 'CHIT_FUND') return <BanknotesIcon className={cls} aria-hidden />
   return <BuildingOffice2Icon className={cls} aria-hidden />
 }
 
@@ -214,6 +244,62 @@ export default function PfAssetsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [assetExportBusy, setAssetExportBusy] = useState(false)
   const [assetStmtBusy, setAssetStmtBusy] = useState(false)
+  const [chitFunds, setChitFunds] = useState([])
+  const [accounts, setAccounts] = useState([])
+  const [showChitModal, setShowChitModal] = useState(false)
+  const [chitEditId, setChitEditId] = useState(null)
+  const [chitForm, setChitForm] = useState(emptyChitForm)
+  const [chitSubmitting, setChitSubmitting] = useState(false)
+  const [chitLedgerChitId, setChitLedgerChitId] = useState(null)
+  const [chitLedgerKind, setChitLedgerKind] = useState(null)
+  const [chitLedgerDate, setChitLedgerDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [chitLedgerAmount, setChitLedgerAmount] = useState('')
+  const [chitLedgerAccountId, setChitLedgerAccountId] = useState('')
+  const [chitLedgerMode, setChitLedgerMode] = useState('BANK')
+  const [chitLedgerBusy, setChitLedgerBusy] = useState(false)
+
+  const editingChit = useMemo(
+    () => (chitEditId ? chitFunds.find((c) => c.id === chitEditId) : null),
+    [chitFunds, chitEditId],
+  )
+
+  const chitCalcPreview = useMemo(() => {
+    const tv = num(chitForm.total_value)
+    const dur = Math.max(0, parseInt(String(chitForm.duration_months || '0'), 10) || 0)
+    const totalPaidSaved = editingChit != null ? num(editingChit.total_paid) : 0
+    const monthsPaid = editingChit != null ? num(editingChit.months_paid ?? editingChit.contributions_count) : 0
+    const arInput = chitForm.amount_received === '' ? null : Number(chitForm.amount_received)
+    const arFromServer = editingChit?.amount_received != null ? num(editingChit.amount_received) : null
+    const amountReceived = arInput != null && !Number.isNaN(arInput) ? arInput : arFromServer
+    const discountAuto =
+      chitForm.auction_taken && amountReceived != null && !Number.isNaN(amountReceived)
+        ? Math.max(0, Math.round((tv - amountReceived) * 100) / 100)
+        : 0
+    const remainingPayable =
+      chitForm.auction_taken && tv > 0 ? Math.max(0, Math.round((tv - totalPaidSaved) * 100) / 100) : 0
+    const remainingMonths =
+      editingChit != null ? num(editingChit.remaining_months) : dur
+    const assetValue =
+      chitForm.auction_taken && amountReceived != null && !Number.isNaN(amountReceived)
+        ? Math.max(0, Math.round((totalPaidSaved - amountReceived) * 100) / 100)
+        : totalPaidSaved
+    const netProfit =
+      num(chitForm.dividend_received) - num(chitForm.foreman_commission) - (chitForm.auction_taken ? discountAuto : 0)
+    return {
+      totalPaid: totalPaidSaved,
+      monthsPaid,
+      discountAuto,
+      remainingPayable,
+      remainingMonths,
+      assetValue,
+      netProfit: Math.round(netProfit * 100) / 100,
+    }
+  }, [chitForm, editingChit])
+
+  const chitLedgerTarget = useMemo(
+    () => (chitLedgerChitId != null ? chitFunds.find((c) => c.id === chitLedgerChitId) : null),
+    [chitFunds, chitLedgerChitId],
+  )
 
   const liabilityById = useMemo(() => {
     const m = new Map()
@@ -235,9 +321,16 @@ export default function PfAssetsPage() {
     setLoading(true)
     setError('')
     try {
-      const [list, sum] = await Promise.all([listFinanceAssets(queryParams), getAssetsSummary()])
+      const [list, sum, chits, acc] = await Promise.all([
+        listFinanceAssets(queryParams),
+        getAssetsSummary(),
+        listChitFunds().catch(() => []),
+        listFinanceAccounts().catch(() => []),
+      ])
       setRows(Array.isArray(list) ? list : [])
       setSummary(sum || null)
+      setChitFunds(Array.isArray(chits) ? chits : [])
+      setAccounts(Array.isArray(acc) ? acc : [])
     } catch (e) {
       if (e.status === 401) {
         setPfToken(null)
@@ -294,6 +387,7 @@ export default function PfAssetsPage() {
   const portfolioPurchase = num(summary?.total_purchase_value)
   const portfolioEffective = num(summary?.total_current_value)
   const gainVsCost = portfolioEffective - portfolioPurchase
+  const chitFundsNetKpi = num(summary?.chit_funds_net_value)
 
   const allocationPie = useMemo(() => allocationByType(rows), [rows])
   const trendSeries = useMemo(() => cumulativePurchaseByYear(rows), [rows])
@@ -472,6 +566,178 @@ export default function PfAssetsPage() {
     }
   }
 
+  function openChitAdd() {
+    setChitEditId(null)
+    setChitForm(emptyChitForm())
+    setShowChitModal(true)
+  }
+
+  function openChitEdit(c) {
+    setChitEditId(c.id)
+    setChitForm({
+      chit_name: c.chit_name ?? '',
+      total_value: String(c.total_value ?? ''),
+      monthly_amount: String(c.monthly_amount ?? ''),
+      start_date: c.start_date ? String(c.start_date).slice(0, 10) : '',
+      duration_months: String(c.duration_months ?? ''),
+      auction_taken: Boolean(c.auction_taken),
+      auction_month: c.auction_month != null ? String(c.auction_month) : '',
+      amount_received: c.amount_received != null ? String(c.amount_received) : '',
+      foreman_commission: String(c.foreman_commission ?? ''),
+      dividend_received: String(c.dividend_received ?? ''),
+      status: String(c.status || 'RUNNING').toUpperCase(),
+      auction_receipt_finance_account_id: '',
+      auction_booking_date: '',
+      notes: c.notes ?? '',
+    })
+    setShowChitModal(true)
+  }
+
+  async function handleChitSave(e) {
+    e.preventDefault()
+    setChitSubmitting(true)
+    setError('')
+    try {
+      const accRaw = chitForm.auction_receipt_finance_account_id
+      const accId =
+        accRaw === '' || accRaw == null ? null : Number(accRaw)
+      const base = {
+        chit_name: chitForm.chit_name.trim(),
+        total_value: Number(chitForm.total_value) || 0,
+        monthly_amount: Number(chitForm.monthly_amount) || 0,
+        start_date: chitForm.start_date,
+        duration_months: Math.max(0, parseInt(String(chitForm.duration_months || '0'), 10) || 0),
+        auction_taken: chitForm.auction_taken,
+        auction_month: chitForm.auction_month === '' ? null : Number(chitForm.auction_month),
+        amount_received: chitForm.amount_received === '' ? null : Number(chitForm.amount_received),
+        foreman_commission: Number(chitForm.foreman_commission) || 0,
+        dividend_received: Number(chitForm.dividend_received) || 0,
+        status: chitForm.status || 'RUNNING',
+        notes: chitForm.notes?.trim() || null,
+        ...(chitForm.auction_taken && accId != null && !Number.isNaN(accId)
+          ? { auction_receipt_finance_account_id: accId }
+          : {}),
+        ...(chitForm.auction_taken && (chitForm.auction_booking_date || chitForm.start_date)
+          ? { auction_booking_date: chitForm.auction_booking_date || chitForm.start_date }
+          : {}),
+      }
+      if (chitEditId) {
+        await patchChitFund(chitEditId, base)
+      } else {
+        await createChitFund(base)
+      }
+      setShowChitModal(false)
+      await load()
+      refresh()
+    } catch (err) {
+      if (err.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        setError(err.message || 'Could not save chit fund')
+      }
+    } finally {
+      setChitSubmitting(false)
+    }
+  }
+
+  async function handleChitDelete(c) {
+    if (!window.confirm(`Delete chit “${c.chit_name}”? Contribution history will be removed.`)) return
+    try {
+      await deleteChitFund(c.id)
+      await load()
+      refresh()
+    } catch (err) {
+      if (err.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        window.alert(err.message || 'Delete failed')
+      }
+    }
+  }
+
+  function openChitLedger(chitId, kind) {
+    setChitLedgerChitId(chitId)
+    setChitLedgerKind(kind)
+    setChitLedgerDate(new Date().toISOString().slice(0, 10))
+    setChitLedgerAmount('')
+    setChitLedgerMode(kind === 'contribution' ? 'BANK' : 'BANK')
+    setChitLedgerAccountId(accounts[0]?.id != null ? String(accounts[0].id) : '')
+  }
+
+  async function submitChitLedger(e) {
+    e.preventDefault()
+    if (!chitLedgerChitId || !chitLedgerKind) return
+    const amt = Number(chitLedgerAmount)
+    if (!amt || amt <= 0) {
+      setError('Enter a valid amount')
+      return
+    }
+    const acc = chitLedgerAccountId ? Number(chitLedgerAccountId) : null
+    if (chitLedgerKind !== 'contribution' && chitLedgerKind !== 'commission' && !acc) {
+      setError('Select bank account for this entry')
+      return
+    }
+    if (chitLedgerKind === 'contribution' && chitLedgerMode === 'BANK' && (!acc || Number.isNaN(acc))) {
+      setError('Select bank account for contribution')
+      return
+    }
+    if (
+      chitLedgerKind === 'contribution' &&
+      chitLedgerMode === 'CASH' &&
+      accounts.length > 1 &&
+      (!acc || Number.isNaN(acc))
+    ) {
+      setError('Select which account to pay from (cash wallet or bank)')
+      return
+    }
+    setChitLedgerBusy(true)
+    setError('')
+    try {
+      if (chitLedgerKind === 'contribution') {
+        await postChitFundContribution(chitLedgerChitId, {
+          contribution_date: chitLedgerDate,
+          amount: amt,
+          payment_mode: chitLedgerMode,
+          finance_account_id:
+            chitLedgerMode === 'BANK'
+              ? acc
+              : acc && !Number.isNaN(acc)
+                ? acc
+                : accounts.length === 1 && accounts[0]?.id != null
+                  ? Number(accounts[0].id)
+                  : null,
+        })
+      } else if (chitLedgerKind === 'dividend') {
+        await postChitFundDividend(chitLedgerChitId, {
+          entry_date: chitLedgerDate,
+          amount: amt,
+          finance_account_id: acc,
+        })
+      } else if (chitLedgerKind === 'commission') {
+        await postChitFundForemanCommission(chitLedgerChitId, {
+          entry_date: chitLedgerDate,
+          amount: amt,
+          finance_account_id: acc,
+        })
+      }
+      setChitLedgerChitId(null)
+      setChitLedgerKind(null)
+      await load()
+      refresh()
+    } catch (err) {
+      if (err.status === 401) {
+        setPfToken(null)
+        onSessionInvalid?.()
+      } else {
+        setError(err.message || 'Could not record entry')
+      }
+    } finally {
+      setChitLedgerBusy(false)
+    }
+  }
+
   const groupedRows = useMemo(() => {
     const order = ASSET_TYPES.map((t) => t.value)
     const m = new Map()
@@ -525,7 +791,7 @@ export default function PfAssetsPage() {
         </div>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5" aria-label="Asset summary">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" aria-label="Asset summary">
         <div className={kpiGlass}>
           <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Portfolio value</p>
           <p className="mt-2 font-mono text-lg font-bold tabular-nums text-[var(--pf-text)] sm:text-xl">
@@ -567,6 +833,153 @@ export default function PfAssetsPage() {
           </p>
           <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">{summary?.linked_loan_count ?? 0} asset link(s)</p>
         </div>
+        <div className={`${kpiGlass} border-amber-500/25 bg-amber-500/[0.04]`}>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Chit funds (asset side)</p>
+          <p className="mt-2 font-mono text-lg font-bold tabular-nums text-amber-800 dark:text-amber-200 sm:text-xl">
+            {formatInr(chitFundsNetKpi)}
+          </p>
+          <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">
+            Book asset total · Payable sits in liabilities · Net worth = assets − liabilities
+          </p>
+          {summary?.chit_funds_metrics ? (
+            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-amber-500/20 pt-3 text-[10px] text-[var(--pf-text-muted)] sm:grid-cols-3">
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Pot value</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_chit_value)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Total paid</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_paid)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Received</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_amount_received)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Dividend</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_dividend)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Commission</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_commission)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Discount (loss)</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_discount)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Net P/L</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.net_profit_loss)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Chit payable</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_liability_value)}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[var(--pf-text)]">Asset − payable</dt>
+                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.net_balance_sheet)}</dd>
+              </div>
+            </dl>
+          ) : null}
+        </div>
+      </section>
+
+      <section
+        className="space-y-4 rounded-2xl border border-[var(--pf-border)] bg-white/[0.02] p-5 dark:bg-white/[0.02]"
+        aria-label="Chit funds"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-[var(--pf-text)]">Chit funds</h2>
+            <p className="mt-1 max-w-3xl text-xs text-[var(--pf-text-muted)]">
+              <strong>Before auction:</strong> each payment is a bank outflow with type{' '}
+              <code className="rounded bg-black/5 px-1 dark:bg-white/10">CHIT_CONTRIBUTION</code> (book asset = total paid).{' '}
+              <strong>After auction:</strong> remaining payable = pot value − total paid; <strong>Pay month</strong> records a
+              liability installment (reduces <strong>Chit Fund Payable</strong>). Saving auction data books{' '}
+              <strong>Chit Fund Discount (Loss)</strong> and optional auction receipt to your bank. <strong>Dividend</strong> →
+              income; <strong>Commission</strong> → expense.
+            </p>
+          </div>
+          <button type="button" onClick={openChitAdd} className={`${btnSecondary} inline-flex items-center gap-2 text-xs`}>
+            <PlusIcon className="h-4 w-4" aria-hidden />
+            Add chit fund
+          </button>
+        </div>
+        {chitFunds.length === 0 ? (
+          <p className="text-sm text-[var(--pf-text-muted)]">No chit funds yet.</p>
+        ) : (
+          <div className={pfTableWrap}>
+            <table className={`${pfTable} min-w-[64rem] text-xs sm:text-sm`}>
+              <thead>
+                <tr>
+                  <th className={pfTh}>Chit</th>
+                  <th className={pfTh}>Status</th>
+                  <th className={pfThRight}>Total paid</th>
+                  <th className={pfThRight}>Received</th>
+                  <th className={pfThRight}>Net asset</th>
+                  <th className={pfThRight}>Payable</th>
+                  <th className={pfThRight}>Discount</th>
+                  <th className={pfThRight}>Net P/L</th>
+                  <th className={pfThRight}>Rem. mo</th>
+                  <th className={pfTh}>Auction</th>
+                  <th className={pfTdActions}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {chitFunds.map((c) => (
+                  <tr key={c.id} className={pfTrHover}>
+                    <td className={pfTd}>
+                      <span className="font-medium text-[var(--pf-text)]">{c.chit_name}</span>
+                      <p className="text-[10px] text-[var(--pf-text-muted)]">
+                        {formatInr(c.monthly_amount)}/mo · {c.duration_months} mo · pot {formatInr(c.total_value)}
+                      </p>
+                    </td>
+                    <td className={pfTd}>{String(c.status || '—')}</td>
+                    <td className={pfTdRight}>{formatInr(c.total_paid)}</td>
+                    <td className={pfTdRight}>{formatInr(c.total_received)}</td>
+                    <td className={pfTdRight}>{formatInr(c.net_asset_value)}</td>
+                    <td className={pfTdRight}>{c.auction_taken ? formatInr(c.liability_outstanding) : '—'}</td>
+                    <td className={pfTdRight}>{c.auction_taken ? formatInr(c.discount_computed) : '—'}</td>
+                    <td className={pfTdRight}>{formatInr(c.net_position ?? c.profit_loss)}</td>
+                    <td className={pfTdRight}>{c.remaining_months ?? '—'}</td>
+                    <td className={pfTd}>{c.auction_taken ? `Yes (mo ${c.auction_month ?? '—'})` : 'No'}</td>
+                    <td className={pfTdActions}>
+                      <div className="flex flex-wrap gap-1">
+                        <button type="button" className={`${btnSecondary} !px-2 !py-1 text-[10px]`} onClick={() => openChitEdit(c)}>
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className={`${btnSecondary} !px-2 !py-1 text-[10px]`}
+                          onClick={() => openChitLedger(c.id, 'contribution')}
+                        >
+                          Pay month
+                        </button>
+                        <button
+                          type="button"
+                          className={`${btnSecondary} !px-2 !py-1 text-[10px]`}
+                          onClick={() => openChitLedger(c.id, 'dividend')}
+                        >
+                          Dividend
+                        </button>
+                        <button
+                          type="button"
+                          className={`${btnSecondary} !px-2 !py-1 text-[10px]`}
+                          onClick={() => openChitLedger(c.id, 'commission')}
+                        >
+                          Commission
+                        </button>
+                        <button type="button" className={`${btnDanger} !px-2 !py-1 text-[10px]`} onClick={() => handleChitDelete(c)}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {!loading && rows.length > 0 ? (
@@ -1148,6 +1561,376 @@ export default function PfAssetsPage() {
             )}
           </div>
         </div>
+      ) : null}
+
+      {showChitModal ? (
+        <AppModal
+          open={showChitModal}
+          onClose={() => !chitSubmitting && setShowChitModal(false)}
+          maxWidthClass="max-w-2xl"
+          title={chitEditId ? 'Edit chit fund' : 'Add chit fund'}
+          footer={
+            <>
+              <button type="button" className={btnSecondary} disabled={chitSubmitting} onClick={() => setShowChitModal(false)}>
+                Cancel
+              </button>
+              <AppButton type="submit" variant="primary" disabled={chitSubmitting} form="pf-chit-form">
+                {chitSubmitting ? 'Saving…' : 'Save'}
+              </AppButton>
+            </>
+          }
+        >
+          <form id="pf-chit-form" onSubmit={handleChitSave} className="grid max-h-[70vh] gap-4 overflow-y-auto sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className={labelCls} htmlFor="cf-name">
+                Chit name
+              </label>
+              <input
+                id="cf-name"
+                className={inputCls}
+                value={chitForm.chit_name}
+                onChange={(e) => setChitForm((f) => ({ ...f, chit_name: e.target.value }))}
+                required
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="cf-tv">
+                Total chit value (₹)
+              </label>
+              <input
+                id="cf-tv"
+                type="number"
+                min="0"
+                step="0.01"
+                className={inputCls}
+                value={chitForm.total_value}
+                onChange={(e) => setChitForm((f) => ({ ...f, total_value: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="cf-mo">
+                Monthly contribution (₹)
+              </label>
+              <input
+                id="cf-mo"
+                type="number"
+                min="0"
+                step="0.01"
+                className={inputCls}
+                value={chitForm.monthly_amount}
+                onChange={(e) => setChitForm((f) => ({ ...f, monthly_amount: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="cf-sd">
+                Start date
+              </label>
+              <input
+                id="cf-sd"
+                type="date"
+                className={inputCls}
+                value={chitForm.start_date}
+                onChange={(e) => setChitForm((f) => ({ ...f, start_date: e.target.value }))}
+                required
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="cf-dur">
+                Duration (months)
+              </label>
+              <input
+                id="cf-dur"
+                type="number"
+                min="0"
+                className={inputCls}
+                value={chitForm.duration_months}
+                onChange={(e) => setChitForm((f) => ({ ...f, duration_months: e.target.value }))}
+              />
+            </div>
+            <div className="sm:col-span-2 rounded-xl border border-[var(--pf-border)] bg-black/[0.02] p-3 dark:bg-white/[0.02]">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">
+                Calculated (read-only)
+              </p>
+              <dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+                <div>
+                  <dt className="text-[var(--pf-text-muted)]">Total paid</dt>
+                  <dd className="font-mono font-semibold tabular-nums text-[var(--pf-text)]">
+                    {formatInr(chitCalcPreview.totalPaid)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[var(--pf-text-muted)]">Months paid</dt>
+                  <dd className="font-mono font-semibold tabular-nums text-[var(--pf-text)]">{chitCalcPreview.monthsPaid}</dd>
+                </div>
+                <div>
+                  <dt className="text-[var(--pf-text-muted)]">Remaining months</dt>
+                  <dd className="font-mono font-semibold tabular-nums text-[var(--pf-text)]">
+                    {chitCalcPreview.remainingMonths}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[var(--pf-text-muted)]">Book asset value</dt>
+                  <dd className="font-mono font-semibold tabular-nums text-[var(--pf-text)]">
+                    {formatInr(chitCalcPreview.assetValue)}
+                  </dd>
+                </div>
+                {chitForm.auction_taken ? (
+                  <>
+                    <div>
+                      <dt className="text-[var(--pf-text-muted)]">Discount (auto)</dt>
+                      <dd className="font-mono font-semibold tabular-nums text-[var(--pf-text)]">
+                        {formatInr(chitCalcPreview.discountAuto)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[var(--pf-text-muted)]">Remaining payable</dt>
+                      <dd className="font-mono font-semibold tabular-nums text-[var(--pf-text)]">
+                        {formatInr(chitCalcPreview.remainingPayable)}
+                      </dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-[var(--pf-text-muted)]">Net P/L (div − comm − discount)</dt>
+                      <dd className="font-mono font-semibold tabular-nums text-[var(--pf-text)]">
+                        {formatInr(chitCalcPreview.netProfit)}
+                      </dd>
+                    </div>
+                  </>
+                ) : null}
+              </dl>
+            </div>
+            <div className="sm:col-span-2 flex items-center gap-2">
+              <input
+                id="cf-auc"
+                type="checkbox"
+                checked={chitForm.auction_taken}
+                onChange={(e) => setChitForm((f) => ({ ...f, auction_taken: e.target.checked }))}
+              />
+              <label htmlFor="cf-auc" className="text-sm text-[var(--pf-text)]">
+                Auction taken?
+              </label>
+            </div>
+            {chitForm.auction_taken ? (
+              <>
+                <div>
+                  <label className={labelCls} htmlFor="cf-am">
+                    Auction month (1…duration)
+                  </label>
+                  <input
+                    id="cf-am"
+                    type="number"
+                    min="1"
+                    className={inputCls}
+                    value={chitForm.auction_month}
+                    onChange={(e) => setChitForm((f) => ({ ...f, auction_month: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls} htmlFor="cf-ar">
+                    Amount received (₹)
+                  </label>
+                  <input
+                    id="cf-ar"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className={inputCls}
+                    value={chitForm.amount_received}
+                    onChange={(e) => setChitForm((f) => ({ ...f, amount_received: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls} htmlFor="cf-abd">
+                    Auction booking date
+                  </label>
+                  <input
+                    id="cf-abd"
+                    type="date"
+                    className={inputCls}
+                    value={chitForm.auction_booking_date || chitForm.start_date}
+                    onChange={(e) => setChitForm((f) => ({ ...f, auction_booking_date: e.target.value }))}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <PremiumSelect
+                    id="cf-auc-acc"
+                    label="Bank account for auction receipt (optional)"
+                    labelClassName={labelCls}
+                    value={chitForm.auction_receipt_finance_account_id}
+                    onChange={(v) => setChitForm((f) => ({ ...f, auction_receipt_finance_account_id: v }))}
+                    options={accounts.map((a) => ({
+                      value: String(a.id),
+                      label: `${a.account_name ?? 'Account'}${a.account_type ? ` · ${a.account_type}` : ''}`,
+                    }))}
+                  />
+                  <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">
+                    If set when you first save auction details, we credit this account for the amount received and book the
+                    discount loss. You can leave blank and record cash manually.
+                  </p>
+                </div>
+              </>
+            ) : null}
+            <div>
+              <label className={labelCls} htmlFor="cf-fc">
+                Foreman commission recorded (₹ total)
+              </label>
+              <input
+                id="cf-fc"
+                type="number"
+                min="0"
+                step="0.01"
+                className={inputCls}
+                value={chitForm.foreman_commission}
+                onChange={(e) => setChitForm((f) => ({ ...f, foreman_commission: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="cf-div">
+                Dividend received (₹ total)
+              </label>
+              <input
+                id="cf-div"
+                type="number"
+                min="0"
+                step="0.01"
+                className={inputCls}
+                value={chitForm.dividend_received}
+                onChange={(e) => setChitForm((f) => ({ ...f, dividend_received: e.target.value }))}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <PremiumSelect
+                id="cf-st"
+                label="Status"
+                labelClassName={labelCls}
+                value={chitForm.status}
+                onChange={(v) => setChitForm((f) => ({ ...f, status: v }))}
+                options={[
+                  { value: 'RUNNING', label: 'Running' },
+                  { value: 'COMPLETED', label: 'Completed' },
+                ]}
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className={labelCls} htmlFor="cf-no">
+                Notes
+              </label>
+              <textarea
+                id="cf-no"
+                rows={2}
+                className={`${inputCls} resize-y`}
+                value={chitForm.notes}
+                onChange={(e) => setChitForm((f) => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+          </form>
+        </AppModal>
+      ) : null}
+
+      {chitLedgerKind ? (
+        <AppModal
+          open={Boolean(chitLedgerKind)}
+          onClose={() => {
+            if (!chitLedgerBusy) {
+              setChitLedgerKind(null)
+              setChitLedgerChitId(null)
+            }
+          }}
+          maxWidthClass="max-w-md"
+          title={
+            chitLedgerKind === 'contribution'
+              ? chitLedgerTarget?.auction_taken
+                ? 'Pay chit installment (liability)'
+                : 'Record chit contribution (asset)'
+              : chitLedgerKind === 'dividend'
+                ? 'Record chit dividend'
+                : 'Record foreman commission'
+          }
+          footer={
+            <>
+              <button
+                type="button"
+                className={btnSecondary}
+                disabled={chitLedgerBusy}
+                onClick={() => {
+                  setChitLedgerKind(null)
+                  setChitLedgerChitId(null)
+                }}
+              >
+                Cancel
+              </button>
+              <AppButton type="submit" variant="primary" disabled={chitLedgerBusy} form="pf-chit-ledger-form">
+                {chitLedgerBusy ? 'Saving…' : 'Save'}
+              </AppButton>
+            </>
+          }
+        >
+          <form id="pf-chit-ledger-form" onSubmit={submitChitLedger} className="space-y-4">
+            <div>
+              <label className={labelCls} htmlFor="cl-d">
+                Date
+              </label>
+              <input
+                id="cl-d"
+                type="date"
+                className={inputCls}
+                value={chitLedgerDate}
+                onChange={(e) => setChitLedgerDate(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className={labelCls} htmlFor="cl-a">
+                Amount (₹)
+              </label>
+              <input
+                id="cl-a"
+                type="number"
+                min="0"
+                step="0.01"
+                className={inputCls}
+                value={chitLedgerAmount}
+                onChange={(e) => setChitLedgerAmount(e.target.value)}
+                required
+              />
+            </div>
+            {chitLedgerKind === 'contribution' ? (
+              <div>
+                <PremiumSelect
+                  id="cl-m"
+                  label="Payment mode"
+                  labelClassName={labelCls}
+                  value={chitLedgerMode}
+                  onChange={(v) => setChitLedgerMode(v)}
+                  options={[
+                    { value: 'BANK', label: 'Bank' },
+                    { value: 'CASH', label: 'Cash' },
+                  ]}
+                />
+              </div>
+            ) : null}
+            {(chitLedgerKind !== 'contribution' || chitLedgerMode === 'BANK' || chitLedgerMode === 'CASH') && (
+              <div>
+                <PremiumSelect
+                  id="cl-acc"
+                  label={
+                    chitLedgerKind === 'contribution' && chitLedgerMode === 'CASH'
+                      ? 'Pay from account'
+                      : 'Bank account'
+                  }
+                  labelClassName={labelCls}
+                  value={chitLedgerAccountId}
+                  onChange={(v) => setChitLedgerAccountId(v)}
+                  options={accounts.map((a) => ({ value: String(a.id), label: a.account_name }))}
+                />
+                {chitLedgerKind === 'contribution' && chitLedgerMode === 'CASH' && accounts.length > 1 ? (
+                  <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">
+                    Required when you have multiple accounts — picks the wallet or bank this cash payment hits.
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </form>
+        </AppModal>
       ) : null}
     </div>
   )

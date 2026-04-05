@@ -639,6 +639,35 @@ export function deleteFinanceAsset(assetId) {
   return fin(`/assets/${assetId}`, { method: 'DELETE' })
 }
 
+export function listChitFunds(params = {}) {
+  const q = new URLSearchParams({ skip: String(params.skip ?? 0), limit: String(params.limit ?? 200) })
+  return fin(`/chit-funds?${q}`)
+}
+
+export function createChitFund(body) {
+  return fin('/chit-funds', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function patchChitFund(chitId, body) {
+  return fin(`/chit-funds/${chitId}`, { method: 'PATCH', body: JSON.stringify(body) })
+}
+
+export function deleteChitFund(chitId) {
+  return fin(`/chit-funds/${chitId}`, { method: 'DELETE' })
+}
+
+export function postChitFundContribution(chitId, body) {
+  return fin(`/chit-funds/${chitId}/contributions`, { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function postChitFundDividend(chitId, body) {
+  return fin(`/chit-funds/${chitId}/dividend`, { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function postChitFundForemanCommission(chitId, body) {
+  return fin(`/chit-funds/${chitId}/foreman-commission`, { method: 'POST', body: JSON.stringify(body) })
+}
+
 export function listFinanceLiabilities(params = {}) {
   const q = new URLSearchParams({
     skip: String(params.skip ?? 0),

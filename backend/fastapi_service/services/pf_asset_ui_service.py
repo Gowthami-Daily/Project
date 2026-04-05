@@ -9,8 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fastapi_service.models_extended import FinanceAsset, FinanceLiability
-from fastapi_service.repositories import pf_finance_repo
-from fastapi_service.schemas_extended import AssetsPageSummaryOut, FinanceAssetOut
+from fastapi_service.repositories import pf_chit_fund_repo, pf_finance_repo
+from fastapi_service.schemas_extended import AssetsPageSummaryOut, ChitFundsMetricsOut, FinanceAssetOut
 from fastapi_service.services.pf_asset_valuation import (
     book_depreciation_amount,
     depreciation_years,
@@ -106,10 +106,14 @@ def assets_page_summary(db: Session, profile_id: int) -> AssetsPageSummaryOut:
         total_dep += book_depreciation_amount(r)
     locs = pf_finance_repo.list_distinct_asset_locations(db, profile_id)
     linked_n = pf_finance_repo.count_assets_with_linked_liability(db, profile_id)
+    chit_net = pf_chit_fund_repo.sum_net_asset_value_profile(db, profile_id)
+    chit_metrics = pf_chit_fund_repo.aggregate_chit_metrics(db, profile_id)
     return AssetsPageSummaryOut(
         total_current_value=round(total_effective, 2),
         total_purchase_value=round(total_purchase, 2),
         total_depreciation=round(total_dep, 2),
         linked_loan_count=linked_n,
         locations=locs,
+        chit_funds_net_value=round(chit_net, 2),
+        chit_funds_metrics=ChitFundsMetricsOut(**chit_metrics),
     )

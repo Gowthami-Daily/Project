@@ -583,3 +583,18 @@ def _pg_migrate_account_tx_movement_id(engine: Engine) -> None:
                 )
             )
             conn.execute(text('ALTER TABLE account_transactions DROP COLUMN IF EXISTS transfer_id'))
+
+
+def ensure_chit_fund_auction_ledger_posted_column(engine: Engine) -> None:
+    dialect = engine.dialect.name
+    if dialect not in ('sqlite', 'postgresql'):
+        return
+    insp = inspect(engine)
+    if not insp.has_table('chit_funds'):
+        return
+    cols = {c['name'] for c in insp.get_columns('chit_funds')}
+    if 'auction_ledger_posted' in cols:
+        return
+    typ = 'BOOLEAN NOT NULL DEFAULT FALSE' if dialect == 'postgresql' else 'INTEGER NOT NULL DEFAULT 0'
+    with engine.begin() as conn:
+        conn.execute(text(f'ALTER TABLE chit_funds ADD COLUMN auction_ledger_posted {typ}'))

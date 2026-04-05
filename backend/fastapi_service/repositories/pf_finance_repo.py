@@ -726,6 +726,7 @@ def record_liability_payment(
     finance_account_id: int | None,
     notes: str | None,
     movement_id: int | None = None,
+    autocommit: bool = True,
 ) -> LiabilityPayment:
     ln = get_liability_for_profile(db, liability_id, profile_id)
     if ln is None:
@@ -801,8 +802,11 @@ def record_liability_payment(
             movement_id=movement_id,
             notes=notes,
         )
-    db.commit()
-    db.refresh(row)
+    if autocommit:
+        db.commit()
+        db.refresh(row)
+    else:
+        db.flush()
     return row
 
 
@@ -3216,11 +3220,9 @@ def close_loan_if_settled(db: Session, profile_id: int, loan_id: int) -> Loan:
         raise ValueError('Loan not found')
     if str(ln.status).upper() == 'CLOSED':
         raise ValueError('Loan is already closed')
-    if _loan_has_schedule(db, loan_id):
-        due = _unpaid_schedule_total(db, loan_id)
-    else:
-        due = _current_loan_due_for_manual_payment(db, ln)
-    if due > 0.01:
+    due = loan_balance_due_for_loan(db, ln)
+    due_rd = round(float(due), 2)
+    if due_rd > 0.01:
         raise ValueError('Outstanding balance remains — collect payments before closing')
     ln.status = 'CLOSED'
     if ln.remaining_amount is not None:

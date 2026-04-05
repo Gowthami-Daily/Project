@@ -6,6 +6,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Response, Uploa
 
 from fastapi_service.core.dependencies import ActiveProfileId, CurrentUser, DbSession, Pagination
 from fastapi_service.models_extended import (
+    ChitFund,
+    ChitFundContribution,
     FinanceAccount,
     FinanceAsset,
     FinanceExpense,
@@ -19,7 +21,7 @@ from fastapi_service.models_extended import (
     PfIncomeCategory,
     PfPaymentInstrument,
 )
-from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
+from fastapi_service.repositories import pf_chit_fund_repo, pf_credit_card_repo, pf_finance_repo
 from fastapi_service.services import pf_investment_ledger_service
 from fastapi_service.schemas_extended import (
     AccountBalanceSummaryOut,
@@ -28,6 +30,12 @@ from fastapi_service.schemas_extended import (
     AccountTransactionOut,
     AccountTransferOut,
     AssetsPageSummaryOut,
+    ChitFundContributionCreate,
+    ChitFundContributionOut,
+    ChitFundCreate,
+    ChitFundLedgerAmountBody,
+    ChitFundOut,
+    ChitFundUpdate,
     FinanceAccountCreate,
     FinanceAccountOut,
     FinanceAccountPatch,
@@ -1620,3 +1628,260 @@ def create_loan_payment(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+def _chit_for_profile(db, chit_id: int, profile_id: int) -> ChitFund:
+    row = pf_chit_fund_repo.get_chit_for_profile(db, chit_id, profile_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Chit fund not found')
+    return row
+
+
+def _chit_to_out(db, row: ChitFund) -> ChitFundOut:
+    nav = pf_chit_fund_repo.net_asset_value(row)
+    tr = pf_chit_fund_repo.total_cash_received(row)
+    pl = pf_chit_fund_repo.profit_loss(row)
+    rm = pf_chit_fund_repo.remaining_months(db, row)
+    cnt = pf_chit_fund_repo.count_contributions(db, row.id)
+    rem_pay = pf_chit_fund_repo.remaining_payable(row)
+    liab_bv = pf_chit_fund_repo.liability_book_value(db, row)
+    disc = pf_chit_fund_repo.computed_discount(row)
+    base = ChitFundOut.model_validate(row, from_attributes=True)
+    return base.model_copy(
+        update={
+            'net_asset_value': Decimal(str(round(nav, 2))),
+            'asset_value': Decimal(str(round(nav, 2))),
+            'total_received': Decimal(str(round(tr, 2))),
+            'profit_loss': Decimal(str(round(pl, 2))),
+            'net_position': Decimal(str(round(pl, 2))),
+            'remaining_months': rm,
+            'contributions_count': cnt,
+            'months_paid': cnt,
+            'remaining_payable': Decimal(str(round(rem_pay, 2))),
+            'liability_outstanding': Decimal(str(round(liab_bv, 2))),
+            'discount_computed': Decimal(str(round(disc, 2))),
+        }
+    )
+
+
+@router.get('/chit-funds', response_model=list[ChitFundOut])
+def list_chit_funds(
+    _: FinanceParticipant,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+) -> list[ChitFundOut]:
+    rows = pf_chit_fund_repo.list_chits(db, profile_id, skip, limit)
+    return [_chit_to_out(db, r) for r in rows]
+
+
+@router.post('/chit-funds', response_model=ChitFundOut, status_code=201)
+def create_chit_fund(
+    _: FinanceParticipant,
+    body: ChitFundCreate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> ChitFundOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    st = (body.status or 'RUNNING').strip().upper()
+    row = ChitFund(
+        profile_id=profile_id,
+        chit_name=body.chit_name.strip(),
+        total_value=float(body.total_value),
+        monthly_amount=float(body.monthly_amount),
+        start_date=body.start_date,
+        duration_months=int(body.duration_months),
+        auction_taken=bool(body.auction_taken),
+        auction_month=body.auction_month,
+        amount_received=float(body.amount_received) if body.amount_received is not None else None,
+        discount_amount=float(body.discount_amount) if body.discount_amount is not None else None,
+        foreman_commission=float(body.foreman_commission),
+        dividend_received=float(body.dividend_received),
+        status=st,
+        payable_outstanding=float(body.payable_outstanding) if body.payable_outstanding is not None else None,
+        notes=(body.notes or '').strip() or None,
+    )
+    try:
+        saved = pf_chit_fund_repo.create_chit(
+            db,
+            row,
+            auction_receipt_finance_account_id=body.auction_receipt_finance_account_id,
+            auction_booking_date=body.auction_booking_date,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _chit_to_out(db, saved)
+
+
+@router.get('/chit-funds/{chit_id}', response_model=ChitFundOut)
+def get_chit_fund(
+    _: FinanceParticipant,
+    chit_id: int,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> ChitFundOut:
+    return _chit_to_out(db, _chit_for_profile(db, chit_id, profile_id))
+
+
+@router.patch('/chit-funds/{chit_id}', response_model=ChitFundOut)
+def patch_chit_fund(
+    chit_id: int,
+    _: FinanceParticipant,
+    body: ChitFundUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> ChitFundOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    ch = _chit_for_profile(db, chit_id, profile_id)
+    patch = body.model_dump(exclude_unset=True)
+    if 'chit_name' in patch and patch['chit_name'] is not None:
+        ch.chit_name = str(patch['chit_name']).strip()
+    if 'total_value' in patch and patch['total_value'] is not None:
+        ch.total_value = float(patch['total_value'])
+    if 'monthly_amount' in patch and patch['monthly_amount'] is not None:
+        ch.monthly_amount = float(patch['monthly_amount'])
+    if 'start_date' in patch:
+        ch.start_date = patch['start_date']
+    if 'duration_months' in patch and patch['duration_months'] is not None:
+        ch.duration_months = int(patch['duration_months'])
+    if 'auction_taken' in patch:
+        ch.auction_taken = bool(patch['auction_taken'])
+    if 'auction_month' in patch:
+        ch.auction_month = patch['auction_month']
+    if 'amount_received' in patch:
+        v = patch['amount_received']
+        ch.amount_received = None if v is None else float(v)
+    if 'discount_amount' in patch:
+        v = patch['discount_amount']
+        ch.discount_amount = None if v is None else float(v)
+    if 'foreman_commission' in patch and patch['foreman_commission'] is not None:
+        ch.foreman_commission = float(patch['foreman_commission'])
+    if 'dividend_received' in patch and patch['dividend_received'] is not None:
+        ch.dividend_received = float(patch['dividend_received'])
+    if 'status' in patch and patch['status'] is not None:
+        ch.status = str(patch['status']).strip().upper()
+    if 'payable_outstanding' in patch:
+        v = patch['payable_outstanding']
+        ch.payable_outstanding = None if v is None else float(v)
+    if 'notes' in patch:
+        v = patch['notes']
+        ch.notes = None if v is None else (str(v).strip() or None)
+    kw: dict = {}
+    if 'auction_receipt_finance_account_id' in patch:
+        kw['auction_receipt_finance_account_id'] = patch['auction_receipt_finance_account_id']
+    if 'auction_booking_date' in patch:
+        kw['auction_booking_date'] = patch['auction_booking_date']
+    try:
+        saved = pf_chit_fund_repo.update_chit_row(db, ch, **kw)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return _chit_to_out(db, saved)
+
+
+@router.delete('/chit-funds/{chit_id}', status_code=status.HTTP_204_NO_CONTENT)
+def delete_chit_fund(
+    chit_id: int,
+    _: FinanceParticipant,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> Response:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    try:
+        pf_chit_fund_repo.delete_chit_for_profile(db, profile_id, chit_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/chit-funds/{chit_id}/contributions', response_model=list[ChitFundContributionOut])
+def list_chit_contributions(
+    _: FinanceParticipant,
+    chit_id: int,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> list[ChitFundContribution]:
+    _chit_for_profile(db, chit_id, profile_id)
+    return pf_chit_fund_repo.list_contributions(db, chit_id)
+
+
+@router.post('/chit-funds/{chit_id}/contributions', response_model=ChitFundContributionOut, status_code=201)
+def create_chit_contribution(
+    chit_id: int,
+    _: FinanceParticipant,
+    body: ChitFundContributionCreate,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> ChitFundContribution:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _chit_for_profile(db, chit_id, profile_id)
+    try:
+        row = pf_chit_fund_repo.record_contribution(
+            db,
+            profile_id,
+            chit_id,
+            contribution_date=body.contribution_date,
+            amount=float(body.amount),
+            payment_mode=body.payment_mode,
+            finance_account_id=body.finance_account_id,
+            notes=body.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return row
+
+
+@router.post('/chit-funds/{chit_id}/dividend', response_model=FinanceIncomeOut, status_code=201)
+def post_chit_dividend(
+    chit_id: int,
+    _: FinanceParticipant,
+    body: ChitFundLedgerAmountBody,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceIncomeOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _chit_for_profile(db, chit_id, profile_id)
+    try:
+        inc = pf_chit_fund_repo.record_dividend(
+            db,
+            profile_id,
+            chit_id,
+            entry_date=body.entry_date,
+            amount=float(body.amount),
+            finance_account_id=body.finance_account_id,
+            notes=body.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return finance_income_to_out(inc)
+
+
+@router.post('/chit-funds/{chit_id}/foreman-commission', response_model=FinanceExpenseOut, status_code=201)
+def post_chit_foreman_commission(
+    chit_id: int,
+    _: FinanceParticipant,
+    body: ChitFundLedgerAmountBody,
+    user: CurrentUser,
+    db: DbSession,
+    profile_id: ActiveProfileId,
+) -> FinanceExpenseOut:
+    pf_profile_service.assert_can_write(db, user.id, profile_id)
+    _chit_for_profile(db, chit_id, profile_id)
+    try:
+        exp = pf_chit_fund_repo.record_foreman_commission(
+            db,
+            profile_id,
+            chit_id,
+            entry_date=body.entry_date,
+            amount=float(body.amount),
+            finance_account_id=body.finance_account_id,
+            notes=body.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    return finance_expense_to_out(exp)

@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
+from fastapi_service.repositories import pf_chit_fund_repo, pf_credit_card_repo, pf_finance_repo
 from fastapi_service.schemas_extended import finance_expense_to_out, finance_income_to_out
 
 
@@ -953,6 +953,7 @@ def monthly_financial_tables(
 
     investments = pf_finance_repo.sum_investments_invested(db, profile_id)
     fixed_assets = pf_finance_repo.sum_assets(db, profile_id)
+    chit_funds_net = pf_chit_fund_repo.sum_net_asset_value_profile(db, profile_id)
     liabilities = pf_finance_repo.sum_liabilities(db, profile_id)
     loans_out = pf_finance_repo.sum_loan_outstanding(db, profile_id)
     cc_liab_out = pf_finance_repo.sum_liabilities_cc_statement_outstanding(db, profile_id)
@@ -1031,7 +1032,7 @@ def monthly_financial_tables(
         cash_summary = round(net + investing_flow + financing_flow, 2)
 
         # Loan outstanding here is receivable (money owed to you) — part of assets, not a liability.
-        total_assets = closing_cash + investments + fixed_assets + loans_out
+        total_assets = closing_cash + investments + fixed_assets + float(chit_funds_net) + loans_out
         net_worth = total_assets - liabilities
 
         key = f'{year}-{month:02d}'
@@ -1064,6 +1065,7 @@ def monthly_financial_tables(
                     'bank_accounts': cash_bank['bank'],
                     'investments': investments,
                     'fixed_assets': fixed_assets,
+                    'chit_funds_net': round(float(chit_funds_net), 2),
                     'loans_given_receivable': loans_out,
                     'receivables': 0.0,
                     'total_assets': total_assets,

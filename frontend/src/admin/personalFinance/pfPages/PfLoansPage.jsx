@@ -75,7 +75,7 @@ import {
   pfTrHover,
   pfChartCard,
 } from '../pfFormStyles.js'
-import { formatInr } from '../pfFormat.js'
+import { formatInr, formatInrPrecise } from '../pfFormat.js'
 import { usePfRefresh } from '../pfRefreshContext.jsx'
 import PfSegmentedControl from '../PfSegmentedControl.jsx'
 import { PageHeader } from '../../../components/ui/PageHeader.jsx'
@@ -308,7 +308,7 @@ function LoanOverviewCard({ l, onView, onRecord, recordEnabled, onDelete, deleti
         </div>
       </div>
       <p className="mt-3 font-mono text-xl font-bold tabular-nums tracking-tight text-[var(--pf-text)]">
-        {formatInr(balanceDue(l))}
+        {formatInrPrecise(balanceDue(l))}
         <span className="ml-2 text-xs font-normal text-[var(--pf-text-muted)]">outstanding</span>
       </p>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
@@ -1258,7 +1258,7 @@ export default function PfLoansPage() {
                           </div>
                         </td>
                         <td className={`${pfTdRight} font-mono text-sm font-semibold tabular-nums text-[var(--pf-text)]`}>
-                          {formatInr(balanceDue(l))}
+                          {formatInrPrecise(balanceDue(l))}
                         </td>
                         <td className={`${pfTdRight} font-mono text-sm tabular-nums text-[var(--pf-text)]`}>
                           {emiN != null ? formatInr(emiN) : '—'}
@@ -1886,7 +1886,7 @@ export default function PfLoansPage() {
                   </p>
                   <p>
                     <span className="font-semibold text-slate-700 dark:text-slate-300">Balance due</span>{' '}
-                    {formatInr(balanceDue(viewLoan))}
+                    {formatInrPrecise(balanceDue(viewLoan))}
                   </p>
                   <p>
                     <span className="font-semibold text-slate-700 dark:text-slate-300">Interest collected</span>{' '}
@@ -2193,7 +2193,7 @@ export default function PfLoansPage() {
               >
                 <h3 className="text-sm font-bold text-sky-950">Record payment</h3>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Amount due now: <span className="font-semibold text-slate-800">{formatInr(balanceDue(viewLoan))}</span>. Pay the
+                  Amount due now: <span className="font-semibold text-slate-800">{formatInrPrecise(balanceDue(viewLoan))}</span>. Pay the
                   full amount in one go to <span className="font-medium text-slate-800">close the loan</span>. Bank credits the
                   selected account; cash does not change account balances.
                 </p>

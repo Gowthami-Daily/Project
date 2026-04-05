@@ -693,6 +693,7 @@ _ASSET_TYPES = frozenset(
         'FURNITURE',
         'ELECTRONICS',
         'BUSINESS_ASSET',
+        'CHIT_FUND',
         'OTHER',
     }
 )
@@ -720,12 +721,135 @@ class FinanceAssetOut(BaseModel):
     depreciation_years: float = 0.0
 
 
+class ChitFundsMetricsOut(BaseModel):
+    """Rollups across all chit funds for assets dashboard (totals + balance-sheet style net)."""
+
+    total_chit_value: float = 0.0
+    total_paid: float = 0.0
+    total_amount_received: float = 0.0
+    total_dividend: float = 0.0
+    total_commission: float = 0.0
+    total_discount: float = 0.0
+    net_profit_loss: float = 0.0
+    total_remaining_months: int = 0
+    total_asset_value: float = 0.0
+    total_liability_value: float = 0.0
+    net_balance_sheet: float = 0.0
+
+
 class AssetsPageSummaryOut(BaseModel):
     total_current_value: float
     total_purchase_value: float
     total_depreciation: float
     linked_loan_count: int
     locations: list[str]
+    chit_funds_net_value: float = 0.0
+    chit_funds_metrics: ChitFundsMetricsOut | None = None
+
+
+class ChitFundContributionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    chit_fund_id: int
+    contribution_date: date
+    amount: Decimal
+    payment_mode: str
+    finance_account_id: int | None = None
+    notes: str | None = None
+    created_at: datetime
+
+
+class ChitFundOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    profile_id: int
+    chit_name: str
+    total_value: Decimal
+    monthly_amount: Decimal
+    start_date: date
+    duration_months: int
+    auction_taken: bool
+    auction_month: int | None = None
+    amount_received: Decimal | None = None
+    discount_amount: Decimal | None = None
+    foreman_commission: Decimal
+    dividend_received: Decimal
+    status: str
+    total_paid: Decimal
+    payable_outstanding: Decimal | None = None
+    linked_liability_id: int | None = None
+    auction_ledger_posted: bool = False
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    net_asset_value: Decimal = Decimal('0')
+    asset_value: Decimal = Decimal('0')
+    total_received: Decimal = Decimal('0')
+    profit_loss: Decimal = Decimal('0')
+    net_position: Decimal = Decimal('0')
+    remaining_months: int = 0
+    contributions_count: int = 0
+    months_paid: int = 0
+    remaining_payable: Decimal = Decimal('0')
+    liability_outstanding: Decimal = Decimal('0')
+    discount_computed: Decimal = Decimal('0')
+
+
+class ChitFundCreate(BaseModel):
+    chit_name: str = Field(..., min_length=1, max_length=200)
+    total_value: float = Field(ge=0, default=0)
+    monthly_amount: float = Field(ge=0, default=0)
+    start_date: date
+    duration_months: int = Field(ge=0, default=0)
+    auction_taken: bool = False
+    auction_month: int | None = Field(default=None, ge=1)
+    amount_received: float | None = Field(default=None, ge=0)
+    discount_amount: float | None = Field(default=None, ge=0)
+    foreman_commission: float = Field(ge=0, default=0)
+    dividend_received: float = Field(ge=0, default=0)
+    status: str = Field(default='RUNNING', max_length=24)
+    payable_outstanding: float | None = Field(default=None, ge=0)
+    notes: str | None = Field(default=None, max_length=4000)
+    auction_receipt_finance_account_id: int | None = None
+    auction_booking_date: date | None = None
+
+
+class ChitFundUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    chit_name: str | None = Field(default=None, min_length=1, max_length=200)
+    total_value: float | None = Field(default=None, ge=0)
+    monthly_amount: float | None = Field(default=None, ge=0)
+    start_date: date | None = None
+    duration_months: int | None = Field(default=None, ge=0)
+    auction_taken: bool | None = None
+    auction_month: int | None = Field(default=None, ge=1)
+    amount_received: float | None = Field(default=None, ge=0)
+    discount_amount: float | None = Field(default=None, ge=0)
+    foreman_commission: float | None = Field(default=None, ge=0)
+    dividend_received: float | None = Field(default=None, ge=0)
+    status: str | None = Field(default=None, max_length=24)
+    payable_outstanding: float | None = Field(default=None, ge=0)
+    notes: str | None = Field(default=None, max_length=4000)
+    auction_receipt_finance_account_id: int | None = None
+    auction_booking_date: date | None = None
+
+
+class ChitFundContributionCreate(BaseModel):
+    contribution_date: date
+    amount: float = Field(gt=0)
+    payment_mode: str = Field(default='BANK', max_length=16)
+    finance_account_id: int | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ChitFundLedgerAmountBody(BaseModel):
+    entry_date: date
+    amount: float = Field(gt=0)
+    finance_account_id: int | None = None
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class FinanceAssetCreate(BaseModel):
@@ -734,7 +858,7 @@ class FinanceAssetCreate(BaseModel):
         ...,
         description=(
             'PROPERTY_LAND | HOUSE | APARTMENT | VEHICLE | GOLD_JEWELRY | '
-            'EQUIPMENT_MACHINERY | FURNITURE | ELECTRONICS | BUSINESS_ASSET | OTHER'
+            'EQUIPMENT_MACHINERY | FURNITURE | ELECTRONICS | BUSINESS_ASSET | CHIT_FUND | OTHER'
         ),
     )
     purchase_value: float = Field(ge=0, default=0)
@@ -853,6 +977,7 @@ _LIABILITY_TYPES = frozenset(
         'BNPL',
         'BORROWED_PERSON',
         'BILLS_PAYABLE',
+        'CHIT_FUND_PAYABLE',
         'OTHER',
     }
 )
@@ -864,7 +989,8 @@ class FinanceLiabilityCreate(BaseModel):
         ...,
         description=(
             'CREDIT_CARD | PERSONAL_LOAN_BORROWED | HOME_LOAN | VEHICLE_LOAN | '
-            'AGRICULTURE_LOAN | GOLD_LOAN | EMI_PURCHASE | BNPL | BORROWED_PERSON | BILLS_PAYABLE | OTHER'
+            'AGRICULTURE_LOAN | GOLD_LOAN | EMI_PURCHASE | BNPL | BORROWED_PERSON | BILLS_PAYABLE | '
+            'CHIT_FUND_PAYABLE | OTHER'
         ),
     )
     total_amount: float = Field(ge=0)

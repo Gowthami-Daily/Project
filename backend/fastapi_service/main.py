@@ -37,10 +37,12 @@ async def lifespan(app: FastAPI):
         ensure_credit_card_transaction_extra_columns,
         ensure_users_last_login_column,
         ensure_users_role_id_column,
+        ensure_chit_fund_auction_ledger_posted_column,
     )
 
     ensure_account_movements_schema(engine)
     Base.metadata.create_all(bind=engine)
+    ensure_chit_fund_auction_ledger_posted_column(engine)
     ensure_users_role_id_column(engine)
     ensure_users_last_login_column(engine)
     ensure_pf_loan_extension_columns(engine)
@@ -71,10 +73,11 @@ async def lifespan(app: FastAPI):
         from fastapi_service.seed_procurement import seed_procurement_farmers_if_empty
         from fastapi_service.seed_extended import seed_extended
         from fastapi_service.seed_pf_demo_user import seed_pf_demo_user
-        from fastapi_service.seed_pf_categories import seed_pf_finance_categories
+        from fastapi_service.seed_pf_categories import ensure_pf_chit_categories, seed_pf_finance_categories
 
         seed_extended(db)
         seed_pf_finance_categories(db)
+        ensure_pf_chit_categories(db)
         seed_default_admin_if_empty(db)
         seed_extended(db)
         seed_pf_demo_user(db)

@@ -355,6 +355,66 @@ class FinanceAsset(Base):
     )
 
 
+class ChitFund(Base):
+    """Non-depreciating financial asset: recurring chit / committee fund (PF)."""
+
+    __tablename__ = 'chit_funds'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey('profiles.id'), nullable=False, index=True)
+    chit_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    total_value: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    monthly_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    duration_months: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    auction_taken: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    auction_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    amount_received: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    discount_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    foreman_commission: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    dividend_received: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default='RUNNING')
+    total_paid: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    payable_outstanding: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    linked_liability_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_liabilities.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    auction_ledger_posted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    contributions: Mapped[list['ChitFundContribution']] = relationship(
+        'ChitFundContribution',
+        back_populates='chit',
+        cascade='all, delete-orphan',
+        order_by='ChitFundContribution.contribution_date.desc(), ChitFundContribution.id.desc()',
+    )
+
+
+class ChitFundContribution(Base):
+    """One monthly (or ad-hoc) contribution toward a chit — posts Chit Fund Contribution expense when from bank/cash."""
+
+    __tablename__ = 'chit_fund_contributions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chit_fund_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('chit_funds.id', ondelete='CASCADE'), nullable=False, index=True
+    )
+    contribution_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    payment_mode: Mapped[str] = mapped_column(String(16), nullable=False, default='BANK')
+    finance_account_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey('finance_accounts.id', ondelete='SET NULL'), nullable=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    chit: Mapped['ChitFund'] = relationship('ChitFund', back_populates='contributions')
+
+
 class FinanceLiability(Base):
     __tablename__ = 'finance_liabilities'
 

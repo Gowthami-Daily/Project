@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from fastapi_service.repositories import pf_credit_card_repo, pf_finance_repo
+from fastapi_service.repositories import pf_chit_fund_repo, pf_credit_card_repo, pf_finance_repo
 from fastapi_service.services import pf_accounting_policy, pf_loan_ui_service
 
 
@@ -42,6 +42,8 @@ def summary(
     total_expense = pf_finance_repo.sum_expense(db, profile_id, start, end, account_id)
     total_investment = pf_finance_repo.sum_investments_invested(db, profile_id)
     total_assets = pf_finance_repo.sum_assets(db, profile_id)
+    chit_funds_net = pf_chit_fund_repo.sum_net_asset_value_profile(db, profile_id)
+    chit_funds_metrics = pf_chit_fund_repo.aggregate_chit_metrics(db, profile_id)
     total_liabilities = pf_finance_repo.sum_liabilities(db, profile_id)
     split = pf_finance_repo.sum_account_balances_cash_vs_bank(db, profile_id)
     if account_id is not None:
@@ -84,6 +86,7 @@ def summary(
         float(cash_balance)
         + total_investment
         + total_assets
+        + float(chit_funds_net)
         + loan_receivable
         - total_liabilities
     )
@@ -98,6 +101,8 @@ def summary(
         'total_expense': total_expense,
         'total_investment': total_investment,
         'total_assets': total_assets,
+        'chit_funds_net_value': round(float(chit_funds_net), 2),
+        'chit_funds_metrics': chit_funds_metrics,
         'total_liabilities': total_liabilities,
         'liability_overdue_amount': liability_overdue,
         'liability_due_this_week': liability_due_week,

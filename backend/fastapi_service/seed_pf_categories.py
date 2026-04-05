@@ -47,6 +47,24 @@ INCOME_CATEGORY_SEED: list[tuple[str, str, str]] = [
 ]
 
 
+def ensure_pf_chit_categories(db: Session) -> None:
+    """Idempotent: PF ledger category strings used by chit fund flows."""
+    extra_exp: list[tuple[str, str, str]] = [
+        ('Chit Fund Contribution', 'banknotes', 'amber'),
+        ('Chit Fund Discount (Loss)', 'arrow-trending-down', 'rose'),
+        ('Chit Foreman Commission', 'receipt-percent', 'orange'),
+    ]
+    for name, icon, color in extra_exp:
+        exists = db.scalar(select(PfExpenseCategory.id).where(PfExpenseCategory.name == name).limit(1))
+        if exists is None:
+            db.add(PfExpenseCategory(name=name, icon=icon, color=color))
+    inc_name = 'Chit Dividend'
+    exists_i = db.scalar(select(PfIncomeCategory.id).where(PfIncomeCategory.name == inc_name).limit(1))
+    if exists_i is None:
+        db.add(PfIncomeCategory(name=inc_name, icon='gift', color='emerald'))
+    db.commit()
+
+
 def seed_pf_finance_categories(db: Session) -> None:
     exp_count = db.scalar(select(func.count()).select_from(PfExpenseCategory)) or 0
     if exp_count == 0:
