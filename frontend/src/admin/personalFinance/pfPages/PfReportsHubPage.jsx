@@ -15,12 +15,13 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
   Legend,
-  Area,
   Line,
   LineChart,
   Pie,
@@ -785,7 +786,7 @@ export default function PfReportsHubPage() {
                 <p className="py-16 text-center text-sm text-slate-500">No data in range.</p>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={monthly} margin={{ top: 12, right: 12, left: 4, bottom: 8 }}>
+                  <AreaChart data={monthly} margin={{ top: 12, right: 12, left: 4, bottom: 8 }}>
                     <defs>
                       <linearGradient id="repIncFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#22c55e" stopOpacity={0.22} />
@@ -803,7 +804,7 @@ export default function PfReportsHubPage() {
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <Area type="monotone" dataKey="income" name="Income" stroke="#16a34a" strokeWidth={2.5} fill="url(#repIncFill)" dot={{ r: 3 }} />
                     <Area type="monotone" dataKey="expense" name="Expense" stroke="#e11d48" strokeWidth={2.5} fill="url(#repExpFill)" dot={{ r: 3 }} />
-                  </LineChart>
+                  </AreaChart>
                 </ResponsiveContainer>
               )}
             </div>
