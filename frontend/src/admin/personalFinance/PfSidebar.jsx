@@ -199,6 +199,13 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
               onNavigate={closeIfMobile}
             />
             <NavItem to="/personal-finance/reports" icon={ChartBarIcon} label="Reports" collapsed={collapsed} onNavigate={closeIfMobile} />
+            <NavItem
+              to="/personal-finance/cash-flow"
+              icon={ArrowsRightLeftIcon}
+              label="Cash flow"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
           </div>
 
           <SectionLabel collapsed={collapsed} showDividerBefore>

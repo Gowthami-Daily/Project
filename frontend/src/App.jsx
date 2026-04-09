@@ -125,6 +125,7 @@ const PfLiabilitiesPage = lazy(() => import('./admin/personalFinance/pfPages/PfL
 const PfLoansPage = lazy(() => import('./admin/personalFinance/pfPages/PfLoansPage.jsx'))
 const PfMonthlyStatementsPage = lazy(() => import('./admin/personalFinance/pfPages/PfMonthlyStatementsPage.jsx'))
 const PfReportsHubPage = lazy(() => import('./admin/personalFinance/pfPages/PfReportsHubPage.jsx'))
+const PfCashFlowPage = lazy(() => import('./admin/personalFinance/pfPages/PfCashFlowPage.jsx'))
 const PfMorePage = lazy(() => import('./admin/personalFinance/PfMorePage.jsx'))
 const PfSettingsPage = lazy(() => import('./admin/personalFinance/PfSettingsPage.jsx'))
 const PfTransferPage = lazy(() => import('./admin/personalFinance/pfPages/PfTransferPage.jsx'))
@@ -140,6 +141,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<PersonalFinanceLandingPage />} />
         <Route path="/chit-funds" element={<Navigate to="/personal-finance/chit-funds" replace />} />
+        <Route path="/cash-flow" element={<Navigate to="/personal-finance/cash-flow" replace />} />
         <Route path="/legacy-home" element={<MarketingSite />} />
         <Route path="/personal-finance/*" element={<PersonalFinanceShell />}>
           <Route index element={<PersonalFinanceDashboardPage />} />
@@ -159,6 +161,7 @@ export default function App() {
           <Route path="liabilities" element={<PfLiabilitiesPage />} />
           <Route path="loans" element={<PfLoansPage />} />
           <Route path="reports" element={<PfReportsHubPage />} />
+          <Route path="cash-flow" element={<PfCashFlowPage />} />
           <Route path="more" element={<PfMorePage />} />
           <Route path="settings" element={<PfSettingsPage />} />
         </Route>

@@ -194,28 +194,70 @@ export default function PfAnalyticsHubPage() {
   const rows = table?.rows || []
   const mom = summary?.comparison?.month_over_month_pct
   const partial = Boolean(summary?.partial || trend?.partial)
-  const noTrendData = !loading && !err && series.length === 0
-  const noSliceData = !loading && !err && slices.length === 0
-  const noTableRows = !loading && !err && rows.length === 0
-  const tableColCount =
-    1 +
-    (rows[0]?.amount != null || series[0]?.amount != null ? 1 : 0) +
-    (rows[0]?.inflow != null || series[0]?.inflow != null ? 3 : 0)
-
   const barCompareData = useMemo(() => {
+    // Investments can have portfolio KPIs but zero ledger lines in selected period.
+    // Keep charts/table meaningful by surfacing a synthetic monthly point.
+    if (!series.length && module === 'investments' && kpis) {
+      const inflow = Number(kpis.inflow) || 0
+      const outflow = Number(kpis.outflow) || 0
+      const amount = Number(kpis.net_change) || Number(kpis.total_amount) || 0
+      if (Math.abs(inflow) > 0.01 || Math.abs(outflow) > 0.01 || Math.abs(amount) > 0.01) {
+        return [
+          {
+            label: monthStr,
+            month: monthStr,
+            inflow: Math.max(0, inflow),
+            outflow: Math.max(0, outflow),
+            net: Math.max(0, inflow) - Math.max(0, outflow),
+            amount,
+            synthetic: true,
+          },
+        ]
+      }
+    }
     if (!series.length) return []
     if (series[0].inflow != null) {
       return series.map((r) => ({
         label: r.label || r.date || r.month,
         inflow: r.inflow,
         outflow: r.outflow,
+        net: r.net,
       }))
+    }
+    if (module === 'investments') {
+      return series.map((r) => {
+        const amt = Number(r.amount) || 0
+        return {
+          label: r.label || r.date || r.month,
+          inflow: amt > 0 ? amt : 0,
+          outflow: amt < 0 ? Math.abs(amt) : 0,
+          net: amt,
+          amount: amt,
+        }
+      })
     }
     return series.map((r) => ({
       label: r.label || r.date || r.month,
       amount: r.amount,
     }))
-  }, [series])
+  }, [series, module, kpis, monthStr])
+
+  const displayRows = useMemo(() => {
+    if (rows.length) return rows
+    if (module === 'investments' && barCompareData.length === 1 && barCompareData[0]?.synthetic) {
+      const x = barCompareData[0]
+      return [{ label: x.label, inflow: x.inflow, outflow: x.outflow, net: x.net, amount: x.amount }]
+    }
+    return rows
+  }, [rows, module, barCompareData])
+
+  const noTrendData = !loading && !err && barCompareData.length === 0
+  const noSliceData = !loading && !err && slices.length === 0
+  const noTableRows = !loading && !err && displayRows.length === 0
+  const tableColCount =
+    1 +
+    (displayRows[0]?.amount != null || barCompareData[0]?.amount != null ? 1 : 0) +
+    (displayRows[0]?.inflow != null || barCompareData[0]?.inflow != null ? 3 : 0)
 
   const distBarData = useMemo(
     () => slices.map((s) => ({ name: s.name?.slice(0, 24) || '—', value: s.value })).slice(0, 12),
@@ -599,8 +641,8 @@ export default function PfAnalyticsHubPage() {
                 <thead>
                   <tr>
                     <th className={pfTh}>Period</th>
-                    {rows[0]?.amount != null ? <th className={pfThRight}>Amount</th> : null}
-                    {rows[0]?.inflow != null ? (
+                    {displayRows[0]?.amount != null ? <th className={pfThRight}>Amount</th> : null}
+                    {displayRows[0]?.inflow != null ? (
                       <>
                         <th className={pfThRight}>Inflow</th>
                         <th className={pfThRight}>Outflow</th>
@@ -617,7 +659,7 @@ export default function PfAnalyticsHubPage() {
                       </td>
                     </tr>
                   ) : (
-                    rows.map((r, i) => (
+                    displayRows.map((r, i) => (
                       <tr key={i} className={pfTrHover}>
                         <td className={pfTd}>{r.label || r.date || r.month}</td>
                         {r.amount != null ? <td className={pfTdRight}>{formatInr(r.amount)}</td> : null}

@@ -23,6 +23,7 @@ ANALYTICS_MODULES: frozenset[str] = frozenset(
         'income',
         'accounts',
         'movements',
+        'cash-flow',
         'credit-cards',
         'loans',
         'investments',
@@ -722,6 +723,291 @@ def financial_statement_insights(
         'insights': bullets,
         'warnings': [b for b in bullets if b.lower().startswith('warning')],
     }
+
+
+def _cashflow_ledger_filtered(
+    db: Session,
+    profile_id: int,
+    *,
+    start: date,
+    end: date,
+    account_id: int | None = None,
+) -> dict[str, float]:
+    # Internal transfers and CC bill payments are excluded from net cashflow.
+    # They are movement between owned pockets / settlement of already-booked card spend.
+    ledger_types = (
+        'EXTERNAL_DEPOSIT',
+        'EXTERNAL_WITHDRAWAL',
+        'LOAN_DISBURSEMENT',
+        'LOAN_LIABILITY_PAYMENT',
+        'LOAN_EMI_PAYMENT',
+        'CHIT_AUCTION_RECEIPT',
+        'CHIT_CONTRIBUTION',
+    )
+    raw = pf_finance_repo.sum_account_transaction_amounts_by_type(
+        db, profile_id, start, end, ledger_types
+    )
+    if account_id is not None:
+        # account scoped views keep only income/expense and investment legs;
+        # ledger splits are full-profile in current repo helpers.
+        return {}
+    return {k: float(v) for k, v in raw.items()}
+
+
+def _cashflow_investment_pairs(
+    db: Session, profile_id: int, *, start: date, end: date, granularity: Granularity
+) -> list[tuple[str, float, float, float]]:
+    if granularity == 'daily':
+        rows = pf_analytics_repo.investment_txn_daily_series(db, profile_id, start, end)
+        out: list[tuple[str, float, float, float]] = []
+        for d, amt in rows:
+            a = float(amt)
+            out.append((d.isoformat(), max(0.0, a), abs(min(0.0, a)), a))
+        return out
+    rows_m = pf_analytics_repo.investment_txn_monthly_series_year(db, profile_id, start.year)
+    out_m: list[tuple[str, float, float, float]] = []
+    for ym, amt in rows_m:
+        if not str(ym).startswith(f'{start.year:04d}-'):
+            continue
+        a = float(amt)
+        out_m.append((str(ym), max(0.0, a), abs(min(0.0, a)), a))
+    return out_m
+
+
+def cash_flow_summary(
+    db: Session,
+    profile_id: int,
+    *,
+    year: int,
+    month: int,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    start, end = _month_bounds(year, month)
+    inc = float(pf_finance_repo.sum_income_scoped(db, profile_id, start, end, account_id=account_id))
+    exp = float(pf_finance_repo.sum_expense_scoped(db, profile_id, start, end, account_id=account_id))
+    led = _cashflow_ledger_filtered(db, profile_id, start=start, end=end, account_id=account_id)
+    inv_rows = pf_analytics_repo.investment_txn_daily_series(db, profile_id, start, end)
+    inv_pos = sum(max(0.0, float(v)) for _, v in inv_rows)
+    inv_neg = sum(abs(min(0.0, float(v))) for _, v in inv_rows)
+    inflow = inc + float(led.get('EXTERNAL_DEPOSIT', 0.0)) + float(led.get('CHIT_AUCTION_RECEIPT', 0.0)) + inv_pos
+    outflow = (
+        exp
+        + float(led.get('EXTERNAL_WITHDRAWAL', 0.0))
+        + float(led.get('LOAN_DISBURSEMENT', 0.0))
+        + float(led.get('LOAN_LIABILITY_PAYMENT', 0.0))
+        + float(led.get('LOAN_EMI_PAYMENT', 0.0))
+        + float(led.get('CHIT_CONTRIBUTION', 0.0))
+        + inv_neg
+    )
+    days = max(1, (end - start).days + 1)
+    net = inflow - outflow
+    burn = max(0.0, -net / days)
+    pm, py = (month - 1, year) if month > 1 else (12, year - 1)
+    ps, pe = _month_bounds(py, pm)
+    prev_inc = float(pf_finance_repo.sum_income_scoped(db, profile_id, ps, pe, account_id=account_id))
+    prev_exp = float(pf_finance_repo.sum_expense_scoped(db, profile_id, ps, pe, account_id=account_id))
+    prev_net = prev_inc - prev_exp
+
+    # Lightweight account-flow proxy: net (income-expense) by account in period.
+    account_flow = []
+    try:
+        for a in pf_finance_repo.list_accounts(db, profile_id, 0, 200):
+            ai = float(pf_finance_repo.sum_income_scoped(db, profile_id, start, end, account_id=int(a.id)))
+            ae = float(pf_finance_repo.sum_expense_scoped(db, profile_id, start, end, account_id=int(a.id)))
+            flow = ai - ae
+            if abs(flow) > 0.01:
+                account_flow.append(
+                    {
+                        'name': a.account_name or f'Account #{a.id}',
+                        'inflow': round(ai, 2),
+                        'outflow': round(ae, 2),
+                        'net': round(flow, 2),
+                    }
+                )
+    except Exception:
+        account_flow = []
+    account_flow.sort(key=lambda x: abs(float(x.get('net', 0.0))), reverse=True)
+
+    return {
+        'module': 'cash-flow',
+        'period': {'start': start.isoformat(), 'end': end.isoformat(), 'month': f'{year:04d}-{month:02d}'},
+        'filters': {'account_id': account_id},
+        'kpis': {
+            'total_amount': round(inflow + outflow, 2),
+            'inflow': round(inflow, 2),
+            'outflow': round(outflow, 2),
+            'net_change': round(net, 2),
+            'average': round(net / days, 2),
+            'highest': 0.0,
+            'lowest': 0.0,
+            'burn_rate': round(burn, 2),
+        },
+        'comparison': {
+            'prior_month_total': round(prev_net, 2),
+            'month_over_month_pct': _pct_change(net, prev_net),
+        },
+        'account_flow': account_flow[:12],
+    }
+
+
+def cash_flow_trend(
+    db: Session,
+    profile_id: int,
+    *,
+    granularity: Granularity,
+    year: int,
+    month: int | None = None,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    if granularity == 'daily':
+        if month is None:
+            month = date.today().month
+        start, end = _month_bounds(year, month)
+        inc = pf_analytics_repo.income_daily_series(db, profile_id, start, end, account_id=account_id)
+        exp = pf_analytics_repo.expense_daily_series(db, profile_id, start, end, account_id=account_id)
+        led = pf_analytics_repo.ledger_daily_inflow_outflow(db, profile_id, start, end, account_id=account_id)
+        inv = _cashflow_investment_pairs(db, profile_id, start=start, end=end, granularity='daily')
+        by: dict[str, dict[str, float]] = {}
+        for d, v in inc:
+            k = d.isoformat()
+            by.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+            by[k]['inflow'] += float(v)
+        for d, v in exp:
+            k = d.isoformat()
+            by.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+            by[k]['outflow'] += float(v)
+        for d, i, o in led:
+            k = d.isoformat()
+            by.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+            # remove transfer and cc-bill from the net cashflow line
+            by[k]['inflow'] += max(0.0, float(i))
+            by[k]['outflow'] += max(0.0, float(o))
+        for k, ip, on, _ in inv:
+            by.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+            by[k]['inflow'] += float(ip)
+            by[k]['outflow'] += float(on)
+        series = [
+            {
+                'label': k,
+                'date': k,
+                'inflow': round(by[k]['inflow'], 2),
+                'outflow': round(by[k]['outflow'], 2),
+                'net': round(by[k]['inflow'] - by[k]['outflow'], 2),
+            }
+            for k in sorted(by.keys())
+        ]
+        return {'module': 'cash-flow', 'granularity': 'daily', 'series': series}
+
+    im = pf_analytics_repo.income_monthly_series_year(db, profile_id, year, account_id=account_id)
+    ex = pf_analytics_repo.expense_monthly_series_year(db, profile_id, year, account_id=account_id)
+    lm = pf_analytics_repo.ledger_monthly_inflow_outflow_year(db, profile_id, year, account_id=account_id)
+    start_y, end_y = _month_bounds(year, 1)[0], _month_bounds(year, 12)[1]
+    ivm = _cashflow_investment_pairs(db, profile_id, start=start_y, end=end_y, granularity='monthly')
+    bym: dict[str, dict[str, float]] = {}
+    for k, v in im:
+        bym.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+        bym[k]['inflow'] += float(v)
+    for k, v in ex:
+        bym.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+        bym[k]['outflow'] += float(v)
+    for k, i, o in lm:
+        bym.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+        bym[k]['inflow'] += float(i)
+        bym[k]['outflow'] += float(o)
+    for k, ip, on, _ in ivm:
+        bym.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+        bym[k]['inflow'] += float(ip)
+        bym[k]['outflow'] += float(on)
+    series = [
+        {
+            'label': k,
+            'month': k,
+            'inflow': round(v['inflow'], 2),
+            'outflow': round(v['outflow'], 2),
+            'net': round(v['inflow'] - v['outflow'], 2),
+        }
+        for k, v in sorted(bym.items())
+    ]
+    return {'module': 'cash-flow', 'granularity': 'monthly', 'series': series}
+
+
+def cash_flow_distribution(
+    db: Session,
+    profile_id: int,
+    *,
+    year: int,
+    month: int,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    start, end = _month_bounds(year, month)
+    income = float(pf_finance_repo.sum_income_scoped(db, profile_id, start, end, account_id=account_id))
+    expense = float(pf_finance_repo.sum_expense_scoped(db, profile_id, start, end, account_id=account_id))
+    inv = pf_analytics_repo.investment_txn_daily_series(db, profile_id, start, end)
+    inv_in = sum(max(0.0, float(v)) for _, v in inv)
+    inv_out = sum(abs(min(0.0, float(v))) for _, v in inv)
+    led = _cashflow_ledger_filtered(db, profile_id, start=start, end=end, account_id=account_id)
+    slices = [
+        {'name': 'Income', 'value': round(income, 2)},
+        {'name': 'Expenses', 'value': round(expense, 2)},
+        {'name': 'Investments (in)', 'value': round(inv_in, 2)},
+        {'name': 'Investments (out)', 'value': round(inv_out, 2)},
+        {'name': 'Chit contribution', 'value': round(float(led.get('CHIT_CONTRIBUTION', 0.0)), 2)},
+        {'name': 'Chit auction receipt', 'value': round(float(led.get('CHIT_AUCTION_RECEIPT', 0.0)), 2)},
+        {'name': 'Loan disbursement', 'value': round(float(led.get('LOAN_DISBURSEMENT', 0.0)), 2)},
+        {'name': 'Loan payments', 'value': round(float(led.get('LOAN_LIABILITY_PAYMENT', 0.0)) + float(led.get('LOAN_EMI_PAYMENT', 0.0)), 2)},
+        {'name': 'External deposit', 'value': round(float(led.get('EXTERNAL_DEPOSIT', 0.0)), 2)},
+        {'name': 'External withdrawal', 'value': round(float(led.get('EXTERNAL_WITHDRAWAL', 0.0)), 2)},
+    ]
+    return {'module': 'cash-flow', 'period': {'start': start.isoformat(), 'end': end.isoformat()}, 'slices': [s for s in slices if s['value'] > 0.01]}
+
+
+def cash_flow_table(
+    db: Session,
+    profile_id: int,
+    *,
+    granularity: Granularity,
+    year: int,
+    month: int | None = None,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    t = cash_flow_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
+    return {'module': 'cash-flow', 'granularity': t['granularity'], 'rows': t['series']}
+
+
+def cash_flow_insights(
+    db: Session,
+    profile_id: int,
+    *,
+    year: int,
+    month: int,
+    account_id: int | None = None,
+) -> dict[str, Any]:
+    s = cash_flow_summary(db, profile_id, year=year, month=month, account_id=account_id)
+    t = cash_flow_trend(db, profile_id, granularity='daily', year=year, month=month, account_id=account_id)
+    rows = t.get('series', [])
+    inflow = float(s.get('kpis', {}).get('inflow', 0.0))
+    outflow = float(s.get('kpis', {}).get('outflow', 0.0))
+    net = float(s.get('kpis', {}).get('net_change', 0.0))
+    bullets: list[str] = []
+    warnings: list[str] = []
+    if net < 0:
+        msg = f'You are spending {abs(net):,.2f} more than earning in this period.'
+        bullets.append(msg)
+        warnings.append(msg)
+    else:
+        bullets.append(f'Net positive cashflow of {net:,.2f} in this period.')
+    if rows:
+        worst = min(rows, key=lambda r: float(r.get('net', 0.0)))
+        bullets.append(f'Highest cash burn: {worst.get("label")} ({float(worst.get("net", 0.0)):,.2f}).')
+        pos_days = sum(1 for r in rows if float(r.get('net', 0.0)) >= 0)
+        bullets.append(f'Positive cashflow on {pos_days}/{len(rows)} tracked periods.')
+    if inflow > 0.01:
+        ratio = outflow / inflow
+        if ratio > 1.15:
+            w = f'Cashflow health risk: outflow is {ratio*100:.1f}% of inflow.'
+            bullets.append(w)
+            warnings.append(w)
+    return {'module': 'cash-flow', 'insights': bullets, 'warnings': warnings}
 
 
 def movements_summary(
@@ -1783,6 +2069,8 @@ def dispatch_summary(
         return accounts_summary(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'movements':
         return movements_summary(db, profile_id, year=year, month=month, account_id=account_id)
+    if module == 'cash-flow':
+        return cash_flow_summary(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
         return credit_cards_packaged(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
@@ -1796,7 +2084,10 @@ def dispatch_summary(
     if module == 'financial-statement':
         return financial_statement_summary(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'reports':
-        return _stub(module, 'Open the Reports hub for balance sheet and detailed statements; analytics here is P&L-style only.')
+        out = financial_statement_summary(db, profile_id, year=year, month=month, account_id=account_id)
+        out['module'] = 'reports'
+        out.setdefault('notes', 'Reports analytics uses financial-statement (income vs expense) data model.')
+        return out
     return _stub(module, 'Unknown module')
 
 
@@ -1837,6 +2128,8 @@ def dispatch_trend(
         return accounts_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'movements':
         return movements_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
+    if module == 'cash-flow':
+        return cash_flow_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
         return credit_cards_trend(
             db, profile_id, granularity=granularity, year=year, month=month, card_id=card_id
@@ -1853,6 +2146,12 @@ def dispatch_trend(
         return financial_statement_trend(
             db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
         )
+    if module == 'reports':
+        out = financial_statement_trend(
+            db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
+        )
+        out['module'] = 'reports'
+        return out
     return {'module': module, 'granularity': granularity, 'series': [], 'partial': True}
 
 
@@ -1890,6 +2189,8 @@ def dispatch_distribution(
         return accounts_distribution(db, profile_id, year=year, month=month)
     if module == 'movements':
         return movements_distribution(db, profile_id, year=year, month=month, account_id=account_id)
+    if module == 'cash-flow':
+        return cash_flow_distribution(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
         return credit_cards_distribution(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
@@ -1902,6 +2203,10 @@ def dispatch_distribution(
         return assets_distribution(db, profile_id, year=year, month=month)
     if module == 'financial-statement':
         return financial_statement_distribution(db, profile_id, year=year, month=month, account_id=account_id)
+    if module == 'reports':
+        out = financial_statement_distribution(db, profile_id, year=year, month=month, account_id=account_id)
+        out['module'] = 'reports'
+        return out
     return {'module': module, 'slices': [], 'partial': True}
 
 
@@ -1942,6 +2247,8 @@ def dispatch_table(
         return accounts_table(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'movements':
         return movements_table(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
+    if module == 'cash-flow':
+        return cash_flow_table(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
         return credit_cards_table(
             db, profile_id, granularity=granularity, year=year, month=month, card_id=card_id
@@ -1958,6 +2265,12 @@ def dispatch_table(
         return financial_statement_table(
             db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
         )
+    if module == 'reports':
+        out = financial_statement_table(
+            db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id
+        )
+        out['module'] = 'reports'
+        return out
     return {'module': module, 'granularity': granularity, 'rows': [], 'partial': True}
 
 
@@ -1995,6 +2308,8 @@ def dispatch_insights(
         return accounts_insights(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'movements':
         return movements_insights(db, profile_id, year=year, month=month, account_id=account_id)
+    if module == 'cash-flow':
+        return cash_flow_insights(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'credit-cards':
         return credit_cards_insights(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
@@ -2007,4 +2322,8 @@ def dispatch_insights(
         return assets_insights(db, profile_id, year=year, month=month)
     if module == 'financial-statement':
         return financial_statement_insights(db, profile_id, year=year, month=month, account_id=account_id)
+    if module == 'reports':
+        out = financial_statement_insights(db, profile_id, year=year, month=month, account_id=account_id)
+        out['module'] = 'reports'
+        return out
     return {'module': module, 'insights': [], 'warnings': [], 'partial': True}
