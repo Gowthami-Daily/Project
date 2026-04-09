@@ -85,7 +85,6 @@ const ASSET_TYPES = [
   { value: 'FURNITURE', label: 'Furniture' },
   { value: 'ELECTRONICS', label: 'Electronics' },
   { value: 'BUSINESS_ASSET', label: 'Business asset' },
-  { value: 'CHIT_FUND', label: 'Chit fund (book entry)' },
   { value: 'OTHER', label: 'Other' },
 ]
 
@@ -387,8 +386,6 @@ export default function PfAssetsPage() {
   const portfolioPurchase = num(summary?.total_purchase_value)
   const portfolioEffective = num(summary?.total_current_value)
   const gainVsCost = portfolioEffective - portfolioPurchase
-  const chitFundsNetKpi = num(summary?.chit_funds_net_value)
-
   const allocationPie = useMemo(() => allocationByType(rows), [rows])
   const trendSeries = useMemo(() => cumulativePurchaseByYear(rows), [rows])
 
@@ -833,153 +830,6 @@ export default function PfAssetsPage() {
           </p>
           <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">{summary?.linked_loan_count ?? 0} asset link(s)</p>
         </div>
-        <div className={`${kpiGlass} border-amber-500/25 bg-amber-500/[0.04]`}>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--pf-text-muted)]">Chit funds (asset side)</p>
-          <p className="mt-2 font-mono text-lg font-bold tabular-nums text-amber-800 dark:text-amber-200 sm:text-xl">
-            {formatInr(chitFundsNetKpi)}
-          </p>
-          <p className="mt-1 text-[10px] text-[var(--pf-text-muted)]">
-            Book asset total · Payable sits in liabilities · Net worth = assets − liabilities
-          </p>
-          {summary?.chit_funds_metrics ? (
-            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-amber-500/20 pt-3 text-[10px] text-[var(--pf-text-muted)] sm:grid-cols-3">
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Pot value</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_chit_value)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Total paid</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_paid)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Received</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_amount_received)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Dividend</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_dividend)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Commission</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_commission)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Discount (loss)</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_discount)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Net P/L</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.net_profit_loss)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Chit payable</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.total_liability_value)}</dd>
-              </div>
-              <div>
-                <dt className="font-semibold text-[var(--pf-text)]">Asset − payable</dt>
-                <dd className="font-mono tabular-nums">{formatInr(summary.chit_funds_metrics.net_balance_sheet)}</dd>
-              </div>
-            </dl>
-          ) : null}
-        </div>
-      </section>
-
-      <section
-        className="space-y-4 rounded-2xl border border-[var(--pf-border)] bg-white/[0.02] p-5 dark:bg-white/[0.02]"
-        aria-label="Chit funds"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <h2 className="text-base font-bold text-[var(--pf-text)]">Chit funds</h2>
-            <p className="mt-1 max-w-3xl text-xs text-[var(--pf-text-muted)]">
-              <strong>Before auction:</strong> each payment is a bank outflow with type{' '}
-              <code className="rounded bg-black/5 px-1 dark:bg-white/10">CHIT_CONTRIBUTION</code> (book asset = total paid).{' '}
-              <strong>After auction:</strong> remaining payable = pot value − total paid; <strong>Pay month</strong> records a
-              liability installment (reduces <strong>Chit Fund Payable</strong>). Saving auction data books{' '}
-              <strong>Chit Fund Discount (Loss)</strong> and optional auction receipt to your bank. <strong>Dividend</strong> →
-              income; <strong>Commission</strong> → expense.
-            </p>
-          </div>
-          <button type="button" onClick={openChitAdd} className={`${btnSecondary} inline-flex items-center gap-2 text-xs`}>
-            <PlusIcon className="h-4 w-4" aria-hidden />
-            Add chit fund
-          </button>
-        </div>
-        {chitFunds.length === 0 ? (
-          <p className="text-sm text-[var(--pf-text-muted)]">No chit funds yet.</p>
-        ) : (
-          <div className={pfTableWrap}>
-            <table className={`${pfTable} min-w-[64rem] text-xs sm:text-sm`}>
-              <thead>
-                <tr>
-                  <th className={pfTh}>Chit</th>
-                  <th className={pfTh}>Status</th>
-                  <th className={pfThRight}>Total paid</th>
-                  <th className={pfThRight}>Received</th>
-                  <th className={pfThRight}>Net asset</th>
-                  <th className={pfThRight}>Payable</th>
-                  <th className={pfThRight}>Discount</th>
-                  <th className={pfThRight}>Net P/L</th>
-                  <th className={pfThRight}>Rem. mo</th>
-                  <th className={pfTh}>Auction</th>
-                  <th className={pfTdActions}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {chitFunds.map((c) => (
-                  <tr key={c.id} className={pfTrHover}>
-                    <td className={pfTd}>
-                      <span className="font-medium text-[var(--pf-text)]">{c.chit_name}</span>
-                      <p className="text-[10px] text-[var(--pf-text-muted)]">
-                        {formatInr(c.monthly_amount)}/mo · {c.duration_months} mo · pot {formatInr(c.total_value)}
-                      </p>
-                    </td>
-                    <td className={pfTd}>{String(c.status || '—')}</td>
-                    <td className={pfTdRight}>{formatInr(c.total_paid)}</td>
-                    <td className={pfTdRight}>{formatInr(c.total_received)}</td>
-                    <td className={pfTdRight}>{formatInr(c.net_asset_value)}</td>
-                    <td className={pfTdRight}>{c.auction_taken ? formatInr(c.liability_outstanding) : '—'}</td>
-                    <td className={pfTdRight}>{c.auction_taken ? formatInr(c.discount_computed) : '—'}</td>
-                    <td className={pfTdRight}>{formatInr(c.net_position ?? c.profit_loss)}</td>
-                    <td className={pfTdRight}>{c.remaining_months ?? '—'}</td>
-                    <td className={pfTd}>{c.auction_taken ? `Yes (mo ${c.auction_month ?? '—'})` : 'No'}</td>
-                    <td className={pfTdActions}>
-                      <div className="flex flex-wrap gap-1">
-                        <button type="button" className={`${btnSecondary} !px-2 !py-1 text-[10px]`} onClick={() => openChitEdit(c)}>
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className={`${btnSecondary} !px-2 !py-1 text-[10px]`}
-                          onClick={() => openChitLedger(c.id, 'contribution')}
-                        >
-                          Pay month
-                        </button>
-                        <button
-                          type="button"
-                          className={`${btnSecondary} !px-2 !py-1 text-[10px]`}
-                          onClick={() => openChitLedger(c.id, 'dividend')}
-                        >
-                          Dividend
-                        </button>
-                        <button
-                          type="button"
-                          className={`${btnSecondary} !px-2 !py-1 text-[10px]`}
-                          onClick={() => openChitLedger(c.id, 'commission')}
-                        >
-                          Commission
-                        </button>
-                        <button type="button" className={`${btnDanger} !px-2 !py-1 text-[10px]`} onClick={() => handleChitDelete(c)}>
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </section>
 
       {!loading && rows.length > 0 ? (

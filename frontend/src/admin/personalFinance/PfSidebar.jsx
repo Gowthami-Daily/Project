@@ -264,6 +264,13 @@ export default function PfSidebar({ user = null, collapsed, mobileOpen, onCloseM
               onNavigate={closeIfMobile}
             />
             <NavItem
+              to="/personal-finance/chit-funds"
+              icon={BanknotesIcon}
+              label="Chit funds"
+              collapsed={collapsed}
+              onNavigate={closeIfMobile}
+            />
+            <NavItem
               to="/personal-finance/assets"
               icon={BuildingLibraryIcon}
               label="Fixed assets"

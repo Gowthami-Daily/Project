@@ -855,6 +855,10 @@ export function postChitFundForemanCommission(chitId, body) {
   return fin(`/chit-funds/${chitId}/foreman-commission`, { method: 'POST', body: JSON.stringify(body) })
 }
 
+export function listChitFundContributions(chitId) {
+  return fin(`/chit-funds/${chitId}/contributions`)
+}
+
 export function listFinanceLiabilities(params = {}) {
   const q = new URLSearchParams({
     skip: String(params.skip ?? 0),
