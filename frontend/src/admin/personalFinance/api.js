@@ -277,7 +277,7 @@ export function getDailyLedger(fromDate, toDate, financeAccountId) {
   return pfFetch(`/pf/reports/daily?${q}`)
 }
 
-/** @param {{ month?: string, type?: 'daily'|'monthly', year?: number, accountId?: string|number, expenseCategoryId?: string|number, incomeCategoryId?: string|number, cardId?: string|number }} p */
+/** @param {{ month?: string, type?: 'daily'|'monthly', year?: number, accountId?: string|number, expenseCategoryId?: string|number, incomeCategoryId?: string|number, cardId?: string|number, breakdown?: string }} p */
 function pfAnalyticsQuery(p = {}) {
   const q = new URLSearchParams()
   if (p.month) q.set('month', String(p.month))
@@ -299,6 +299,7 @@ function pfAnalyticsQuery(p = {}) {
     const id = Number(p.cardId)
     if (id && !Number.isNaN(id)) q.set('card_id', String(id))
   }
+  if (p.breakdown && String(p.breakdown).trim()) q.set('breakdown', String(p.breakdown).trim())
   const s = q.toString()
   return s ? `?${s}` : ''
 }

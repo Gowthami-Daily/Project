@@ -10,9 +10,24 @@ from calendar import monthrange
 from datetime import date, timedelta
 from typing import Any, Literal
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from fastapi_service.models_extended import PfIncomeCategory
+from fastapi_service.models_extended import (
+    ChitFund,
+    ChitFundContribution,
+    CreditCard,
+    CreditCardTransaction,
+    FinanceAccount,
+    FinanceExpense,
+    FinanceIncome,
+    FinanceInvestment,
+    FinanceInvestmentTransaction,
+    Loan,
+    LoanPayment,
+    PfExpenseCategory,
+    PfIncomeCategory,
+)
 from fastapi_service.repositories import pf_analytics_repo, pf_chit_fund_repo, pf_credit_card_repo, pf_finance_repo
 
 Granularity = Literal['daily', 'monthly']
@@ -774,6 +789,244 @@ def _cashflow_investment_pairs(
     return out_m
 
 
+def _period_key(d: date, granularity: Granularity) -> str:
+    return d.isoformat() if granularity == 'daily' else f'{d.year:04d}-{d.month:02d}'
+
+
+def _top_entities(entity_totals: dict[str, float], limit: int = 6) -> list[str]:
+    return [k for k, _ in sorted(entity_totals.items(), key=lambda x: abs(x[1]), reverse=True)[:limit]]
+
+
+def _build_breakdown_data(
+    db: Session,
+    profile_id: int,
+    *,
+    breakdown: str,
+    granularity: Granularity,
+    start: date,
+    end: date,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Returns:
+    - aggregate_series: [{label,inflow,outflow,net}]
+    - entities: [{name,total_net,total_inflow,total_outflow,series:[...]}]
+    - detailed_rows: [{label,source,type,inflow,outflow,net}]
+    """
+    b = str(breakdown or 'all').strip().lower()
+    by_pair: dict[tuple[str, str], dict[str, float]] = {}
+
+    def add(period: str, source: str, inflow: float = 0.0, outflow: float = 0.0) -> None:
+        if not period or not source:
+            return
+        k = (period, source)
+        slot = by_pair.setdefault(k, {'inflow': 0.0, 'outflow': 0.0})
+        slot['inflow'] += float(inflow or 0.0)
+        slot['outflow'] += float(outflow or 0.0)
+
+    # Banks/accounts
+    if b in ('banks', 'all'):
+        inc_rows = db.execute(
+            select(FinanceIncome.entry_date, FinanceAccount.account_name, func.coalesce(func.sum(FinanceIncome.amount), 0))
+            .select_from(FinanceIncome)
+            .join(FinanceAccount, FinanceAccount.id == FinanceIncome.account_id, isouter=True)
+            .where(
+                FinanceIncome.profile_id == profile_id,
+                FinanceIncome.entry_date >= start,
+                FinanceIncome.entry_date <= end,
+            )
+            .group_by(FinanceIncome.entry_date, FinanceAccount.account_name)
+        ).all()
+        for d, n, v in inc_rows:
+            add(_period_key(d, granularity), n or 'Unassigned account', inflow=float(v))
+
+        exp_rows = db.execute(
+            select(FinanceExpense.entry_date, FinanceAccount.account_name, func.coalesce(func.sum(FinanceExpense.amount), 0))
+            .select_from(FinanceExpense)
+            .join(FinanceAccount, FinanceAccount.id == FinanceExpense.account_id, isouter=True)
+            .where(
+                FinanceExpense.profile_id == profile_id,
+                FinanceExpense.entry_date >= start,
+                FinanceExpense.entry_date <= end,
+            )
+            .group_by(FinanceExpense.entry_date, FinanceAccount.account_name)
+        ).all()
+        for d, n, v in exp_rows:
+            add(_period_key(d, granularity), n or 'Unassigned account', outflow=float(v))
+
+    # Cards
+    if b in ('cards', 'all'):
+        cc_rows = db.execute(
+            select(CreditCardTransaction.transaction_date, CreditCard.card_name, func.coalesce(func.sum(CreditCardTransaction.amount), 0))
+            .select_from(CreditCardTransaction)
+            .join(CreditCard, CreditCard.id == CreditCardTransaction.card_id)
+            .where(
+                CreditCard.profile_id == profile_id,
+                CreditCardTransaction.transaction_date >= start,
+                CreditCardTransaction.transaction_date <= end,
+            )
+            .group_by(CreditCardTransaction.transaction_date, CreditCard.card_name)
+        ).all()
+        for d, n, v in cc_rows:
+            add(_period_key(d, granularity), n or 'Credit card', outflow=float(v))
+
+    # Expenses
+    if b in ('expenses', 'all'):
+        ex_rows = db.execute(
+            select(FinanceExpense.entry_date, PfExpenseCategory.name, FinanceExpense.category, func.coalesce(func.sum(FinanceExpense.amount), 0))
+            .select_from(FinanceExpense)
+            .join(PfExpenseCategory, PfExpenseCategory.id == FinanceExpense.expense_category_id, isouter=True)
+            .where(
+                FinanceExpense.profile_id == profile_id,
+                FinanceExpense.entry_date >= start,
+                FinanceExpense.entry_date <= end,
+            )
+            .group_by(FinanceExpense.entry_date, PfExpenseCategory.name, FinanceExpense.category)
+        ).all()
+        for d, n, c, v in ex_rows:
+            add(_period_key(d, granularity), n or c or 'Expense', outflow=float(v))
+
+    # Income
+    if b in ('income', 'all'):
+        in_rows = db.execute(
+            select(FinanceIncome.entry_date, PfIncomeCategory.name, FinanceIncome.category, func.coalesce(func.sum(FinanceIncome.amount), 0))
+            .select_from(FinanceIncome)
+            .join(PfIncomeCategory, PfIncomeCategory.id == FinanceIncome.income_category_id, isouter=True)
+            .where(
+                FinanceIncome.profile_id == profile_id,
+                FinanceIncome.entry_date >= start,
+                FinanceIncome.entry_date <= end,
+            )
+            .group_by(FinanceIncome.entry_date, PfIncomeCategory.name, FinanceIncome.category)
+        ).all()
+        for d, n, c, v in in_rows:
+            add(_period_key(d, granularity), n or c or 'Income', inflow=float(v))
+
+    # Investments
+    if b in ('investments', 'all'):
+        inv_rows = db.execute(
+            select(FinanceInvestmentTransaction.txn_date, FinanceInvestment.name, func.coalesce(func.sum(FinanceInvestmentTransaction.amount), 0))
+            .select_from(FinanceInvestmentTransaction)
+            .join(FinanceInvestment, FinanceInvestment.id == FinanceInvestmentTransaction.investment_id)
+            .where(
+                FinanceInvestment.profile_id == profile_id,
+                FinanceInvestmentTransaction.txn_date >= start,
+                FinanceInvestmentTransaction.txn_date <= end,
+            )
+            .group_by(FinanceInvestmentTransaction.txn_date, FinanceInvestment.name)
+        ).all()
+        for d, n, v in inv_rows:
+            amt = float(v)
+            add(_period_key(d, granularity), n or 'Investment', inflow=max(0.0, amt), outflow=abs(min(0.0, amt)))
+
+    # Loans
+    if b in ('loans', 'all'):
+        lp_rows = db.execute(
+            select(LoanPayment.payment_date, Loan.borrower_name, func.coalesce(func.sum(LoanPayment.total_paid), 0))
+            .select_from(LoanPayment)
+            .join(Loan, Loan.id == LoanPayment.loan_id)
+            .where(
+                Loan.profile_id == profile_id,
+                LoanPayment.payment_date >= start,
+                LoanPayment.payment_date <= end,
+            )
+            .group_by(LoanPayment.payment_date, Loan.borrower_name)
+        ).all()
+        for d, n, v in lp_rows:
+            add(_period_key(d, granularity), n or 'Loan repayment', outflow=float(v))
+
+    # Chit
+    if b in ('chit', 'all'):
+        ch_rows = db.execute(
+            select(ChitFundContribution.contribution_date, ChitFund.chit_name, func.coalesce(func.sum(ChitFundContribution.amount), 0))
+            .select_from(ChitFundContribution)
+            .join(ChitFund, ChitFund.id == ChitFundContribution.chit_fund_id)
+            .where(
+                ChitFund.profile_id == profile_id,
+                ChitFundContribution.contribution_date >= start,
+                ChitFundContribution.contribution_date <= end,
+            )
+            .group_by(ChitFundContribution.contribution_date, ChitFund.chit_name)
+        ).all()
+        for d, n, v in ch_rows:
+            add(_period_key(d, granularity), n or 'Chit contribution', outflow=float(v))
+        auc_rows = db.execute(
+            select(ChitFund.start_date, ChitFund.chit_name, ChitFund.amount_received)
+            .where(
+                ChitFund.profile_id == profile_id,
+                ChitFund.amount_received.is_not(None),
+                ChitFund.start_date >= start,
+                ChitFund.start_date <= end,
+            )
+        ).all()
+        for d, n, v in auc_rows:
+            add(_period_key(d, granularity), n or 'Chit receipt', inflow=float(v or 0))
+
+    if not by_pair:
+        return [], [], []
+
+    # Build detailed rows
+    detailed_rows: list[dict[str, Any]] = []
+    periods = sorted({p for p, _ in by_pair.keys()})
+    entity_totals: dict[str, float] = {}
+    for (p, src), vals in by_pair.items():
+        net = float(vals['inflow']) - float(vals['outflow'])
+        entity_totals[src] = entity_totals.get(src, 0.0) + net
+        detailed_rows.append(
+            {
+                'label': p,
+                'source': src,
+                'type': 'inflow' if net >= 0 else 'outflow',
+                'inflow': round(float(vals['inflow']), 2),
+                'outflow': round(float(vals['outflow']), 2),
+                'net': round(net, 2),
+            }
+        )
+    detailed_rows.sort(key=lambda r: (r['label'], -abs(float(r['net']))))
+
+    top_names = _top_entities(entity_totals, limit=6)
+    if len(entity_totals) > len(top_names):
+        top_names.append('Others')
+    entity_series_map: dict[str, dict[str, dict[str, float]]] = {n: {} for n in top_names}
+    for (p, src), vals in by_pair.items():
+        key = src if src in top_names else 'Others'
+        slot = entity_series_map[key].setdefault(p, {'inflow': 0.0, 'outflow': 0.0})
+        slot['inflow'] += float(vals['inflow'])
+        slot['outflow'] += float(vals['outflow'])
+
+    entities: list[dict[str, Any]] = []
+    for name in top_names:
+        pdata = []
+        t_in = t_out = 0.0
+        for p in periods:
+            v = entity_series_map[name].get(p, {'inflow': 0.0, 'outflow': 0.0})
+            n = float(v['inflow']) - float(v['outflow'])
+            t_in += float(v['inflow'])
+            t_out += float(v['outflow'])
+            pdata.append({'label': p, 'inflow': round(float(v['inflow']), 2), 'outflow': round(float(v['outflow']), 2), 'net': round(n, 2)})
+        entities.append({'name': name, 'total_inflow': round(t_in, 2), 'total_outflow': round(t_out, 2), 'total_net': round(t_in - t_out, 2), 'series': pdata})
+
+    aggregate_series = []
+    for p in periods:
+        i = o = 0.0
+        for e in entities:
+            row = next((x for x in e['series'] if x['label'] == p), None)
+            if row is None:
+                continue
+            i += float(row['inflow'])
+            o += float(row['outflow'])
+        aggregate_series.append(
+            {
+                'label': p,
+                'inflow': round(i, 2),
+                'outflow': round(o, 2),
+                'net': round(i - o, 2),
+                'date': p if granularity == 'daily' else None,
+                'month': p if granularity == 'monthly' else None,
+            }
+        )
+    return aggregate_series, entities, detailed_rows
+
+
 def cash_flow_summary(
     db: Session,
     profile_id: int,
@@ -781,6 +1034,7 @@ def cash_flow_summary(
     year: int,
     month: int,
     account_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     start, end = _month_bounds(year, month)
     inc = float(pf_finance_repo.sum_income_scoped(db, profile_id, start, end, account_id=account_id))
@@ -828,10 +1082,10 @@ def cash_flow_summary(
         account_flow = []
     account_flow.sort(key=lambda x: abs(float(x.get('net', 0.0))), reverse=True)
 
-    return {
+    out = {
         'module': 'cash-flow',
         'period': {'start': start.isoformat(), 'end': end.isoformat(), 'month': f'{year:04d}-{month:02d}'},
-        'filters': {'account_id': account_id},
+        'filters': {'account_id': account_id, 'breakdown': breakdown},
         'kpis': {
             'total_amount': round(inflow + outflow, 2),
             'inflow': round(inflow, 2),
@@ -848,6 +1102,15 @@ def cash_flow_summary(
         },
         'account_flow': account_flow[:12],
     }
+    if str(breakdown).lower() != 'all':
+        _, entities, _ = _build_breakdown_data(
+            db, profile_id, breakdown=breakdown, granularity='daily', start=start, end=end
+        )
+        out['entity_totals'] = [
+            {'name': e['name'], 'net': e['total_net'], 'inflow': e['total_inflow'], 'outflow': e['total_outflow']}
+            for e in entities
+        ]
+    return out
 
 
 def cash_flow_trend(
@@ -858,6 +1121,7 @@ def cash_flow_trend(
     year: int,
     month: int | None = None,
     account_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     if granularity == 'daily':
         if month is None:
@@ -896,7 +1160,12 @@ def cash_flow_trend(
             }
             for k in sorted(by.keys())
         ]
-        return {'module': 'cash-flow', 'granularity': 'daily', 'series': series}
+        if str(breakdown).lower() != 'all':
+            agg, entities, detailed = _build_breakdown_data(
+                db, profile_id, breakdown=breakdown, granularity='daily', start=start, end=end
+            )
+            return {'module': 'cash-flow', 'granularity': 'daily', 'breakdown': breakdown, 'series': agg, 'entities': entities, 'detailed_rows': detailed}
+        return {'module': 'cash-flow', 'granularity': 'daily', 'breakdown': breakdown, 'series': series}
 
     im = pf_analytics_repo.income_monthly_series_year(db, profile_id, year, account_id=account_id)
     ex = pf_analytics_repo.expense_monthly_series_year(db, profile_id, year, account_id=account_id)
@@ -928,7 +1197,14 @@ def cash_flow_trend(
         }
         for k, v in sorted(bym.items())
     ]
-    return {'module': 'cash-flow', 'granularity': 'monthly', 'series': series}
+    if str(breakdown).lower() != 'all':
+        # monthly uses full selected year
+        s, e = _month_bounds(year, 1)[0], _month_bounds(year, 12)[1]
+        agg, entities, detailed = _build_breakdown_data(
+            db, profile_id, breakdown=breakdown, granularity='monthly', start=s, end=e
+        )
+        return {'module': 'cash-flow', 'granularity': 'monthly', 'breakdown': breakdown, 'series': agg, 'entities': entities, 'detailed_rows': detailed}
+    return {'module': 'cash-flow', 'granularity': 'monthly', 'breakdown': breakdown, 'series': series}
 
 
 def cash_flow_distribution(
@@ -938,6 +1214,7 @@ def cash_flow_distribution(
     year: int,
     month: int,
     account_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     start, end = _month_bounds(year, month)
     income = float(pf_finance_repo.sum_income_scoped(db, profile_id, start, end, account_id=account_id))
@@ -946,6 +1223,12 @@ def cash_flow_distribution(
     inv_in = sum(max(0.0, float(v)) for _, v in inv)
     inv_out = sum(abs(min(0.0, float(v))) for _, v in inv)
     led = _cashflow_ledger_filtered(db, profile_id, start=start, end=end, account_id=account_id)
+    if str(breakdown).lower() != 'all':
+        _, entities, _ = _build_breakdown_data(
+            db, profile_id, breakdown=breakdown, granularity='daily', start=start, end=end
+        )
+        slices = [{'name': e['name'], 'value': round(abs(float(e['total_net'])), 2)} for e in entities]
+        return {'module': 'cash-flow', 'breakdown': breakdown, 'period': {'start': start.isoformat(), 'end': end.isoformat()}, 'slices': [s for s in slices if s['value'] > 0.01]}
     slices = [
         {'name': 'Income', 'value': round(income, 2)},
         {'name': 'Expenses', 'value': round(expense, 2)},
@@ -958,7 +1241,7 @@ def cash_flow_distribution(
         {'name': 'External deposit', 'value': round(float(led.get('EXTERNAL_DEPOSIT', 0.0)), 2)},
         {'name': 'External withdrawal', 'value': round(float(led.get('EXTERNAL_WITHDRAWAL', 0.0)), 2)},
     ]
-    return {'module': 'cash-flow', 'period': {'start': start.isoformat(), 'end': end.isoformat()}, 'slices': [s for s in slices if s['value'] > 0.01]}
+    return {'module': 'cash-flow', 'breakdown': breakdown, 'period': {'start': start.isoformat(), 'end': end.isoformat()}, 'slices': [s for s in slices if s['value'] > 0.01]}
 
 
 def cash_flow_table(
@@ -969,9 +1252,13 @@ def cash_flow_table(
     year: int,
     month: int | None = None,
     account_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
-    t = cash_flow_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
-    return {'module': 'cash-flow', 'granularity': t['granularity'], 'rows': t['series']}
+    t = cash_flow_trend(
+        db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id, breakdown=breakdown
+    )
+    rows = t.get('detailed_rows') if str(breakdown).lower() != 'all' else t.get('series')
+    return {'module': 'cash-flow', 'granularity': t['granularity'], 'breakdown': breakdown, 'rows': rows or []}
 
 
 def cash_flow_insights(
@@ -981,9 +1268,12 @@ def cash_flow_insights(
     year: int,
     month: int,
     account_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
-    s = cash_flow_summary(db, profile_id, year=year, month=month, account_id=account_id)
-    t = cash_flow_trend(db, profile_id, granularity='daily', year=year, month=month, account_id=account_id)
+    s = cash_flow_summary(db, profile_id, year=year, month=month, account_id=account_id, breakdown=breakdown)
+    t = cash_flow_trend(
+        db, profile_id, granularity='daily', year=year, month=month, account_id=account_id, breakdown=breakdown
+    )
     rows = t.get('series', [])
     inflow = float(s.get('kpis', {}).get('inflow', 0.0))
     outflow = float(s.get('kpis', {}).get('outflow', 0.0))
@@ -1007,7 +1297,12 @@ def cash_flow_insights(
             w = f'Cashflow health risk: outflow is {ratio*100:.1f}% of inflow.'
             bullets.append(w)
             warnings.append(w)
-    return {'module': 'cash-flow', 'insights': bullets, 'warnings': warnings}
+    if str(breakdown).lower() != 'all':
+        ets = s.get('entity_totals') or []
+        if ets:
+            top = max(ets, key=lambda x: abs(float(x.get('net', 0.0))))
+            bullets.append(f'{top.get("name")} is the largest cashflow channel ({float(top.get("net", 0.0)):,.2f} net).')
+    return {'module': 'cash-flow', 'breakdown': breakdown, 'insights': bullets, 'warnings': warnings}
 
 
 def movements_summary(
@@ -2056,6 +2351,7 @@ def dispatch_summary(
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
     card_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_summary(
@@ -2070,7 +2366,9 @@ def dispatch_summary(
     if module == 'movements':
         return movements_summary(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'cash-flow':
-        return cash_flow_summary(db, profile_id, year=year, month=month, account_id=account_id)
+        return cash_flow_summary(
+            db, profile_id, year=year, month=month, account_id=account_id, breakdown=breakdown
+        )
     if module == 'credit-cards':
         return credit_cards_packaged(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
@@ -2103,6 +2401,7 @@ def dispatch_trend(
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
     card_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_trend(
@@ -2129,7 +2428,15 @@ def dispatch_trend(
     if module == 'movements':
         return movements_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'cash-flow':
-        return cash_flow_trend(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
+        return cash_flow_trend(
+            db,
+            profile_id,
+            granularity=granularity,
+            year=year,
+            month=month,
+            account_id=account_id,
+            breakdown=breakdown,
+        )
     if module == 'credit-cards':
         return credit_cards_trend(
             db, profile_id, granularity=granularity, year=year, month=month, card_id=card_id
@@ -2166,6 +2473,7 @@ def dispatch_distribution(
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
     card_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_distribution(
@@ -2190,7 +2498,9 @@ def dispatch_distribution(
     if module == 'movements':
         return movements_distribution(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'cash-flow':
-        return cash_flow_distribution(db, profile_id, year=year, month=month, account_id=account_id)
+        return cash_flow_distribution(
+            db, profile_id, year=year, month=month, account_id=account_id, breakdown=breakdown
+        )
     if module == 'credit-cards':
         return credit_cards_distribution(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':
@@ -2222,6 +2532,7 @@ def dispatch_table(
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
     card_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_table(
@@ -2248,7 +2559,15 @@ def dispatch_table(
     if module == 'movements':
         return movements_table(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
     if module == 'cash-flow':
-        return cash_flow_table(db, profile_id, granularity=granularity, year=year, month=month, account_id=account_id)
+        return cash_flow_table(
+            db,
+            profile_id,
+            granularity=granularity,
+            year=year,
+            month=month,
+            account_id=account_id,
+            breakdown=breakdown,
+        )
     if module == 'credit-cards':
         return credit_cards_table(
             db, profile_id, granularity=granularity, year=year, month=month, card_id=card_id
@@ -2285,6 +2604,7 @@ def dispatch_insights(
     expense_category_id: int | None = None,
     income_category_id: int | None = None,
     card_id: int | None = None,
+    breakdown: str = 'all',
 ) -> dict[str, Any]:
     if module == 'expenses':
         return expenses_insights(
@@ -2309,7 +2629,9 @@ def dispatch_insights(
     if module == 'movements':
         return movements_insights(db, profile_id, year=year, month=month, account_id=account_id)
     if module == 'cash-flow':
-        return cash_flow_insights(db, profile_id, year=year, month=month, account_id=account_id)
+        return cash_flow_insights(
+            db, profile_id, year=year, month=month, account_id=account_id, breakdown=breakdown
+        )
     if module == 'credit-cards':
         return credit_cards_insights(db, profile_id, year=year, month=month, card_id=card_id)
     if module == 'loans':

@@ -44,6 +44,7 @@ def analytics_summary(
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
     card_id: int | None = Query(None, description='Credit card id (credit-cards module only)'),
+    breakdown: str | None = Query(None, description='cash-flow only: all|banks|cards|expenses|income|investments|loans|chit'),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -59,6 +60,7 @@ def analytics_summary(
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
         card_id=card_id,
+        breakdown=(breakdown or 'all'),
     )
 
 
@@ -75,6 +77,7 @@ def analytics_trend(
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
     card_id: int | None = Query(None),
+    breakdown: str | None = Query(None, description='cash-flow only: all|banks|cards|expenses|income|investments|loans|chit'),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -92,6 +95,7 @@ def analytics_trend(
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
         card_id=card_id,
+        breakdown=(breakdown or 'all'),
     )
 
 
@@ -106,6 +110,7 @@ def analytics_distribution(
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
     card_id: int | None = Query(None),
+    breakdown: str | None = Query(None, description='cash-flow only: all|banks|cards|expenses|income|investments|loans|chit'),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -121,6 +126,7 @@ def analytics_distribution(
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
         card_id=card_id,
+        breakdown=(breakdown or 'all'),
     )
 
 
@@ -137,6 +143,7 @@ def analytics_table(
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
     card_id: int | None = Query(None),
+    breakdown: str | None = Query(None, description='cash-flow only: all|banks|cards|expenses|income|investments|loans|chit'),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -154,6 +161,7 @@ def analytics_table(
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
         card_id=card_id,
+        breakdown=(breakdown or 'all'),
     )
 
 
@@ -168,6 +176,7 @@ def analytics_insights(
     expense_category_id: int | None = Query(None),
     income_category_id: int | None = Query(None),
     card_id: int | None = Query(None),
+    breakdown: str | None = Query(None, description='cash-flow only: all|banks|cards|expenses|income|investments|loans|chit'),
 ) -> dict:
     mod = module.strip().lower()
     if mod not in pf_analytics_service.ANALYTICS_MODULES:
@@ -183,4 +192,5 @@ def analytics_insights(
         expense_category_id=expense_category_id,
         income_category_id=income_category_id,
         card_id=card_id,
+        breakdown=(breakdown or 'all'),
     )
